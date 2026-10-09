@@ -28,6 +28,7 @@ import {
   createMenubarTray,
   createSplashWindow,
   setSplashStage,
+  watchUserDesktopIntent,
   type DesktopMainHandle,
 } from "@open-design/desktop/main";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
@@ -72,7 +73,6 @@ import {
   isPackagedPayloadDelegation,
   markPackagedManagedOuter,
   supportsDeferredHeadlessDesktop,
-  watchUserDesktopIntent,
 } from "./managed-headless.js";
 import { findPackagedDeeplinkArg, launchPackagedPayloadDesktop } from "./payload-desktop-launch.js";
 import { packagedEntryUrl, registerOdProtocol } from "./protocol.js";
