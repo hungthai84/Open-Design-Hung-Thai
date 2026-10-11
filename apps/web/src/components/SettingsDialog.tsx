@@ -8245,6 +8245,18 @@ function MediaProvidersSection({
                   apiKeyConfigured: false,
                   apiKeyTail: '',
                 });
+                // The global default image model must not outlive its
+                // provider. A tombstoned provider contributes no option to
+                // the default-model picker, so leaving the pick in place
+                // would keep injecting a model the daemon can no longer
+                // resolve credentials for into later runs.
+                setCfg((curr) => {
+                  const current = curr.defaultImageModel?.trim();
+                  if (!current) return curr;
+                  const ownedBy = IMAGE_MODELS.find((model) => model.id === current)?.provider;
+                  if (ownedBy !== activeProvider.id) return curr;
+                  return { ...curr, defaultImageModel: undefined };
+                });
               }}
             >
               {t('settings.mediaProviderClear')}

@@ -708,4 +708,82 @@ describe('SettingsDialog media providers — format, clear tombstone, default im
     expect((screen.getByLabelText('Default image model') as HTMLSelectElement).value)
       .toBe('gemini-3.1-flash-image-preview');
   });
+
+  it('clears the global default image model when its own provider is deleted', async () => {
+    const onPersist = vi.fn();
+    renderDialog(
+      {
+        ...saveableConfig(),
+        defaultImageModel: 'custom-image',
+        mediaProviders: {
+          'custom-image': {
+            apiKey: 'relay-key',
+            baseUrl: 'http://relay.example.test',
+            model: 'gemini-3.1-flash-image',
+          },
+        },
+      },
+      { onPersist },
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: /Custom Image API/ }));
+    expect((screen.getByLabelText('Default image model') as HTMLSelectElement).value)
+      .toBe('custom-image');
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear configuration' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+
+    // The tombstone and the stale default must land together: keeping the
+    // pick would keep routing model-less image requests at the provider
+    // the user just deleted (review on #8658).
+    await waitFor(() => {
+      expect(onPersist).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultImageModel: undefined,
+          mediaProviders: expect.objectContaining({
+            'custom-image': expect.objectContaining({ deleted: true }),
+          }),
+        }),
+        expect.objectContaining({ forceMediaProviderSync: true }),
+      );
+    });
+  });
+
+  it('keeps the global default image model when a different provider is deleted', async () => {
+    const onPersist = vi.fn();
+    renderDialog(
+      {
+        ...saveableConfig(),
+        defaultImageModel: 'custom-image',
+        mediaProviders: {
+          'custom-image': {
+            apiKey: 'relay-key',
+            baseUrl: 'http://relay.example.test',
+            model: 'gemini-3.1-flash-image',
+          },
+          openai: { apiKey: 'sk-openai', baseUrl: 'https://api.openai.com/v1' },
+        },
+      },
+      { onPersist },
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: /OpenAI/ }));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear configuration' }));
+    confirmSpy.mockRestore();
+
+    await waitFor(() => {
+      expect(onPersist).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultImageModel: 'custom-image',
+          mediaProviders: expect.objectContaining({
+            openai: expect.objectContaining({ deleted: true }),
+          }),
+        }),
+        expect.objectContaining({ forceMediaProviderSync: true }),
+      );
+    });
+  });
 });
