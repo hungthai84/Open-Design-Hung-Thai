@@ -1165,7 +1165,9 @@ export function InlineModelSwitcher({
         // The chip text is ellipsised and drops the company token, so the
         // full model id must stay readable on hover. Uses the app tooltip
         // layer (od-tooltip + data-tooltip); native title is suppressed by
-        // TooltipLayer and would show nothing.
+        // TooltipLayer and would show nothing. When currentModelId is
+        // undefined the tooltip is omitted (isTooltipTarget requires a
+        // non-empty data-tooltip).
         data-tooltip={currentModelId ?? undefined}
         aria-label={
           compact
