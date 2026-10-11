@@ -3,6 +3,9 @@ import type { AmrWalletSnapshot } from '@open-design/contracts';
 
 import { AmrBalanceDialog } from './AmrBalanceDialog';
 import { AmrOwnerTopUpDialog } from './chat/AmrOwnerTopUpDialog';
+import { useState } from 'react';
+import { readSeatFreeMock } from '../mock/seat-free';
+import { SeatFreeOutOfCreditsDialog } from './SeatFreeOutOfCreditsDialog';
 
 /**
  * A hard block from the Home pre-run balance gate (empty wallet or signed
@@ -43,6 +46,20 @@ interface Props {
  * lands over the pending frame. A dismiss rolls the hand-off back to Home.
  */
 export function HomeAmrBalanceGateDialogs({ block, metricsConsent, installationId }: Props) {
+  // DEV-ONLY review mock (`?mock=seatfree`): the seat-free out-of-credits
+  // dialog replaces both identity branches; `&gate=1` opens it on load.
+  const seatFreeMock = readSeatFreeMock();
+  const [mockGateOpen, setMockGateOpen] = useState(() => Boolean(seatFreeMock?.gate));
+  if (seatFreeMock) {
+    if (block) {
+      return (
+        <SeatFreeOutOfCreditsDialog mock={seatFreeMock} onClose={() => block.resolve('dismiss')} />
+      );
+    }
+    return mockGateOpen ? (
+      <SeatFreeOutOfCreditsDialog mock={seatFreeMock} onClose={() => setMockGateOpen(false)} />
+    ) : null;
+  }
   if (!block) return null;
   if (block.dialog === 'ask_owner') {
     /*

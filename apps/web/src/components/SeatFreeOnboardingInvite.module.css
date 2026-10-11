@@ -1,0 +1,138 @@
+/* DEV-ONLY seat-free review mock: onboarding "invite teammates" step. Rides on
+ * the shared `.onboarding-cloud__*` layout; the recipient rows are the invite
+ * dialog's (`InviteRowsEditor`, styled in entry-layout.css). */
+
+/* This step's form grows with every added row, so the shared absolutely
+ * positioned footer (language + copyright) would end up under it. Here the
+ * footer joins the flow at the bottom of the pane, auto margins keep the
+ * content vertically centered in the space above it, and a pane taller than
+ * the window scrolls instead of overlapping. */
+.view :global(.onboarding-cloud__pane) {
+  overflow-y: auto;
+}
+
+.view :global(.onboarding-cloud__center) {
+  margin-block: auto;
+}
+
+.view :global(.onboarding-cloud__footer) {
+  position: static;
+  flex: none;
+  align-self: stretch;
+  margin-top: 32px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  margin-top: 32px;
+  text-align: left;
+}
+
+.form :global(.onboarding-cloud__primary) {
+  margin-top: 6px;
+}
+
+/* Whole send failed: one line right under the button, same red as row errors. */
+.sendError {
+  margin: -6px 0 0;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* "or" divider between the email invite and the invite-by-link card. */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.or::before,
+.or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.linkCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.linkIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-strong);
+}
+
+.linkText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.linkTitle {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.linkHint {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.linkCopy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel, transparent);
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.linkCopy:hover {
+  background: var(--bg-subtle);
+}
+
+.linkCopied,
+.linkCopied:hover {
+  background: transparent;
+}
+
+/* Two-line subtitle: honor an explicit line break (zh copy breaks between
+ * its two sentences); otherwise split evenly instead of leaving a short tail. */
+.view :global(.onboarding-cloud__body) {
+  white-space: pre-line;
+  text-wrap: balance;
+}

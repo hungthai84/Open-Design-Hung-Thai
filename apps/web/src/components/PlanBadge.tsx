@@ -1,3 +1,6 @@
+import { useT } from '../i18n';
+import { formatMockUsd, readSeatFreeMock } from '../mock/seat-free';
+
 export type PlanBadgeSize = 'sm' | 'md';
 
 /**
@@ -20,15 +23,27 @@ export function PlanBadge({
   className?: string;
   title?: string;
 }) {
-  const label = plan?.trim();
-  if (!label) return null;
+  const t = useT();
+  const raw = plan?.trim();
+  if (!raw) return null;
+  // DEV-ONLY review mock (`?mock=seatfree`): only two plans remain — Free and
+  // a single Pro (shown with its chosen monthly credit tier).
+  const mock = readSeatFreeMock();
+  const label = mock
+    ? mock.plan === 'free'
+      ? t('seatFree.planFree')
+      : `${t('seatFree.planPro')} · ${t('seatFree.perMonth', { amount: formatMockUsd(mock.quotaUsd).replace('.00', '') })}`
+    : raw;
+  const dataPlan = mock ? mock.plan : raw.toLowerCase();
   return (
     <span
       className={['plan-badge', `plan-badge--${size}`, className]
         .filter(Boolean)
         .join(' ')}
-      data-plan={label.toLowerCase()}
+      data-plan={dataPlan}
       title={title}
+      // Mock labels carry their own casing (`$20/mo` must not become `/Mo`).
+      style={mock ? { textTransform: 'none' } : undefined}
     >
       {label}
     </span>

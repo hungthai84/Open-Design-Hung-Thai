@@ -2597,8 +2597,9 @@ export function WorkspaceTabsBar({
             settings replaces the rail outright (settingsPageChrome). Both
             targets live in EntryShell's tree, so the clicks travel as window
             events (see entryRailBridge). The classes are the rail's own, so
-            the controls keep their look. */}
-        {!tabsDockEl && !settingsPageChrome ? (
+            the controls keep their look. Onboarding hides them too: it has
+            no rail to toggle and nothing to search yet. */}
+        {!tabsDockEl && !settingsPageChrome && !onboardingActive ? (
           <div className="entry-nav-rail__search-row workspace-tabs-rail-actions">
             <button
               type="button"

@@ -1,0 +1,181 @@
+/* DEV-ONLY seat-free review mock: pieces the out-of-credits dialog adds on top
+ * of the shared balance-gate chrome (AmrBalanceDialog.module.css). */
+
+.status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 4px;
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  text-align: start;
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.statusLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.statusValue {
+  color: var(--danger, #d14343);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusMeta {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.quota {
+  width: 100%;
+  margin: 0 0 18px;
+  text-align: start;
+}
+
+.quotaTitle {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.quotaGrid {
+  display: grid;
+  padding-top: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quotaOption {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.quotaOption:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  background: var(--bg-panel);
+}
+
+.quotaOption:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.quotaOption.current {
+  cursor: default;
+}
+
+.quotaOption.current:hover {
+  border-color: var(--border);
+}
+
+.quotaOption.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.quotaPrice {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quotaCredits {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "当前" rides the top edge of the current tier's card instead of adding a
+   third line inside it. */
+.quotaCurrent {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.topUp.topUp {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 13.5px;
+}
+
+.owner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  text-align: start;
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.ownerAvatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--accent-tint, var(--bg-subtle));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ownerText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ownerLabel {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.ownerName {
+  color: var(--text-strong);
+  font-size: 13.5px;
+  font-weight: 600;
+}

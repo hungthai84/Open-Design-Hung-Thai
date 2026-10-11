@@ -4,6 +4,7 @@
 // follows the surrounding icon color.
 
 import { isTeamPlanTier } from '../collab/team-plan';
+import { readSeatFreeMock } from '../mock/seat-free';
 
 export type PlanBadgeTier = 'free' | 'go' | 'plus' | 'pro' | 'max' | 'team';
 
@@ -46,6 +47,9 @@ export interface PlanBadgeSources {
  * intended reading — the family is team, the subscription is not paid.
  */
 export function planBadgeTierForWorkspace(sources: PlanBadgeSources): PlanBadgeTier | null {
+  // DEV-ONLY review mock (`?mock=seatfree`): Free or Pro, nothing else.
+  const mock = readSeatFreeMock();
+  if (mock) return mock.plan;
   if (sources.workspaceType === 'team') return 'team';
   return planBadgeTierForLabel(sources.tier ?? '');
 }
@@ -146,7 +150,9 @@ interface Props {
   height?: number;
 }
 
-export function PlanWordmark({ tier, height = 13 }: Props) {
+export function PlanWordmark({ tier: rawTier, height = 13 }: Props) {
+  // DEV-ONLY review mock: every legacy paid tier collapses to the one Pro mark.
+  const tier: PlanBadgeTier = readSeatFreeMock() ? (rawTier === 'free' ? 'free' : 'pro') : rawTier;
   const box = VIEW_BOX[tier];
   const round = ROUND_ENDS.has(tier);
   return (

@@ -20,6 +20,8 @@ import {
 import { AmrLoginPill } from './AmrLoginPill';
 import { Icon } from './Icon';
 import styles from './AmrBalanceDialog.module.css';
+import { readSeatFreeMock } from '../mock/seat-free';
+import { SeatFreeOutOfCreditsDialog } from './SeatFreeOutOfCreditsDialog';
 
 /** How often the post-recharge funding watch polls. Overlapping ticks are
  * skipped so a stalled preflight cannot stack HTTP or Vela work. */
@@ -125,7 +127,16 @@ interface Props {
 // 告诉我不要这个的,只用弹那个插画的就行" (T53) — and then retired the whole
 // low-balance tier on 2026-09-07: "这个要不先不要了,跟产品说了一下,不要这个了"
 // (T66). A positive balance now produces no dialog and no card anywhere.
-export function AmrBalanceDialog({
+export function AmrBalanceDialog(props: Props) {
+  // DEV-ONLY review mock (`?mock=seatfree`): seat-free out-of-credits dialog.
+  const seatFreeMock = readSeatFreeMock();
+  if (seatFreeMock && props.reason === 'insufficient') {
+    return <SeatFreeOutOfCreditsDialog mock={seatFreeMock} onClose={props.onClose} />;
+  }
+  return <AmrBalanceDialogImpl {...props} />;
+}
+
+function AmrBalanceDialogImpl({
   reason,
   modelId,
   fundingScope,
