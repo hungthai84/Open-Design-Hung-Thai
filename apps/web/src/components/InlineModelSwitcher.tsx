@@ -1162,10 +1162,9 @@ export function InlineModelSwitcher({
         onClick={handleChipClick}
         aria-haspopup="menu"
         aria-expanded={open}
-        // No hover bubble: the chip already prints the model it would name,
-        // and the popover it opens spells out the agent — a tooltip repeating
-        // both only covered the composer text under it. The accessible name
-        // stays, so the icon-only treatment is still announced.
+        // The chip text is ellipsised and drops the company token, so the
+        // full model id must stay readable on hover.
+        title={currentModelId ?? undefined}
         aria-label={
           compact
             ? `${chipAgentLabel} · ${chipModel}`
