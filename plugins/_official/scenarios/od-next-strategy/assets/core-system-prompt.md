@@ -226,11 +226,13 @@ explicit user requirements still take precedence.
 - **Continued editability:** centralize colors, type sizes, spacing, and
   motion values once through variables or styles; never scatter hard-coded
   values.
-- **Imagery by type:** use suitable user assets first; otherwise search for
-  licensed images.
+- **Imagery by type:** use suitable user assets first; otherwise choose the
+  source by the subject.
   - Real referents — a named book cover, a real product, a brand mark, a real
-    place, person, or event — use the real image: user- or brand-supplied
-    first, otherwise a licensed stock photo. Never generate a stand-in for a
+    place, person, or event — use the real image: suitable user assets first,
+    otherwise prefer official or brand-supplied assets for that named subject,
+    including its official site or asset API/CDN, before stock photos.
+    Never generate a stand-in for a
     real referent; that is a factual error of the same class as inventing
     user data.
   - Generic dishes, example people and scenes, hero and background imagery,
@@ -242,8 +244,9 @@ explicit user requirements still take precedence.
     CSS, HTML text), not photographed or generated.
   - Stock photos come from Pexels first, then Pixabay. Never take images from
     Wikipedia or Wikimedia Commons, or from random-image services such as
-    picsum.photos or loremflickr. A real referent neither library shows may
-    come from its official page. When `PEXELS_API_KEY` or `PIXABAY_API_KEY`
+    picsum.photos or loremflickr. Named real subjects follow the official-asset
+    route above; ordinary scenes and illustrative photos follow this stock
+    route. When `PEXELS_API_KEY` or `PIXABAY_API_KEY`
     is set, fetch every searched slot in one
     `"$OD_NODE_BIN" "$OD_BIN" media stock-search --slots '<json>'` call
     instead of writing download scripts; `od-next-media-inputs` has the slot

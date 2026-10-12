@@ -1,4 +1,4 @@
-# OD Next Prototype Task Profile v2.2.2
+# OD Next Prototype Task Profile v2.2.6
 
 > Rollout: active
 
@@ -156,6 +156,11 @@ fact and quotes its source in `device-frame-shell`.
 - Use the selected shell's markup and CSS as the document skeleton and put
   the product inside the `APP CONTENT START` / `APP CONTENT END` slot; the
   app mounts in `.phone-content` and nowhere else.
+- Keep the shell's `--phone-*` declarations in a separate `:root` block from
+  product tokens. Preserve the bundled `var(--phone-*, fallback)` values in
+  the shell CSS: replacing product tokens must never collapse the handset's
+  width, height, bezel, or safe areas. Do not depend on the preview host to
+  supply these values.
 - One handset persists across the whole prototype. Screen navigation and hash
   routes swap the content inside the screen; a new handset per route appears
   only when the user asks for a side-by-side board.
@@ -184,9 +189,17 @@ quotes it in the `layout-primitives` context fact. It is structure only —
 display, flex/grid, overflow, wrapping, ratio — and sets no palette, type,
 spacing scale, or component look. Put the whole block into the document's own
 `<style>` as its first rule set (`@layer od-layout` must come first so the
-product's CSS always wins), keep the `OD-LAYOUT-PRIMITIVES v1` marker comments,
+product's CSS wins except for native hidden visibility), keep the
+`OD-LAYOUT-PRIMITIVES v1` marker comments,
 and compose the shapes below from it instead of re-deriving them per card,
 row, tile, or chip.
+
+Preserve `[hidden]:not([hidden="until-found" i]) { display: none !important; }`
+from the bundled block. Use `hidden` for inactive screens, empty states,
+dialogs, and scrims; remove it only when showing that element. Component
+`display: flex/grid` must not make a hidden element visible. For exit
+animations, animate with a state class before setting `hidden`; do not override
+the hidden rule. Keep `hidden="until-found"` available for browser find-in-page.
 
 Two kinds of text, two treatments:
 
@@ -225,6 +238,16 @@ pointer-only styles live under `@media (hover: hover)`. An `<img>` keeps its
 never a CSS height on the image. A card, tile, or row built on `<a>` sets its
 own `color` and `text-decoration: none`; browser-default link styling never
 reaches product UI.
+
+### Keep dynamic structure and data separate
+
+For dynamic UI, prefer separating DOM structure from data. Use `textContent`
+for plain text and DOM properties or `setAttribute` for attributes. When
+generating HTML, prefer template literals with `${...}` for complex fragments
+instead of long concatenation chains with nested quote delimiters; escape data
+for its insertion context. Reuse a render function for repeated fragments only
+when their structure and meaning match. Keep simple code simple; do not add
+abstractions solely to follow this guidance.
 
 ### Design usable forms and feedback
 
