@@ -30,6 +30,8 @@ import {
   removeJsonInstall,
 } from './mcp-agent-install.js';
 import { resolveMcpWorkspaceContext } from './mcp-workspace-context.js';
+import { StockSearchConfigError, stockSearch } from './media/stock-search.js';
+import { createStockRecorder } from './media/stock-telemetry.js';
 
 const argv = process.argv.slice(2);
 
@@ -97,6 +99,8 @@ const MEDIA_SCAFFOLD_STRING_FLAGS = new Set([
   'daemon-url',
 ]);
 const MEDIA_SCAFFOLD_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const MEDIA_STOCK_SEARCH_STRING_FLAGS = new Set(['slots', 'slots-file', 'out-dir', 'budget-ms', 'timeout-ms', 'concurrency']);
+const MEDIA_STOCK_SEARCH_BOOLEAN_FLAGS = new Set(['help', 'h']);
 
 const MCP_STRING_FLAGS = new Set([
   'daemon-url',
@@ -1049,6 +1053,10 @@ function printRootHelp() {
       Create a deterministic HyperFrames composition without npx or global
       skill installation, before dispatching it through media generate.
 
+  od media stock-search --slots '<json>'
+      Download licensed Pexels / Pixabay photos for several image slots in one
+      call (needs PEXELS_API_KEY or PIXABAY_API_KEY).
+
   od mcp [--daemon-url <url>]
       Run a stdio MCP server that proxies project tool calls to a
       running OpenDesign daemon. Wire it into a coding agent
@@ -1739,7 +1747,7 @@ async function runMedia(args) {
     printMediaHelp();
     return;
   }
-  if (sub !== 'generate' && sub !== 'wait' && sub !== 'scaffold') {
+  if (sub !== 'generate' && sub !== 'wait' && sub !== 'scaffold' && sub !== 'stock-search') {
     console.error(`unknown subcommand: od media ${sub}`);
     printMediaHelp();
     process.exit(1);
@@ -1749,7 +1757,68 @@ async function runMedia(args) {
   const subArgs = [...args.slice(0, idx), ...args.slice(idx + 1)];
   if (sub === 'wait') return runMediaWait(subArgs);
   if (sub === 'scaffold') return runMediaScaffold(subArgs);
+  if (sub === 'stock-search') return runMediaStockSearch(subArgs);
   return runMediaGenerate(subArgs);
+}
+
+async function runMediaStockSearch(rawArgs) {
+  let flags;
+  try {
+    flags = parseFlags(rawArgs, {
+      string: MEDIA_STOCK_SEARCH_STRING_FLAGS,
+      boolean: MEDIA_STOCK_SEARCH_BOOLEAN_FLAGS,
+    });
+  } catch (err) {
+    console.error(err.message);
+    printMediaHelp();
+    process.exit(2);
+  }
+  if (flags.help || flags.h) {
+    printMediaHelp();
+    return;
+  }
+  let slots;
+  try {
+    const raw = flags['slots-file']
+      ? readFileSync(flags['slots-file'] === '-' ? 0 : flags['slots-file'], 'utf8')
+      : flags.slots;
+    slots = JSON.parse(raw ?? '');
+  } catch {
+    console.error('--slots <json> or --slots-file <path|-> required: a JSON array of {"id","query","width"?,"orientation"?}');
+    process.exit(2);
+  }
+  const orientations = new Set(['landscape', 'portrait', 'square']);
+  const valid = Array.isArray(slots) && slots.length > 0 && slots.length <= 30 && slots.every((slot) =>
+    slot && typeof slot.id === 'string' && slot.id.trim() && typeof slot.query === 'string' && slot.query.trim()
+      && (slot.width === undefined || Number.isFinite(slot.width))
+      && (slot.orientation === undefined || orientations.has(slot.orientation)));
+  if (!valid) {
+    console.error('each slot needs a non-empty "id" and "query"; optional "width" (number) and "orientation" (landscape|portrait|square); 1–30 slots');
+    process.exit(2);
+  }
+  const numberFlag = (name) => (flags[name] === undefined ? undefined : Number(flags[name]));
+  const recorder = await createStockRecorder({ slotCount: slots.length });
+  try {
+    const report = await stockSearch({
+      slots,
+      outDir: flags['out-dir'],
+      budgetMs: numberFlag('budget-ms'),
+      requestTimeoutMs: numberFlag('timeout-ms'),
+      concurrency: numberFlag('concurrency'),
+      onAttempt: (event) => {
+        console.error(`[stock-search] ${JSON.stringify(event)}`);
+        recorder.record(event);
+      },
+    });
+    const collectionStatus = await recorder.finish(report);
+    process.stdout.write(`${JSON.stringify({ ...report, telemetry: { callId: recorder.callId, collectionStatus } })}\n`);
+  } catch (err) {
+    if (err instanceof StockSearchConfigError) {
+      process.stdout.write(`${JSON.stringify({ error: 'no_stock_api_key', message: err.message })}\n`);
+      process.exit(5);
+    }
+    throw err;
+  }
 }
 
 async function runMediaScaffold(rawArgs) {
@@ -2247,6 +2316,7 @@ async function cliDaemonBaseUrl(flags) {
 function printMediaHelp() {
   console.log(`Usage: od media scaffold --composition-dir .hyperframes-cache/<id> [opts]
        od media generate --surface <image|video|audio> --model <id> [opts]
+       od media stock-search --slots '<json>' [opts]
        "$OD_NODE_BIN" "$OD_BIN" media generate --surface <image|video|audio> --model <id> [opts]
 
 Scaffold:
@@ -2320,7 +2390,34 @@ parse JSON with python3, not jq):
 
 Skills should call this and then reference the returned filename in their
 artifact / message body. The daemon writes the bytes into the project's
-files folder so the FileViewer can preview them immediately.`);
+files folder so the FileViewer can preview them immediately.
+
+Stock search:
+  Finds and downloads licensed stock photos for every slot in one call, using
+  PEXELS_API_KEY first and PIXABAY_API_KEY as fallback (no key: exit 5 with
+  {"error":"no_stock_api_key"}). Runs in the current project directory.
+  --slots '<json>'          JSON array: [{"id":"hero","query":"kung pao chicken",
+                            "width":1200,"orientation":"landscape"}] (1–30 slots;
+                            width = display width in px, default 1200). Write
+                            English queries that name the subject first (e.g.
+                            "eyeglasses frame product"): providers match English
+                            alt text and tags, and the command re-ranks 20
+                            candidates by how many query words the alt contains,
+                            then by how early they appear.
+  --slots-file <path|->     Read the slots array from a file or stdin instead.
+  --out-dir <dir>           Project-relative output directory (default assets/stock).
+  --timeout-ms <n>          Per-request timeout (default 12000).
+  --budget-ms <n>           Total time budget for all slots (default 180000).
+  --concurrency <n>         Parallel slots (default 6).
+
+  Output: one JSON line {"providers":[...],"slots":[{id,status,path,width,height,
+  alt,author,sourceUrl,license,...}]}. status is ok | not_found | error |
+  budget_exceeded. Judge fit from alt; credits are appended to
+  <out-dir>/credits.json. Each slot's attempts retain provider/stage/status,
+  HTTP errors and Pexels monthly quota (limit/remaining/resetUnix; missing
+  headers are null). Failed Pexels attempts remain after a Pixabay success.
+  The same structured attempts stream to stderr as [stock-search] JSON lines,
+  including HTTP 429 and Retry-After when supplied. No API keys are logged.`);
 }
 
 // ---------------------------------------------------------------------------
