@@ -142,14 +142,13 @@ import {
   selectPromptImagePaths,
 } from './runtimes/chat-prompt-inputs.js';
 import {
+  agentStdinPromptPayload,
   recordPromptDeliveredAtSpawn,
   runtimeReadsPlainTextPromptFromStdin,
   applyClaudeStreamJsonRunBookkeeping,
   assertValidRuntimeDefFirstOutputTimeoutMs,
   assertValidRuntimeDefInactivityTimeoutMs,
-  bufferedAntigravityGeminiFirstTokenAt,
   classifyChatRunCloseStatus,
-  looksLikeGeminiJsonEventStream,
   resolveAcpStageTimeoutMs,
   resolveActiveInactivityTimeoutMs,
   resolveChatRunArtifactQuietPeriodMs,
@@ -211,9 +210,7 @@ export {
   applyClaudeStreamJsonRunBookkeeping,
   assertValidRuntimeDefFirstOutputTimeoutMs,
   assertValidRuntimeDefInactivityTimeoutMs,
-  bufferedAntigravityGeminiFirstTokenAt,
   classifyChatRunCloseStatus,
-  looksLikeGeminiJsonEventStream,
   resolveAcpStageTimeoutMs,
   resolveActiveInactivityTimeoutMs,
   resolveChatRunArtifactQuietPeriodMs,
@@ -523,7 +520,6 @@ import {
   type OdNextExecutionPreflightResolver,
 } from './strategies/od-next/automatic-continuation-service.js';
 import {
-  antigravityAuthGuidance,
   antigravityQuotaGuidance,
   classifyAgentAuthFailure,
   classifyAgentServiceFailure,
@@ -732,14 +728,21 @@ import {
   validateTarget as validateRoutineTarget,
 } from './routines.js';
 import { buildMcpInstallPayload } from './mcp-install-info.js';
+import { createDiagnosticsExportHandler, buildAutomaticDiagnosticSources, resolveDaemonPreviousLogPath } from './diagnostics-export.js';
+import { AutomaticDiagnostics } from './services/automatic-diagnostics.js';
+import { createDiagnosticRunObserver, diagnosticFaultFromApi, diagnosticFaultFromLifecycle } from './services/diagnostic-faults.js';
+import { diagnosticRelayUrl } from './integrations/diagnostic-relay.js';
+import { automaticDiagnosticsConsent, observeAppConfig } from './app-config.js';
+import { observeApiFailures } from './http/api-failure-journal.js';
 import { configureDiagnosticsEvidence } from './services/diagnostics-evidence.js';
-import { createDiagnosticsExportHandler } from './diagnostics-export.js';
+import { beginDaemonHealthSession } from './services/daemon-health.js';
+import { readSqlitePageStats } from './storage/db-inspect.js';
 import {
   CHAT_SCROLL_FORENSICS_PATH,
   chatScrollForensicsBodyParser,
   chatScrollForensicsHandler,
 } from './diagnostics-client-evidence.js';
-import { DIAGNOSTICS_EXPORT_PATH } from '@open-design/diagnostics';
+import { DIAGNOSTIC_DELIVERY_LOG_PREFIX, DIAGNOSTICS_EXPORT_PATH } from '@open-design/diagnostics';
 import {
   createProjectArchiveStream,
   createBatchArchiveStream,
@@ -997,6 +1000,7 @@ import {
 } from './collab/workspace-billing-runtime.js';
 import {
   AUTHORITATIVE_PROJECT_PRESENCE_CAPABILITY,
+  CODING_PLAN_USAGE_EVENTS_CAPABILITY,
   startHubEventsSubscriber,
   WORKSPACE_DIRECTORY_EVENTS_CAPABILITY,
 } from './collab/hub-events-subscriber.js';
@@ -2779,6 +2783,13 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '') {
   ) {
     return 'The run failed due to an unknown upstream streaming error. Please retry.';
   }
+  // agy reports a per-model quota exhaustion as
+  //   RESOURCE_EXHAUSTED (code 429): Individual quota reached. …
+  // Point the user at agy's model picker, the only way to switch to a model
+  // with quota left.
+  if (agentId === 'antigravity' && /individual quota reached/i.test(combined)) {
+    return antigravityQuotaGuidance();
+  }
   // An ACP handshake refusal that reaches one of the stderr-tail fallbacks is
   // deliberately NOT reworded here. The daemon has no locale, so a sentence
   // composed at this layer lands in `run.error` untranslated and the chat
@@ -3472,7 +3483,14 @@ export async function startServer({
     }
     next();
   });
+  // Heap/SQLite health: begun before the first SQLite open so a daemon that
+  // dies seconds into startup still leaves a checkpoint for the next boot.
+  const daemonHealth = beginDaemonHealthSession({
+    dataRoot: RUNTIME_DATA_DIR,
+    previousLogPath: resolveDaemonPreviousLogPath(runtime),
+  });
   const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  daemonHealth?.setStorageProbe(() => readSqlitePageStats({ db, file: db.name }));
   const amrTerminalReportOutbox = createAmrTerminalReportOutboxStore(db);
   const amrTerminalReportDelivery = createAmrTerminalReportDeliveryService({
     store: amrTerminalReportOutbox,
@@ -3818,6 +3836,7 @@ export async function startServer({
   const fetchFreshBackgroundWorkspaceDirectory =
     workspaceDirectoryAuthority.backgroundFresh;
   let workspaceHubSubscriptions: WorkspaceHubSubscriptionManager | null = null;
+  const quotaHealthyConnections = new Set<string>();
   const verifyExplicitWorkspaceRequestContext = async (input: {
     req: any;
     requireTeam?: boolean;
@@ -4094,6 +4113,7 @@ export async function startServer({
     ...configuredAmrEnv(),
   });
   const resetWorkspaceIdentityCaches = (): void => {
+    quotaHealthyConnections.clear();
     workspaceDirectoryAuthority.resetIdentity();
     workspaceExactAuthorityCache.resetIdentity();
     workspaceExactContextCache.resetIdentity();
@@ -5777,6 +5797,9 @@ export async function startServer({
     onWorkspaceSwitched: (workspaceId) => warmWorkspaceDigestFaces(workspaceId),
     fetchBilling: accountBillingSummary.read,
     billingRuntime: workspaceBillingRuntime,
+    quotaRealtimeHealthy: (workspaceId) => quotaHealthyConnections.has(
+      directoryConnectionKey(workspaceId, currentWorkspaceDirectoryIdentity()),
+    ),
     fetchBillingCatalog: (workspaceId) => fetchVelaBillingCatalog(workspaceId, {
       configuredEnv: configuredAmrEnv(),
     }),
@@ -5979,6 +6002,18 @@ export async function startServer({
       readVelaControlApiContext,
       configuredAmrEnv(),
     );
+  const setQuotaRealtimeHealthy = (workspaceId: string, identityKey: string, healthy: boolean) => {
+    const key = directoryConnectionKey(workspaceId, identityKey);
+    const previous = quotaHealthyConnections.has(key);
+    if (healthy) quotaHealthyConnections.add(key);
+    else quotaHealthyConnections.delete(key);
+    if (previous !== healthy && identityKey === currentWorkspaceDirectoryIdentity()) {
+      emitWorkspaceEvent(workspaceId, {
+        type: 'billing-changed',
+        at: Date.now(),
+      });
+    }
+  };
   const syncWorkspaceDirectoryRealtimeHealth = (): void => {
     const currentIdentity = currentWorkspaceDirectoryIdentity();
     workspaceDirectoryAuthority.setRealtimeHealthy(
@@ -6058,6 +6093,7 @@ export async function startServer({
           directoryConnectionIdentities.delete(subscribedWorkspaceId);
         }
         if (identityKey) {
+          setQuotaRealtimeHealthy(subscribedWorkspaceId, identityKey, false);
           directoryHealthyConnections.delete(
             directoryConnectionKey(subscribedWorkspaceId, identityKey),
           );
@@ -6092,6 +6128,11 @@ export async function startServer({
       const connectionKey = directoryConnectionKey(
         exactWorkspaceId,
         exactIdentityKey,
+      );
+      setQuotaRealtimeHealthy(
+        exactWorkspaceId,
+        exactIdentityKey,
+        healthy && capabilities.includes(CODING_PLAN_USAGE_EVENTS_CAPABILITY),
       );
       if (
         healthy
@@ -6431,6 +6472,16 @@ export async function startServer({
           // billing member projection even when no billing event accompanies
           // the roster mutation.
           workspaceBillingRuntime.reconnect(subscribedWorkspaceId);
+          break;
+        case 'coding-plan-usage-changed':
+          if (!event.workspaceId || !event.workspaceMemberId || !event.eventId) break;
+          emitWorkspaceEvent(event.workspaceId, {
+            type: 'coding-plan-usage-changed',
+            workspaceId: event.workspaceId,
+            workspaceMemberId: event.workspaceMemberId,
+            eventId: event.eventId,
+            at: Date.now(),
+          });
           break;
         case 'billing-changed':
           accountBillingSummary.invalidate(accountBillingInvalidationToken(event));
@@ -7795,11 +7846,21 @@ export async function startServer({
   // follow-up — see reconcile decision log.
   // (legacy POST /api/projects body deleted — see registerProjectRoutes below.)
 
+  let automaticDiagnostics: AutomaticDiagnostics | null = null;
   const telemetry = registerTelemetryRoutes(app, {
     dataDir: RUNTIME_DATA_DIR,
     namespace: runtime?.namespace,
     readAppConfig,
     writeAppConfig,
+    onClientExperience: (evidence) => automaticDiagnostics?.record({
+      sourceId: `client:${evidence.occurrenceId}`, kind: evidence.category,
+      at: Date.now(), runId: evidence.runId, projectId: evidence.projectId,
+      conversationId: evidence.conversationId, errorCode: evidence.errorCode, detail: evidence,
+    }) ?? null,
+    onHostFault: (event, properties) => automaticDiagnostics?.record({
+      sourceId: `host:${event}:${typeof properties.previous_session_id === 'string' ? properties.previous_session_id : randomUUID()}`,
+      kind: event, at: Date.now(), detail: properties,
+    }) ?? null,
   });
   const resolvedAppVersionInfo = normalizeTelemetryAppVersionInfo(
     await telemetry.resolveAppVersion(),
@@ -7823,6 +7884,32 @@ export async function startServer({
       readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
     ),
   );
+  try {
+    automaticDiagnostics = new AutomaticDiagnostics({
+      dataRoot: RUNTIME_DATA_DIR,
+      relayOrigin: diagnosticRelayUrl(process.env),
+      consent: () => automaticDiagnosticsConsent(RUNTIME_DATA_DIR),
+      sources: (incident) => buildAutomaticDiagnosticSources({ runtime, projectRoot: PROJECT_ROOT,
+        runsDir: path.join(RUNTIME_DATA_DIR, 'runs'), dataDir: RUNTIME_DATA_DIR }, incident),
+      baselineSources: () => buildAutomaticDiagnosticSources({ runtime, projectRoot: PROJECT_ROOT,
+        runsDir: path.join(RUNTIME_DATA_DIR, 'runs'), dataDir: RUNTIME_DATA_DIR }, { agentId: '*' }),
+      context: () => currentAppVersionInfo(),
+      onDelivered: (incidentId, receipt, evidence) => {
+        console.info(DIAGNOSTIC_DELIVERY_LOG_PREFIX, incidentId, JSON.parse(receipt).object_key);
+        void analyticsService.captureSafety({ eventName: 'diagnostic_bundle_uploaded',
+          appVersion: currentAppVersion(), properties: { diagnostic_incident_id: incidentId,
+            diagnostic_object_key: JSON.parse(receipt).object_key, run_id: evidence.runId,
+            fault_kind: evidence.kind } }).catch(() => {});
+      },
+    });
+    automaticDiagnostics.start();
+  } catch { console.warn('[diagnostics] local outbox unavailable'); }
+  const stopDiagnosticConfigObserver = observeAppConfig(RUNTIME_DATA_DIR, () => automaticDiagnostics?.consentChanged());
+  const stopDiagnosticApiObserver = observeApiFailures((failure) => {
+    const fault = diagnosticFaultFromApi(failure);
+    if (fault) automaticDiagnostics?.record(fault);
+  });
+  const observeDiagnosticRun = createDiagnosticRunObserver();
   const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
   const strategyWriteEvidence = createStrategyRunWriteEvidenceRecorder(db);
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
@@ -7836,7 +7923,25 @@ export async function startServer({
       // each event is emitted, so the finalization verdict (retry safety gate,
       // artifact_count, close-status artifactProducedThisRun) does not depend on
       // early tool_use/artifact events surviving the run.events ring buffer.
+      onDiagnosticLifecycle: (run, kind, at, errorType) => {
+        const incidentId = automaticDiagnostics?.record(diagnosticFaultFromLifecycle(run, kind, at, errorType));
+        if (incidentId) run.diagnosticIncidentIds = [...new Set([...(run.diagnosticIncidentIds ?? []), incidentId])].slice(-100);
+      },
       onEventEmitted: (run, record) => {
+        if (record.event === 'start') automaticDiagnostics?.trackRun(run.id, {
+          sourceId: `run:${run.id}:interrupted:${run.manualResumeAttemptCount ?? 0}:${record.timestamp}`,
+          kind: 'active_run', at: record.timestamp, runId: run.id, agentId: run.agentId,
+          projectId: run.projectId, conversationId: run.conversationId,
+        });
+        const fault = observeDiagnosticRun(run, record);
+        if (fault) {
+          const incidentId = automaticDiagnostics?.record(fault);
+          if (incidentId) run.diagnosticIncidentIds = [...new Set([...(run.diagnosticIncidentIds ?? []), incidentId])].slice(-100);
+        }
+        if (record.event === 'end') automaticDiagnostics?.finishRun(run.id);
+        if (record.event === 'run_retry_finished' && record.data?.retry_result === 'success') {
+          automaticDiagnostics?.recovered(run.id, record.timestamp);
+        }
         if (!run.sideEffectLedger) run.sideEffectLedger = createRunSideEffectLedger();
         foldEventIntoRunSideEffectLedger(run.sideEffectLedger, record);
         strategyWriteEvidence.observeToolStream(run);
@@ -8252,6 +8357,7 @@ export async function startServer({
       projectRoot: PROJECT_ROOT,
       runsDir: path.join(RUNTIME_DATA_DIR, 'runs'),
       dataDir: RUNTIME_DATA_DIR,
+      automaticUploadStatus: () => automaticDiagnostics?.outbox.diagnostics() ?? { available: false },
     }),
   );
 
@@ -11037,7 +11143,9 @@ export async function startServer({
       message.trim().length > 0
     ) {
       try {
-        await extractFromMessage(RUNTIME_DATA_DIR, message);
+        await extractFromMessage(RUNTIME_DATA_DIR, message, {
+          extractionOrigin: { projectId: run.projectId, conversationId: run.conversationId, runId: run.id, assistantMessageId: run.assistantMessageId },
+        });
       } catch (err) {
         console.warn('[memory] extractFromMessage failed', err);
       }
@@ -11776,6 +11884,7 @@ export async function startServer({
         skillsDir: SKILLS_DIR,
         designSystemsDir: DESIGN_SYSTEMS_DIR,
         linkedDirs,
+        activeSkillDirs,
       }),
       ...(odNextTaskInputSnapshot
         ? [odNextTaskInputSnapshot.projectionAccessRoot]
@@ -12394,8 +12503,8 @@ export async function startServer({
     let visibleAssistantText = '';
     // Reply text handed to the background memory extractor at child-close.
     // Captures the GUARDED, visible reply from BOTH channels a run can emit on:
-    // structured agents' `agent` `text_delta` (Claude/Codex/Gemini/Copilot/ACP/
-    // qoder/pi-rpc) and the plain/BYOK/antigravity family's `stdout` chunks. So
+    // structured agents' `agent` `text_delta` (Claude/Codex/Gemini/Antigravity/
+    // Copilot/ACP/qoder/pi-rpc) and the plain/BYOK family's `stdout` chunks. So
     // every agent family contributes its actual reply, and none leak raw
     // transport frames (system:init, stream_event, hooks). Kept separate from
     // `visibleAssistantText` so the filesystem empty-output guard that reads
@@ -12574,7 +12683,7 @@ export async function startServer({
       }
       // Accumulate the visible reply for the memory extractor from whichever
       // channel this agent family uses: `agent` text_delta (structured streams)
-      // or `stdout` chunks (plain/BYOK/antigravity). Both carry already-guarded,
+      // or `stdout` chunks (plain/BYOK). Both carry already-guarded,
       // user-visible text, so this never captures thinking, tool traffic, or raw
       // transport frames.
       if (memoryReplyText.length < MEMORY_REPLY_CAP) {
@@ -12844,23 +12953,11 @@ export async function startServer({
       { allowRetry = true } = {},
     ) => {
       lifecycle.mark('finalize_start');
-      // A clean child exit does not complete a task rejected by the strategy
-      // gate. Reconcile before persisting the message or publishing the Run
-      // terminal event, while retaining the actual process exit code.
-      if (
-        status === 'succeeded'
-        && run.strategyTask?.outcome === 'blocked'
-        && run.strategyTask.activeRunId === run.id
-      ) {
-        status = 'failed';
-        allowRetry = false;
-        const reasonCodes = run.strategyTask.blockedContext?.reasonCodes ?? [];
-        send('error', createSseErrorPayload(
-          'OD_NEXT_TASK_BLOCKED',
-          `The task could not complete${reasonCodes.length ? `: ${reasonCodes.join(', ')}` : '.'}`,
-          { retryable: false, details: { reasonCodes } },
-        ));
-      }
+      // The Run records how the process ended; the strategy task records its
+      // own verdict. A task blocked at any stage keeps a cleanly exited Run
+      // succeeded: the task projection on the terminal event carries the
+      // blocked outcome and its reason codes, and the client decides from
+      // those and the deliverable on disk what this turn produced.
       flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
       // attempt. Runtime fatal/stream signals are only known in the close
@@ -13450,13 +13547,10 @@ export async function startServer({
         )
       : false;
 
-    // Antigravity's `agy` is silent on stdout/stderr in print mode for
-    // both auth-missing and quota-exhausted failures — the actual
-    // RESOURCE_EXHAUSTED / "not logged in" payload only surfaces in
-    // its `--log-file`. We allocate a per-run temp path, pipe agy's
-    // log to it via buildArgs, then read it in the empty-output guard
-    // to disambiguate the silent-failure cause. Other adapters ignore
-    // this field.
+    // Antigravity's `agy` writes its diagnostics to a `--log-file`. We
+    // allocate a per-run temp path and pipe agy's log to it via buildArgs:
+    // the model lock below waits there for agy to confirm it read the
+    // settings.json model override. Other adapters ignore this field.
     const agentLogFilePath =
       def.id === 'antigravity'
         ? path.join(os.tmpdir(), `od-agy-${run.id}.log`)
@@ -13859,9 +13953,10 @@ export async function startServer({
     };
     let forcedChildShutdownTimers = [];
     let acpAttemptTermination = null;
+    let acpCompletionShutdownRequested = false;
     const beginAcpAttemptTermination = (
       reason = 'acp_terminal',
-      { gracefulWaitMs = 0 } = {},
+      { gracefulWaitMs = 0, onChildSignal = undefined as (() => void) | undefined } = {},
     ) => {
       if (acpAttemptTermination) return acpAttemptTermination;
       acpAttemptTermination = design.runs.terminateProcessTree(
@@ -13873,6 +13968,7 @@ export async function startServer({
           termGraceMs: inactivityKillGraceMs,
           killGraceMs: inactivityKillGraceMs,
           reason,
+          onChildSignal,
         },
       );
       return acpAttemptTermination;
@@ -14382,8 +14478,9 @@ export async function startServer({
         }
         startIntentResolution(db, strategyTaskAtStart.taskExecutionId, run.id);
       }
-      // A plain-text stdin prompt is handed over as a complete file at spawn;
-      // framed stdin protocols (stream-json, JSON-RPC) keep the pipe. The
+      // A whole-prompt stdin prompt (plain text, or the runtime's own
+      // one-shot framing) is handed over as a complete file at spawn; live
+      // stdin protocols (Claude stream-json, JSON-RPC) keep the pipe. The
       // agent stays on record until its process group is gone, so a daemon
       // started after this one dies can reap it. See runtimes/agent-process.ts.
       const spawnedAgent = spawnAgentProcess({
@@ -14393,7 +14490,7 @@ export async function startServer({
         cwd: effectiveCwd,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
         stdin: stdinMode === 'pipe' && runtimeReadsPlainTextPromptFromStdin(def)
-          ? { prompt: composed }
+          ? { prompt: agentStdinPromptPayload(def, composed) }
           : stdinMode,
         runDir: path.join(RUNTIME_DATA_DIR, 'runs', run.id),
         runId: run.id,
@@ -14552,6 +14649,7 @@ export async function startServer({
           }
         : null;
       const memoryOptions = {
+        extractionOrigin: { projectId: run.projectId, conversationId: run.conversationId, runId: run.id, assistantMessageId: run.assistantMessageId },
         projectRoot: PROJECT_ROOT,
         chatAgentId: typeof agentId === 'string' ? agentId : null,
         chatModel: typeof safeModel === 'string' ? safeModel : null,
@@ -14774,19 +14872,6 @@ export async function startServer({
     let agentStreamErrorObservedBeforeCancellation = false;
     let acpFatalErrorObservedBeforeCancellation = false;
     run.runtimeFailureObservedBeforeCancellation = false;
-    // Holds buffered plain-text stdout chunks for agents (currently
-    // antigravity) where we need to inspect the full output at close
-    // time before deciding whether to forward it. The auth-prompt guard
-    // in the close handler suppresses the buffer when the output is an
-    // OAuth prompt; otherwise the flush below sends the chunks in order.
-    const plaintextStdoutBuffer: BufferedStdoutChunk[] = [];
-    // Arrival time of the first buffered plain-text stdout chunk
-    // (antigravity). First-token timing is stamped from this value only
-    // when the buffer is actually flushed to the client at close time. If
-    // the auth-prompt guard suppresses the buffer (the OAuth login URL is
-    // printed to stdout), no token ever reaches the user, so TTFT must not
-    // be recorded for that failure mode. See PR #3412.
-    let firstBufferedStdoutAt: number | null = null;
     // Tracks whether any stream the run is using actually emitted user-
     // visible content or a deliverable. Only the streams routed through
     // `sendAgentEvent` contribute to this flag; ACP sessions and plain stdout
@@ -15295,41 +15380,6 @@ export async function startServer({
       }
       emitAgentEvent(ev);
     };
-    const parseBufferedAntigravityGeminiJsonEventStream = () => {
-      if (
-        def.id !== 'antigravity' ||
-        plaintextStdoutBuffer.length === 0
-      ) {
-        return false;
-      }
-      const bufferedStdout = plaintextStdoutBuffer.map((chunk) => chunk.text).join('');
-      if (!looksLikeGeminiJsonEventStream(bufferedStdout)) return false;
-      trackingSubstantiveOutput = true;
-      const firstTokenAt = bufferedAntigravityGeminiFirstTokenAt(plaintextStdoutBuffer);
-      if (firstTokenAt !== null) noteFirstTokenAt(firstTokenAt);
-      const handler = createJsonEventStreamHandler('gemini', sendAgentEvent);
-      handler.feed(bufferedStdout);
-      handler.flush();
-      plaintextStdoutBuffer.length = 0;
-      return true;
-    };
-    const flushBufferedPlaintextStdout = () => {
-      // Stamp from the first chunk's arrival only once the buffer is known to
-      // be visible; suppressed OAuth prompts must never report a first token.
-      if (plaintextStdoutBuffer.length > 0 && firstBufferedStdoutAt !== null) {
-        noteFirstTokenAt(firstBufferedStdoutAt);
-      }
-      for (const chunk of plaintextStdoutBuffer) {
-        const strippedText = visibleStdoutControlStripper.write(chunk.text);
-        const visibleText = titleMarkerStripper.strip(strippedText);
-        if (visibleText) send('stdout', { chunk: visibleText });
-      }
-      const flushedControlText = visibleStdoutControlStripper.flush();
-      const flushedTitleMarkerText =
-        titleMarkerStripper.strip(flushedControlText) + titleMarkerStripper.flush();
-      if (flushedTitleMarkerText) send('stdout', { chunk: flushedTitleMarkerText });
-      plaintextStdoutBuffer.length = 0;
-    };
     const publishRuntimeChildEvidenceCoverage = (coverage) => {
       if (!strategyTaskAtStart || !coverage) return;
       sendAgentEvent({
@@ -15650,7 +15700,15 @@ export async function startServer({
         onPromptComplete: () => clearFirstOutputWatchdog(),
         onTerminal: (kind) => beginAcpAttemptTermination(
           `acp_${kind}`,
-          { gracefulWaitMs: kind === 'completed' ? 500 : 0 },
+          kind === 'completed'
+            ? {
+              gracefulWaitMs: 500,
+              // Only an exit the daemon causes speaks for the completed
+              // turn; vela exiting non-zero on its own during the grace
+              // wait is still its own failure.
+              onChildSignal: () => { acpCompletionShutdownRequested = true; },
+            }
+            : { gracefulWaitMs: 0 },
         ),
         send: (event, data, meta) => {
           if (event === 'error') {
@@ -15930,21 +15988,6 @@ export async function startServer({
           code === 0 && signal === null && !run.cancelRequested && !agentStreamError,
         ));
       });
-    } else if (def.id === 'antigravity') {
-      // Buffer stdout until close so the auth-prompt guard can suppress
-      // the OAuth URL before forwarding it to the client as assistant
-      // text. agy exits 0 after printing the auth URL on stdout, so the
-      // chunks would otherwise arrive before the close-time classifier
-      // detects them as an auth prompt. First-token timing is deliberately
-      // NOT stamped here — only the first chunk's arrival time is recorded,
-      // and `firstTokenAt` is stamped from it at flush time so the
-      // suppressed OAuth-prompt path never reports a TTFT (PR #3412).
-      child.stdout.on('data', (chunk) => {
-        noteAgentActivity();
-        const receivedAt = Date.now();
-        if (firstBufferedStdoutAt === null) firstBufferedStdoutAt = receivedAt;
-        plaintextStdoutBuffer.push({ text: String(chunk), receivedAt });
-      });
     } else {
       // Plain / BYOK mode: guard raw stdout chunks (#3247).
       child.stdout.on('data', (chunk) => {
@@ -16222,7 +16265,6 @@ export async function startServer({
         markRpcCloseReason('fatal_rpc_error');
         return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
       }
-      parseBufferedAntigravityGeminiJsonEventStream();
       flushAgentTitleMarkerBuffer();
       if (agentStreamErrorObservedBeforeCancellation && agentStreamError) {
         markRpcCloseReason('stream_error');
@@ -16286,15 +16328,12 @@ export async function startServer({
         ));
         return finishWithRetryDecision('failed', code, signal);
       }
-      // Plain-stream auth-failure guard: plain adapters (today
-      // antigravity, deepseek's TUI variants) may exit cleanly with
-      // visible stdout that's actually an auth prompt — agy prints
-      // "Authentication required. Please visit the URL to log in:
-      // <URL>" + "Error: authentication timed out." rather than
-      // failing with a non-zero exit. Without this guard the chat
-      // shows that raw prompt as the agent's "reply", and the user
-      // has no way to actually complete OAuth from inside the chat.
-      // Override the apparent success with a proper
+      // Plain-stream auth-failure guard: plain adapters (e.g. deepseek's
+      // TUI variants) may exit cleanly with visible stdout that's actually
+      // an auth prompt rather than failing with a non-zero exit. Without
+      // this guard the chat shows that raw prompt as the agent's "reply",
+      // and the user has no way to actually complete the login from inside
+      // the chat. Override the apparent success with a proper
       // AGENT_AUTH_REQUIRED error carrying actionable guidance.
       if (
         code === 0 &&
@@ -16317,13 +16356,7 @@ export async function startServer({
       }
       // Plain-stream empty-output guard: plain agents send raw stdout
       // chunks without structured event tracking. Detect auth failures
-      // and quota / upstream errors when exit 0 but no stdout was
-      // seen. agy in print mode is silent on stdout/stderr for both
-      // missing-auth AND quota-exhausted failures; the daemon piped
-      // agy's `--log-file` to `agentLogFilePath` precisely so this
-      // guard can grep the upstream error code (RESOURCE_EXHAUSTED 429
-      // for quota, "not logged into Antigravity" for auth) and route
-      // to the right user-facing guidance.
+      // and quota / upstream errors when exit 0 but no stdout was seen.
       if (
         code === 0 &&
         !run.cancelRequested &&
@@ -16331,47 +16364,13 @@ export async function startServer({
         !childStdoutSeen
       ) {
         markRpcCloseReason('empty_output');
-        let combinedDetail = `${agentStderrTail}\n${agentStdoutTail}`;
-        if (def.id === 'antigravity' && agentLogFilePath) {
-          try {
-            const logContent = await fs.promises.readFile(agentLogFilePath, 'utf8');
-            // Keep the last 8 KB — quota / auth lines all land near the
-            // tail (after the spawn / model-config preamble).
-            combinedDetail = `${combinedDetail}\n${logContent.slice(-8192)}`;
-          } catch {
-            // Missing log file (agy didn't write it, mounted tmpfs is
-            // read-only, etc.) is fine — fall through to the generic
-            // empty-output message.
-          }
-        }
+        const combinedDetail = `${agentStderrTail}\n${agentStdoutTail}`;
         const authFailure = classifyAgentAuthFailure(agentId, combinedDetail);
-        const serviceFailure = !authFailure
-          ? classifyAgentServiceFailure(combinedDetail)
-          : null;
-        const isAntigravityQuota =
-          def.id === 'antigravity' && serviceFailure === 'RATE_LIMITED';
-        // Antigravity-only fallback: if neither classifier matched but
-        // the run was silent, lean on the empirical observation that
-        // an empty agy print-mode exit almost always means
-        // missing-OAuth (the only other silent path is quota, which
-        // the log-file check above already caught).
-        const useAntigravityAuthFallback =
-          !authFailure && !serviceFailure && def.id === 'antigravity';
-        const errorCode =
-          authFailure || useAntigravityAuthFallback
-            ? 'AGENT_AUTH_REQUIRED'
-            : isAntigravityQuota
-              ? 'RATE_LIMITED'
-              : 'AGENT_EXECUTION_FAILED';
         const msg = authFailure
           ? authFailure.message ?? `${def.name} authentication expired. Please re-authenticate and retry.`
-          : isAntigravityQuota
-            ? antigravityQuotaGuidance()
-            : useAntigravityAuthFallback
-              ? antigravityAuthGuidance()
-              : `${def.name} returned an empty response. This may indicate an expired session — try re-authenticating the agent.`;
+          : `${def.name} returned an empty response. This may indicate an expired session — try re-authenticating the agent.`;
         send('error', createSseErrorPayload(
-          errorCode,
+          authFailure ? 'AGENT_AUTH_REQUIRED' : 'AGENT_EXECUTION_FAILED',
           msg,
           { retryable: true },
         ));
@@ -16384,12 +16383,12 @@ export async function startServer({
       // signal exit). `completedSuccessfully()` reports whether the ACP
       // session resolved without a fatal error or abort.
       //
-      // Scope the override narrowly to the exact forced-shutdown shape this
-      // PR introduces: code is null AND signal is SIGTERM AND the ACP
-      // session reported clean completion. Any other post-response failure
-      // (non-zero exit code, SIGKILL, SIGSEGV, etc.) still propagates as
-      // `failed`, preserving the existing close-status behavior for genuine
-      // post-response process problems.
+      // The override covers SIGTERM (or vela's code 130) after clean
+      // completion, and any exit after the daemon itself signalled the
+      // completed attempt (`acpCompletionShutdownRequested`; Windows reports
+      // that kill as code 1 with no signal). Other post-response failures,
+      // including a non-zero exit during the grace wait, still propagate as
+      // `failed`.
       const acpCleanCompletion =
         typeof acpSession?.completedSuccessfully === 'function' &&
         acpSession.completedSuccessfully();
@@ -16399,17 +16398,13 @@ export async function startServer({
         code,
         signal,
         acpCleanCompletion,
+        acpCompletionShutdownRequested,
         artifactQuietShutdownRequested,
         turnCompletedCleanly: !!run.turnCompletedCleanly,
         artifactProducedThisRun:
           runArtifactSideEffects.artifactWriteSeen ||
           runArtifactSideEffects.liveArtifactSeen,
       });
-      // Authentication guards above have now ruled out Antigravity's OAuth
-      // prompt. Publish any remaining guarded plaintext before a close error
-      // so both the emit-time admission ledger and durable-log reconciliation
-      // observe the genuine assistant response before the terminal boundary.
-      flushBufferedPlaintextStdout();
       // Skip the close-handler failure emit when the run is already
       // terminal: the inactivity watchdog (failForInactivity) finishes the
       // run — sending its error and clearing run.clients/eventsLogStream —
@@ -17140,9 +17135,7 @@ export async function startServer({
         completeCodexEvidenceCollection();
         // Best-effort cleanup of the per-run agy log file on every close
         // path — successful, failed, cancelled, or non-zero exit — so
-        // /tmp doesn't accumulate one file per Antigravity run. The log
-        // is read inside the empty-output guard above before this finally
-        // runs, so the read always happens before the unlink.
+        // /tmp doesn't accumulate one file per Antigravity run.
         if (agentLogFilePath) {
           fs.promises.unlink(agentLogFilePath).catch(() => {});
         }
@@ -17967,6 +17960,11 @@ export async function startServer({
     // work below.
     let messageEventPayloadHeal: MessageEventPayloadHealHandle | null = null;
     const cleanupDaemonBackgroundWork = () => {
+      stopDiagnosticConfigObserver();
+      stopDiagnosticApiObserver();
+      void automaticDiagnostics?.stop();
+      daemonHealth?.markCleanShutdown();
+      daemonHealth?.stop();
       void messageEventPayloadHeal?.stop();
       stopEvidenceDelivery();
       clearTerminalTelemetryFallbackTimers();
@@ -18052,6 +18050,17 @@ export async function startServer({
         resolvedPort = boundPort;
         startAmrTerminalReportDeliveryAfterBind(amrTerminalReportDelivery, boundPort);
         messageEventPayloadHeal ??= startMessageEventPayloadHeal({ db });
+        // Only once listening: a startup-time fatal report would add lines to
+        // the log tail that packaged startup telemetry samples.
+        daemonHealth?.enableFatalReports();
+        daemonHealth?.setAppVersion(currentAppVersion());
+        daemonHealth?.attachSink(({ eventName, properties, insertId }) =>
+          analyticsService.captureSafety({
+            eventName,
+            appVersion: currentAppVersion(),
+            properties,
+            insertId,
+          }));
         // When binding to all interfaces report localhost for local callers;
         // when binding to a specific address (e.g. a Tailscale IP) report that
         // address so remote callers and the sidecar use the correct URL.

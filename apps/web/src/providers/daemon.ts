@@ -41,7 +41,6 @@ import type {
   StrategyTaskProjectionV2,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
-import { OD_NEXT_AGENT_DECLARED_BLOCK_REASON } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
 
 /**
@@ -60,6 +59,7 @@ function isRunCancelOrigin(value: unknown): value is RunCancelOrigin {
 }
 import { workspaceProjectHeaders } from '../state/projects';
 import { setRuntimeAmrConsoleOrigin } from '../runtime/amr-guidance';
+import { canRetainSuccessfulRunForBlockedStrategy } from '../runtime/blocked-strategy-result';
 import { coalescedGet } from '../lib/coalesced-get';
 import { currentWorkspaceAccountGeneration } from '../collab/workspace-identity';
 
@@ -385,6 +385,12 @@ export interface DaemonAgentRetryState {
    * 一闪而过,最需要解释的那 30 秒照旧沉默。
    */
   phase: 'retrying' | 'cleared';
+  /**
+   * 这次重跑是因为什么。只在 daemon 判为限流(`failure_category: 'rate_limit'`,
+   * 逐字取自 `run_retry_attempted`)时带上 —— 那一行要改说「模型服务请求繁忙」
+   * (产品《报错文案》S09a,OPEND-2849)。其他原因不带,那一行照旧说「正在重试」。
+   */
+  cause?: 'rate_limit';
 }
 
 /** Upstream reconnect progress emitted by an agent runtime (not browser SSE). */
@@ -1682,17 +1688,39 @@ export async function listActiveChatRuns(
 export async function listProjectRuns(
   workspaceContext?: WorkspaceCollabContext | null,
 ): Promise<ChatRunStatusResponse[]> {
+  return (await listProjectRunsWithScope(workspaceContext)).runs;
+}
+
+/**
+ * The catalogue-wide listing, plus whether the daemon refused it outright.
+ *
+ * `scopeRequired` is the deterministic 400 `PROJECT_SCOPE_REQUIRED` answer once
+ * any run belongs to a Workspace-bound project. Asking again cannot change it,
+ * so interval pollers must stop instead of repeating the same failed request
+ * (each one was also captured as a diagnostic incident).
+ */
+export async function listProjectRunsWithScope(
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<{ runs: ChatRunStatusResponse[]; scopeRequired: boolean }> {
   try {
     const resp = await fetch('/api/runs', {
       ...(workspaceContext
         ? { headers: workspaceProjectHeaders(workspaceContext) }
         : {}),
     });
-    if (!resp.ok) return [];
+    if (!resp.ok) {
+      const body = (await resp.json().catch(() => null)) as
+        | { error?: { code?: string } }
+        | null;
+      return {
+        runs: [],
+        scopeRequired: resp.status === 400 && body?.error?.code === 'PROJECT_SCOPE_REQUIRED',
+      };
+    }
     const body = (await resp.json()) as ChatRunListResponse;
-    return body.runs ?? [];
+    return { runs: body.runs ?? [], scopeRequired: false };
   } catch {
-    return [];
+    return { runs: [], scopeRequired: false };
   }
 }
 
@@ -2122,6 +2150,7 @@ async function consumeDaemonPhysicalRun({
                 attempt,
                 max: Number.isFinite(max) && max > 0 ? max : attempt,
                 phase: 'retrying',
+                ...(data.failure_category === 'rate_limit' ? { cause: 'rate_limit' as const } : {}),
               });
             }
             continue;
@@ -2343,41 +2372,27 @@ async function consumeDaemonPhysicalRun({
         // wrong answer for the other is not a fix. The stricter field keeps its
         // existing behaviour: a run that wrote the entry delivered, prose or no
         // prose.
+        //
+        // The same rule decides here, on cold history load, and on artifact
+        // recovery — `canRetainSuccessfulRunForBlockedStrategy` is the one
+        // place it is written. Two more cases keep the success there: a block
+        // the agent declared on itself and explained (OPEND-2565), and a task
+        // refused before production while the agent replied — the greeting or
+        // off-topic turn, where the reply is the whole outcome. A Run that
+        // failed keeps its error whatever the agent narrated, because narration
+        // is not a substitute for the failure the user has to act on.
         const blockedRunStatus = endStatus === 'succeeded'
           ? await fetchChatRunStatus(runId, workspaceContext)
           : null;
-        const deliveredDespiteBlock = blockedRunStatus !== null
-          && (
-            (blockedRunStatus.projectDeliverableValid === true
-              && acc.trim().length > 0)
-            || blockedRunStatus.deliverableValid === true
+        const retainSuccess = endStatus === 'succeeded'
+          && canRetainSuccessfulRunForBlockedStrategy(
+            endStatus,
+            endStrategyTask,
+            blockedRunStatus?.deliverableValid,
+            blockedRunStatus?.projectDeliverableValid,
+            acc,
           );
-        // A block the agent declared on itself is not a failure to report.
-        // Asked for a prototype with nothing to build on, the agent answers in
-        // the chat — "the requirement was skipped, so there is no runnable plan
-        // this round" — and that reply is the turn's outcome. Raising a run
-        // error on top of it restated the same sentence inside a red "task
-        // execution failed" card, so a turn that had simply asked for more
-        // detail read as a crash (OPEND-2565).
-        //
-        // Keyed on the reason code, NOT on the presence of visible text. Every
-        // other block is a gate the agent did not ask for — a missing Runtime
-        // State, an unresolvable deliverable, an unproven session — and the
-        // prose sitting next to it is the agent's ordinary reply ("sure, three
-        // pages, here is the plan"), not an account of the stop. Treating that
-        // as an explanation would hide a real protocol failure behind a
-        // cheerful sentence.
-        //
-        // Also requires a Run that reached the end on its own: a Run that
-        // failed keeps its error even when the agent narrated the failure,
-        // because narration is not a substitute for the failure the user has
-        // to act on.
-        const agentDeclaredBlock = endStrategyTask.blockedContext?.reasonCodes
-          .includes(OD_NEXT_AGENT_DECLARED_BLOCK_REASON) === true;
-        const explainedToUser = endStatus === 'succeeded'
-          && agentDeclaredBlock
-          && (endStrategyTask.blockedContext?.visibleText?.trim().length ?? 0) > 0;
-        if (!deliveredDespiteBlock && !explainedToUser) {
+        if (!retainSuccess) {
           endStatus = 'failed';
           pendingStructuredError ??= createStrategyTaskBlockedError(endStrategyTask);
         }

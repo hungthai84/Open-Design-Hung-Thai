@@ -13,24 +13,30 @@ import {
 import { useWorkspaceBilling, useWorkspaceContext } from '../collab/useWorkspaceContext';
 import { workspaceAutoRechargeUrl, workspaceUpgradeUrl } from './EntryNavRail';
 import {
-  AMR_HARD_BLOCK_BALANCE_USD,
-  amrWalletBalanceUsd,
+  amrBalanceGateScopeForWorkspaceContext,
+  hasAmrFundingRecovered,
+  type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
-import { fetchAmrWalletSnapshot, formatVelaBalanceUsd } from '../providers/daemon';
 import { AmrLoginPill } from './AmrLoginPill';
 import { Icon } from './Icon';
 import styles from './AmrBalanceDialog.module.css';
 
-/** How often the post-recharge wallet watch polls (daemon-cached reads; the
- * daemon's own TTL rate-limits the upstream calls). */
-const WALLET_WATCH_INTERVAL_MS = 5_000;
+/** How often the post-recharge funding watch polls. Overlapping ticks are
+ * skipped so a stalled preflight cannot stack HTTP or Vela work. */
+export const WALLET_WATCH_INTERVAL_MS = 5_000;
 /** Give up watching after this long; the dialog stays, resume goes manual. */
-const WALLET_WATCH_TIMEOUT_MS = 10 * 60_000;
+export const WALLET_WATCH_TIMEOUT_MS = 10 * 60_000;
 
 interface Props {
   /** Why the send was hard-blocked: empty wallet, or not signed in at all. */
   reason: 'insufficient' | 'signed_out';
-  /** Raw wallet balance string from the blocking snapshot; null hides the badge. */
+  modelId?: string | null;
+  fundingScope?: AmrBalanceGateScope;
+  /**
+   * Raw wallet balance string from the blocking snapshot. Not rendered: the
+   * finalized S06 copy (OPEND-2849) carries no amount. Kept so callers keep
+   * passing the snapshot they gated on.
+   */
   balanceUsd: string | null;
   /** OpenDesign Cloud profile from the blocking snapshot; picks the console origin. */
   profile: string | null;
@@ -121,7 +127,8 @@ interface Props {
 // (T66). A positive balance now produces no dialog and no card anywhere.
 export function AmrBalanceDialog({
   reason,
-  balanceUsd,
+  modelId,
+  fundingScope,
   profile,
   entrySource,
   upgradeIntent = 'pricing',
@@ -133,7 +140,6 @@ export function AmrBalanceDialog({
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
-  const formattedBalance = formatVelaBalanceUsd(balanceUsd);
   const signedOut = reason === 'signed_out';
   const signInEntrySource =
     entrySource === 'home_balance_gate_upgrade'
@@ -183,28 +189,43 @@ export function AmrBalanceDialog({
   useEffect(() => {
     if (!watchingWallet) return;
     let cancelled = false;
+    let inFlight = false;
     const startedAt = Date.now();
+    const stopWatching = () => {
+      if (cancelled) return;
+      setWatchingWallet(false);
+    };
     const tick = async () => {
-      if (cancelled) return;
-      const snapshot = await fetchAmrWalletSnapshot().catch(() => null);
-      if (cancelled) return;
-      const balance = amrWalletBalanceUsd(snapshot);
-      if (balance != null && balance > AMR_HARD_BLOCK_BALANCE_USD) {
-        resolveOnce();
+      if (cancelled || inFlight) return;
+      if (Date.now() - startedAt > WALLET_WATCH_TIMEOUT_MS) {
+        stopWatching();
         return;
       }
-      if (Date.now() - startedAt > WALLET_WATCH_TIMEOUT_MS) {
-        setWatchingWallet(false);
+      inFlight = true;
+      try {
+        const recovered = await hasAmrFundingRecovered(fundingScope ?? amrBalanceGateScopeForWorkspaceContext(workspaceContext), modelId);
+        if (cancelled) return;
+        if (recovered) {
+          resolveOnce();
+          return;
+        }
+        if (Date.now() - startedAt > WALLET_WATCH_TIMEOUT_MS) {
+          stopWatching();
+        }
+      } finally {
+        inFlight = false;
       }
     };
     const interval = setInterval(() => void tick(), WALLET_WATCH_INTERVAL_MS);
+    const timeout = setTimeout(stopWatching, WALLET_WATCH_TIMEOUT_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      clearTimeout(timeout);
     };
     // resolveOnce is stable via ref; onResolved changes don't re-arm the watch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchingWallet]);
+  }, [watchingWallet, workspaceContext?.workspaceId, workspaceContext?.workspaceMemberId, fundingScope?.workspaceId, fundingScope?.workspaceMemberId, modelId]);
   const openUpgrade = () => {
     if (!upgradeUrl) return;
     setWatchingWallet(true);
@@ -263,12 +284,11 @@ export function AmrBalanceDialog({
         {signedOut ? t('chat.amrBalanceGate.signedOutTitle') : t('chat.amrBalanceGate.title')}
       </h2>
       <p className={styles.message}>
+        {/* Product copy S04 / S06 (OPEND-2849): the insufficient variant no
+            longer quotes the balance — the finalized sentence has no amount. */}
         {signedOut
           ? t('chat.amrBalanceGate.signedOutMessage')
-          : // The insufficient variant always carries a definitive balance
-            // (that's what made the gate fire); the fallback is belt and
-            // suspenders for a malformed snapshot.
-            t('chat.amrBalanceGate.message', { balance: formattedBalance ?? '$0.00' })}
+          : t('chat.amrBalanceGate.message')}
       </p>
       <div className={styles.benefitsCard}>
         <span className={styles.benefitsTitle}>
