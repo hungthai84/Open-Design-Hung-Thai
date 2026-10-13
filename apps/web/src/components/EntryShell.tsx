@@ -245,6 +245,8 @@ import {
 } from './entryRailBridge';
 import { resolveByokModelPreference } from './byok/validation';
 import onboardingWelcomeStyles from './OnboardingWelcome.module.css';
+import { readSeatFreeMock } from '../mock/seat-free';
+import { SeatFreeOnboardingInvite } from './SeatFreeOnboardingInvite';
 import { AmrActivationHintText } from './AmrActivationHintText';
 
 // How long a cloud sign-in waits for the browser before offering to reopen it.
@@ -708,7 +710,9 @@ export function EntryShell({
     amrLoggedIn,
     amrSessionState,
   );
-  const railWorkspaceContext = accountFooterState === 'sign-in'
+  // DEV-ONLY review mock (`?mock=seatfree`): keep the mocked workspace on the rail.
+  const seatFreeMock = readSeatFreeMock();
+  const railWorkspaceContext = accountFooterState === 'sign-in' && !seatFreeMock
     ? null
     : workspaceContext;
   const usesOpenDesignCloud = config.mode === 'daemon' && config.agentId === 'amr';
@@ -733,7 +737,7 @@ export function EntryShell({
     accountFooterNotice = <RailAccountSyncTip />;
   } else if (accountFooterState === 'recovering') {
     accountFooterNotice = <RailAccountRecoveryTip />;
-  } else if (accountFooterState === 'sign-in') {
+  } else if (accountFooterState === 'sign-in' && !seatFreeMock) {
     accountFooterNotice = <CloudSignInTip />;
   }
   const workspaceContextRef = useRef(workspaceContext);
@@ -2229,7 +2233,16 @@ function OnboardingView({
 }) {
   const t = useT();
   const analytics = useAnalytics();
-  const [step, setStep] = useState(0);
+  // DEV-ONLY review mock: `?mock=seatfree&onboard=invite` opens the invite step
+  // (3) directly; with the mock on, finishing onboarding passes through it.
+  const [step, setStep] = useState(() => (readSeatFreeMock()?.onboardInvite ? 3 : 0));
+  const finishOnboardingOrInvite = () => {
+    if (readSeatFreeMock()) {
+      setStep(3);
+      return;
+    }
+    onFinish();
+  };
   const [runtime, setRuntime] = useState<'amr' | 'local' | 'byok' | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [cliScanStatus, setCliScanStatus] = useState<'idle' | 'scanning' | 'done'>('idle');
@@ -2530,6 +2543,7 @@ function OnboardingView({
       || !hasRestorableModelSourceConfig
       || (config.mode === 'daemon' && config.agentId !== 'amr' && agentsLoading)
       || passiveReauthCompletedRef.current
+      || readSeatFreeMock()
     ) {
       return;
     }
@@ -2865,7 +2879,7 @@ function OnboardingView({
       runtimeType,
     });
     clearOnboardingSessionId();
-    onFinish();
+    finishOnboardingOrInvite();
   }
 
   function continueAfterCloudSignIn(): void {
@@ -2873,7 +2887,7 @@ function OnboardingView({
       if (passiveReauthCompletedRef.current) return;
       passiveReauthCompletedRef.current = true;
       clearOnboardingSessionId();
-      onFinish();
+      finishOnboardingOrInvite();
       return;
     }
     emitOnboardingClick('amr_cloud', 'select_runtime', {
@@ -3598,6 +3612,11 @@ function OnboardingView({
 
   const primaryActionLabel = t('settings.onboardingContinue');
 
+  // DEV-ONLY review mock: the closing "invite teammates" step.
+  if (step === 3) {
+    return <SeatFreeOnboardingInvite onDone={onFinish} />;
+  }
+
   // Cloud remains the primary identity path. Local CLI and BYOK are independent
   // direct setup paths; authenticated users keep the full source chooser.
   if (step === 0) {
@@ -3617,12 +3636,13 @@ function OnboardingView({
                 <span className={onboardingWelcomeStyles.creditCorner}>
                   <span
                     className={`${onboardingWelcomeStyles.credits} od-tooltip`}
-                    data-tooltip={t('settings.onboardingFreeCreditsHint')}
-                    aria-label={t('settings.onboardingFreeCreditsHint')}
+                    data-tooltip={readSeatFreeMock() ? t('seatFree.freeGrant') : t('settings.onboardingFreeCreditsHint')}
+                    aria-label={readSeatFreeMock() ? t('seatFree.freeGrant') : t('settings.onboardingFreeCreditsHint')}
                     tabIndex={0}
                   >
                     <span className={onboardingWelcomeStyles.creditLabel}>
-                      {t('settings.onboardingFreeCredits')}
+                      {/* DEV-ONLY review mock: the one-off $0.5 sign-up grant. */}
+                      {readSeatFreeMock() ? t('seatFree.freeGrantShort') : t('settings.onboardingFreeCredits')}
                     </span>
                   </span>
                 </span>

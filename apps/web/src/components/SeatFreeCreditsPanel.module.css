@@ -1,0 +1,105 @@
+/* DEV-ONLY seat-free review mock: the two allowance blocks (Design Plan and
+ * 按量额度) in the top-right billing card, on the card's dark surface. */
+.section + .section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #ffffff1f;
+}
+
+.title {
+  margin: 0;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.sub {
+  margin: 2px 0 0;
+  color: #9a9a9a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.window {
+  margin-top: 10px;
+}
+
+.resets {
+  margin: 4px 0 0;
+  color: #9a9a9a;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.amount {
+  margin-top: 8px;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.amountTotal {
+  color: #9a9a9a;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.action {
+  padding: 2px 10px;
+  border-radius: 100px;
+  background: #b1f38b;
+  color: #10230a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-decoration: none;
+}
+
+.action:hover {
+  background: #c6f7a8;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: #f5b26b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.out {
+  color: #ff8a7a;
+}
+
+.fillLow {
+  background: #f5b26b;
+}
+
+.fillEmpty {
+  background: #ff8a7a;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #ffffff1f;
+  color: #9a9a9a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.footerLink {
+  flex-shrink: 0;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.footerLink:hover {
+  text-decoration: underline;
+}

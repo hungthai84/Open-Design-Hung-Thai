@@ -46,6 +46,7 @@ import {
   retainWorkspaceBillingInterest,
   workspaceBillingInterestHeaders,
 } from './workspace-billing-interests';
+import { readSeatFreeMock, seatFreeMockContext } from '../mock/seat-free';
 
 // One shared read of the workspace context (`GET /api/workspace/context`) for the
 // navigation shell. The daemon proxies B's `CurrentWorkspaceContext`; `context`
@@ -649,6 +650,20 @@ export function lastResolvedTeamProjects(
 }
 
 export function useWorkspaceContext(): WorkspaceContextState {
+  const real = useWorkspaceContextReal();
+  // DEV-ONLY review mock (`?mock=seatfree`): swap in a fake workspace so the
+  // seat-free surfaces render without a Cloud sign-in. Off → untouched.
+  const mock = readSeatFreeMock();
+  if (!mock) return real;
+  return {
+    ...real,
+    context: seatFreeMockContext(mock),
+    loading: false,
+    identityChangePending: false,
+  };
+}
+
+function useWorkspaceContextReal(): WorkspaceContextState {
   const [state, setState] = useState<WorkspaceContextState>(() => ({
     context: cachedWorkspaceContext,
     resourceReadIdentity:

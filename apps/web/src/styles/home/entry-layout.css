@@ -3304,6 +3304,11 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
+  /* Center the 440px column within the half-width pane, so the content sits
+     in the middle of its half instead of hugging the left edge with a wide
+     blank strip before the art. The footer is absolutely positioned and keeps
+     its own left offset. */
+  align-items: center;
   min-width: 0;
   min-height: 0;
   padding: 72px 64px 64px;
@@ -6799,6 +6804,34 @@
 .entry-top-right-github:hover {
   border-color: var(--border-strong);
 }
+/* DEV-ONLY seat-free review mock: standing 邀请 chip, same capsule as the
+   GitHub chip so the cluster reads as one row. */
+.entry-top-right-invite {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--material-separator);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
+  box-shadow: var(--shadow-xs);
+  color: var(--text-strong);
+  font-size: var(--font-size-13);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.entry-top-right-invite svg {
+  color: var(--text-soft);
+}
+.entry-top-right-invite:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
+}
 
 /* Hover region + positioning context for the billing panel that hangs under
    the credits / 升级 pill (per product: 黑色卡片在右上角的升级下边显示). The
@@ -8404,6 +8437,25 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   flex: 0 0 auto;
   color: var(--brand-text);
 }
+/* Role descriptions (seat-free mock): the label with one muted line under
+   it; the menu widens past the trigger to fit them on one line. */
+.entry-invite__role-menu--described {
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+}
+.entry-invite__role-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+.entry-invite__role-option-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
 @keyframes entryInviteRoleMenuIn {
   from {
     opacity: 0;
@@ -8450,6 +8502,10 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   border-color: var(--accent);
 }
 .entry-invite__panel--split .entry-invite__label { margin-bottom: 0; }
+.entry-invite__panel--seatfree .entry-invite__role-picker .entry-invite__role { width: 100%; }
+/* Rows grow a 32px remove button (+12px gap) once there are two; keep the
+   role label over the role column. */
+.entry-invite__panel--seatfree .entry-invite__field-labels--remove { padding-right: 44px; }
 .entry-invite__panel--split .entry-invite__input {
   flex: 1 1 0;
   min-width: 0;
@@ -9383,4 +9439,97 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   color: var(--text-faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+/* InviteRowsEditor's wrapper: layout-transparent, so the labels / rows / add
+   button stay direct flex items of the hosting form column. */
+.entry-invite__editor {
+  display: contents;
+}
+/* InviteRowsEditor geometry (dialog + seat-free onboarding). Every edge lines
+   up with the form column: rows run full width (no scrollbar gutter), email
+   and role share one height, the role label sits over the role box, and the
+   two text actions under the rows align to the column's left / right edge. */
+.entry-invite__editor .entry-invite__rows {
+  margin: 0 -4px;
+  padding: 2px 4px;
+  gap: 10px;
+}
+.entry-invite__editor .entry-invite__fields {
+  gap: 10px;
+}
+.entry-invite__editor .entry-invite__input,
+.entry-invite__editor .entry-invite__role-picker .entry-invite__role {
+  box-sizing: border-box;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.entry-invite__editor .entry-invite__input {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 12px;
+}
+.entry-invite__editor .entry-invite__role-picker .entry-invite__role {
+  width: 100%;
+  padding: 0 32px 0 12px;
+}
+.entry-invite__editor .entry-invite__field-labels {
+  gap: 10px;
+  margin-bottom: -2px;
+}
+.entry-invite__editor .entry-invite__label {
+  margin-bottom: 0;
+}
+/* Rows grow a 32px remove button (+10px gap) once there are two; keep the
+   role label over the role box. */
+.entry-invite__editor .entry-invite__field-labels--remove {
+  padding-right: 42px;
+}
+.entry-invite__editor .entry-invite__row-remove {
+  width: 32px;
+  height: 32px;
+}
+/* "Add member" + an optional trailing action (copy invite link): two quiet
+   text buttons; the negative inline margin puts their text on the column
+   edges while keeping a comfortable hover box. */
+.entry-invite__add-row-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -8px;
+}
+.entry-invite__editor .entry-invite__add-row {
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+.entry-invite__editor .entry-invite__add-row:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text-strong);
+}
+
+/* Inline email validation (seat-free mock, InviteRowsEditor): one recipient =
+   the email/role row plus its error line directly under it. */
+.entry-invite__recipient {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.entry-invite__editor .entry-invite__input--error,
+.entry-invite__editor .entry-invite__input--error:focus {
+  border-color: var(--red);
+}
+.entry-invite__row-error {
+  margin: 0;
+  padding-left: 2px;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.4;
 }

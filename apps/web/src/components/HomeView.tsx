@@ -7,6 +7,8 @@
 // surface by lifting its plugin orchestration up here so the prompt
 // textarea can live centered in the hero.
 
+import { SeatFreeInvitesSentToast } from './SeatFreeInvitesSentToast';
+import { SeatFreeInviteBanner } from './SeatFreeInviteBanner';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Dialog, DialogFooter, DialogTitle } from '@open-design/components';
 import type {
@@ -3118,6 +3120,9 @@ export function HomeView({
           installationId={deepSeekV4FlashCampaignInstallationId}
         />
       )}
+      {/* DEV-ONLY review mock (`?mock=seatfree`): one-member invite strip. */}
+      {variant === 'dock' ? null : <SeatFreeInviteBanner />}
+      {variant === 'dock' ? null : <SeatFreeInvitesSentToast />}
       <HomeHero
         variant={variant}
         collapseSignal={collapseSignal}
