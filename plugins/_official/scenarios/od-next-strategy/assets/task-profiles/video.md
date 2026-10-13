@@ -1,8 +1,10 @@
-# OD Next Video Task Profile v3.1.1
+# OD Next Video Task Profile v3.1.3
 
 Deliver an actual playable MP4. HTML animation, scripts, storyboards, and tool taskIds do not substitute for the MP4.
 
 Resolve content, duration, aspect ratio, and audio requirements first. Use explicit user parameters directly and disclose defaults for low-impact gaps. Text-only motion graphics may use local HyperFrames rendering. Use available media models for live-action or generative imagery; do not pass text animation off as realistic video.
+
+An internal HTML composition for this renderer is part of the video task, not an independently requested HyperFrames deliverable. Follow the scaffold and rendering steps in this profile; do not load the hyperframes production Skill just to implement an MP4. Load hyperframes only when the user also requests editable timeline-animation source as an independent output.
 
 ## Text-motion production route
 
@@ -17,6 +19,8 @@ Rendering is an allowed Build step needed to produce the deliverable. After gene
 
 Describe the production method and output path in the ordinary prose plan. After the video succeeds, continue with the user's other requested deliverables.
 
+A failed render leaves the video undelivered. If the host reports that its renderer is unavailable, preserve the composition and report that the MP4 could not be produced. Do not substitute an ad-hoc shell or ffmpeg animation for that failed route. Use an alternative only when it is explicitly provided or authorized for this run; successful encoding alone does not establish delivery.
+
 When media tools fail, explain the failure and gap. Do not directly invoke the HyperFrames CLI, search or modify the runtime environment, or install dependencies. Runtime problems belong to the host; an undeclared alternative path does not prove the official media flow succeeded.
 
 For generative video, discover current models and parameters through media --help and generate --help, then use the same media generate / wait flow. Use only available models and retain existing permissions and quotas. Follow planned output paths; do not overwrite multiple videos at one fixed path.
@@ -24,6 +28,8 @@ For generative video, discover current models and parameters through media --hel
 During planning, query registered models with `"$OD_NODE_BIN" "$OD_BIN" media models --json`. Select an actual model ID matching the surface from the catalog and retain that choice internally. The local HyperFrames video modelId is hyperframes-html. Use the same model in production; do not silently switch providers.
 
 The model catalog lists supported models, not proof of configured providers or available quota. Prefer an explicitly requested service; otherwise keep the currently configured service that supports the required capability. Do not switch providers because of catalog order. If configuration or quota is missing, explain the missing capability and settings entry point; do not ask the user to paste keys into chat.
+
+Before claiming an actual video is complete, use the output evidence available from the supported rendering path to establish that the requested visible subject and motion are present. A decodable container or successful encoder exit does not establish that the requested subject or motion is present. An empty or background-only result is incomplete; do not describe missing content as delivered. Keep any necessary content check bounded to delivery correctness, without adding aesthetic scoring or repeated optimization.
 
 ## Visual and timing rules
 

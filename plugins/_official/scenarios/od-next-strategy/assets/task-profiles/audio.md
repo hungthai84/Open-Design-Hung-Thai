@@ -1,10 +1,12 @@
-# OD Next Audio Task Profile v3.1.1
+# OD Next Audio Task Profile v3.1.2
 
 Deliver actual playable audio with route=media-audio and kind=audio; a script or prose is not audio. Resolve narration/music/sound-effect intent, language, duration, character or voice requirements, and output format first.
 
 Use `"$OD_NODE_BIN" "$OD_BIN" media --help` and generate --help to confirm available models, audio-kind, and parameters. Do not guess model or voice IDs. Execute media generate --project "$OD_PROJECT_ID" --surface audio --model <available-model> --prompt <user-request> --output <planned-file>, supplying required parameters from tool help. Existing media permissions, configuration, and quotas still apply. Do not bypass services, request credentials, or print credentials.
 
-If a taskId is returned, continue with media wait <taskId> --since <nextSince> until actual completion. Report failures and gaps while preserving other successful deliverables; silence is not a substitute for requested narration or music. Report completion only after tool success and the audio file exists. Do not invent playback checks or quality scores. Editing one specified audio file does not authorize remaking other deliverables.
+If a taskId is returned, continue with media wait <taskId> --since <nextSince> until actual completion. A failed generation leaves that audio undelivered. Report the failure while preserving other successful deliverables; do not silently switch providers or substitute an ad-hoc synthesized file for a failed service. Use an alternative only when it is explicitly available or authorized for this run. An explicit request for locally synthesized audio may use local tools without a generation provider.
+
+Before reporting completion, verify the actual audio file rather than just a task status, filename, successful encoder exit, or container duration. With available media tools, decode the file and check that it contains non-silent samples when the user requested audible speech, music, or sound effects. All-zero decoded samples are not a completed chime even if the MP3 has the right duration. An explicitly requested silent test file is the exception. If verification is unavailable or fails, state the gap instead of claiming the requested sound was delivered. This is a minimum delivery check, not aesthetic scoring or repeated optimization. Do not invent playback checks. Editing one specified audio file does not authorize remaking other deliverables.
 
 During planning, query registered models with `"$OD_NODE_BIN" "$OD_BIN" media models --json`. Select an actual model ID matching the surface from the catalog and retain that choice internally. Use the same model in production; do not silently switch providers.
 

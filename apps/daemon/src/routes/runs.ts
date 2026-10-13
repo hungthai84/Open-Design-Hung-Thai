@@ -765,16 +765,20 @@ function toProjectFiles(value: unknown): ProjectFileEntry[] {
 // Intents the scenario-plugin fallback resolver is allowed to see. Mirrors the
 // `ProjectMetadata['intent']` contract union so an unknown/legacy string in a
 // stored project row never gets cast into the union.
-const SCENARIO_PROJECT_INTENTS: readonly NonNullable<ContractProjectMetadata['intent']>[] = [
-  'live-artifact',
-  'web-clone',
-  'document',
-  'marketing',
-  'hyperframes',
-];
+const SCENARIO_PROJECT_INTENTS: Record<NonNullable<ContractProjectMetadata['intent']>, true> = {
+  'live-artifact': true,
+  'web-clone': true,
+  document: true,
+  'webgl-experience': true,
+  'worker-visualizer': true,
+  marketing: true,
+  hyperframes: true,
+};
 
 function toScenarioProjectIntent(value: unknown): ContractProjectMetadata['intent'] | undefined {
-  return SCENARIO_PROJECT_INTENTS.find((intent) => intent === value);
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(SCENARIO_PROJECT_INTENTS, value)
+    ? value as NonNullable<ContractProjectMetadata['intent']>
+    : undefined;
 }
 
 function toScenarioProjectMetadata(

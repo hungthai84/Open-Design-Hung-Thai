@@ -37,7 +37,7 @@
       "assets": {
         "core": {
           "path": "./assets/core-system-prompt.md",
-          "version": "3.1.0"
+          "version": "3.1.1"
         },
         "orchestration": {
           "path": "./assets/general-orchestration.md",
@@ -47,7 +47,7 @@
           {
             "taskType": "prototype",
             "path": "./assets/task-profiles/prototype.md",
-            "version": "3.1.0",
+            "version": "3.1.1",
             "rollout": "active",
             "projectKinds": [
               "prototype"
@@ -101,7 +101,7 @@
           {
             "taskType": "discovery",
             "path": "./assets/task-profiles/discovery.md",
-            "version": "3.1.1",
+            "version": "3.1.8",
             "rollout": "active",
             "projectKinds": [
               "generic"
@@ -109,7 +109,7 @@
             "resources": [
               {
                 "path": "./assets/task-profiles/prototype.md",
-                "version": "3.1.0"
+                "version": "3.1.1"
               },
               {
                 "path": "./assets/task-profiles/ppt.md",
@@ -137,15 +137,15 @@
               },
               {
                 "path": "./assets/task-profiles/live-artifact.md",
-                "version": "3.1.1"
+                "version": "3.1.4"
               },
               {
                 "path": "./assets/task-profiles/video.md",
-                "version": "3.1.1"
+                "version": "3.1.3"
               },
               {
                 "path": "./assets/task-profiles/audio.md",
-                "version": "3.1.1"
+                "version": "3.1.2"
               },
               {
                 "path": "./assets/task-profiles/prototype/device-frames/iphone.html",

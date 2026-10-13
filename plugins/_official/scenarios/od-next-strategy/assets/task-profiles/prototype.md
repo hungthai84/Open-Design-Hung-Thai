@@ -1,4 +1,4 @@
-# OD Next Prototype Task Profile v3.1.0
+# OD Next Prototype Task Profile v3.1.1
 
 > Rollout: active
 
@@ -236,6 +236,11 @@ pointer-only styles live under `@media (hover: hover)`. An `<img>` keeps its
 never a CSS height on the image. A card, tile, or row built on `<a>` sets its
 own `color` and `text-decoration: none`; browser-default link styling never
 reaches product UI.
+
+### Render charts as real graphics
+
+- Keep SVG drawing elements inside an actual `<svg viewBox="...">` root. When constructing them from JavaScript, use `document.createElementNS('http://www.w3.org/2000/svg', ...)` or insert SVG markup into an existing SVG root; never inject bare `path`, `line`, or `text` elements into an HTML `div`.
+- Give the chart a visible viewport and explicit dimensions. Keep plotted marks, axes, and labels within that viewport at the intended screen sizes; an empty chart container is not a rendered chart.
 
 ### Design usable forms and feedback
 

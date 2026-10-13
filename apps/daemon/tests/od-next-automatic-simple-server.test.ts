@@ -1067,6 +1067,30 @@ process.exit(127);
     expect(task.continuedFromTaskExecutionId).toBe(first.strategyTask!.taskExecutionId);
   }, 45_000);
 
+  it('keeps the automatic WebGL entry in Discovery when Query requests a presentation', async () => {
+    const fixture = await createPublicRolloutFixture('webgl-query-priority', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    const project = await createProjectForScenario(started.url, 'manual-webgl', {
+      kind: 'prototype', intent: 'webgl-experience',
+    });
+    expect(project.metadata?.scenarioBinding).toMatchObject({
+      provenance: 'automatic_default', pluginId: 'example-webgl-experience',
+    });
+    const run = await postRun(started.url, publicRunRequest(
+      project, 'Make a three-slide community-service presentation, not a WebGL demo.',
+      'webgl-query-priority',
+    ));
+    expect(run.strategyTask).toMatchObject({ inputStage: 'request' });
+    expect(await readDurableRunState(run.runId as string)).toMatchObject({
+      strategyRolloutDecision: { decisionClass: 'active', taskType: 'discovery' },
+    });
+    await fetch(`${started.url}/api/runs/${encodeURIComponent(run.runId as string)}/cancel`, { method: 'POST' });
+    await waitForRunTerminal(started.url, run.runId as string);
+  });
+
   it('keeps Discovery active for subsequent requests despite a historical off preference', async () => {
     const fixture = await createPublicRolloutFixture('app-config-opt-out', 'design');
     started = fixture.started;
