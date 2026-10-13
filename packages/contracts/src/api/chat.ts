@@ -86,6 +86,7 @@ export type ByokChatProtocol =
   | 'openai'
   | 'azure'
   | 'google'
+  | 'vertexai'
   | 'ollama'
   | 'senseaudio'
   | 'aihubmix';
@@ -97,6 +98,17 @@ export interface ByokChatProviderConfig {
   apiVersion?: string;
   /** Explicit run-scoped provider policy for presets that do not require bearer credentials. */
   requiresApiKey?: boolean;
+  /** Vertex AI (`vertexai` protocol) only — GCP project id whose billing
+   *  account is charged for inference. When omitted, the daemon falls back to
+   *  its `GOOGLE_CLOUD_PROJECT` environment variable. Vertex AI needs no API
+   *  key: the daemon authenticates through Application Default Credentials,
+   *  which on a GCE VM is the instance's attached service account. */
+  gcpProject?: string;
+  /** Vertex AI (`vertexai` protocol) only — Vertex location to call. Defaults
+   *  to `"global"` (or the daemon's `GOOGLE_CLOUD_LOCATION` env var). Newer
+   *  Gemini models (3.x) are served from the global endpoint; regional
+   *  endpoints such as `us-central1` do not carry them. */
+  gcpLocation?: string;
   /**
    * Run-scoped chat model id selected in the chat UI. Forwarded to the daemon
    * so BYOK-backed utilities (e.g. memory extraction) can honor the user's

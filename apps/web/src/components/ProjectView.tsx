@@ -1994,12 +1994,33 @@ function byokOpenCodeProviderFromConfig(
     ...(config.apiProtocol === 'azure' && config.apiVersion?.trim()
       ? { apiVersion: config.apiVersion.trim() }
       : {}),
+    ...(config.apiProtocol === 'vertexai'
+      ? {
+          ...(gcpProjectForConfig(config)
+            ? { gcpProject: gcpProjectForConfig(config) }
+            : {}),
+          ...(gcpLocationForConfig(config)
+            ? { gcpLocation: gcpLocationForConfig(config) }
+            : {}),
+        }
+      : {}),
     requiresApiKey: byokProviderRequiresApiKey(
       config.apiProtocol,
       selectedProvider,
       config.baseUrl,
     ),
   };
+}
+
+/** Vertex AI: the GCP project / location ride on the per-protocol config
+ *  (apiProtocolConfigs.vertexai), not on the top-level AppConfig fields the
+ *  generic form projects. Empty means "use the daemon's env default". */
+function gcpProjectForConfig(config: AppConfig): string | undefined {
+  return config.apiProtocolConfigs?.vertexai?.gcpProject?.trim() || undefined;
+}
+
+function gcpLocationForConfig(config: AppConfig): string | undefined {
+  return config.apiProtocolConfigs?.vertexai?.gcpLocation?.trim() || undefined;
 }
 
 function selectedKnownProviderForConfig(config: AppConfig) {
@@ -2023,6 +2044,7 @@ function isOpenCodeByokChatProtocol(
     protocol === 'openai' ||
     protocol === 'azure' ||
     protocol === 'google' ||
+    protocol === 'vertexai' ||
     protocol === 'ollama' ||
     protocol === 'senseaudio' ||
     protocol === 'aihubmix'

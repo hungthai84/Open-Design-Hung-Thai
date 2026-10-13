@@ -65,6 +65,76 @@ describe('byok-opencode runtime config', () => {
     expect(opencodeByokModelId('default')).toBeNull();
   });
 
+  it('builds a Vertex AI provider config from explicit project + location with no key', () => {
+    const out = buildOpenCodeByokProviderConfig(
+      {
+        protocol: 'vertexai',
+        apiKey: '',
+        gcpProject: 'n8n-staging-498100',
+        gcpLocation: 'global',
+      },
+      'gemini-3.8-flash',
+    );
+
+    expect(out?.modelId).toBe('open-design-byok/gemini-3.8-flash');
+    // Vertex authenticates via ADC — no env-carried secret at all.
+    expect(out?.env).toEqual({});
+    expect(out?.config).toMatchObject({
+      provider: {
+        [BYOK_OPENCODE_PROVIDER_ID]: {
+          npm: '@ai-sdk/google-vertex',
+          options: {
+            project: 'n8n-staging-498100',
+            location: 'global',
+          },
+          models: {
+            'gemini-3.8-flash': {
+              name: 'gemini-3.8-flash',
+              limit: { context: 128_000, output: 16_384 },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('falls back to GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION env defaults for Vertex AI', () => {
+    const previousProject = process.env.GOOGLE_CLOUD_PROJECT;
+    const previousLocation = process.env.GOOGLE_CLOUD_LOCATION;
+    process.env.GOOGLE_CLOUD_PROJECT = 'env-project';
+    process.env.GOOGLE_CLOUD_LOCATION = 'global';
+    try {
+      const out = buildOpenCodeByokProviderConfig(
+        { protocol: 'vertexai', apiKey: '' },
+        'gemini-3.5-flash',
+      );
+      expect(out?.config).toMatchObject({
+        provider: {
+          [BYOK_OPENCODE_PROVIDER_ID]: {
+            options: { project: 'env-project', location: 'global' },
+          },
+        },
+      });
+    } finally {
+      if (previousProject === undefined) delete process.env.GOOGLE_CLOUD_PROJECT;
+      else process.env.GOOGLE_CLOUD_PROJECT = previousProject;
+      if (previousLocation === undefined) delete process.env.GOOGLE_CLOUD_LOCATION;
+      else process.env.GOOGLE_CLOUD_LOCATION = previousLocation;
+    }
+  });
+
+  it('rejects Vertex AI when no GCP project is resolvable', () => {
+    const previousProject = process.env.GOOGLE_CLOUD_PROJECT;
+    delete process.env.GOOGLE_CLOUD_PROJECT;
+    try {
+      expect(
+        buildOpenCodeByokProviderConfig({ protocol: 'vertexai', apiKey: '' }, 'gemini-3.8-flash'),
+      ).toBeNull();
+    } finally {
+      if (previousProject !== undefined) process.env.GOOGLE_CLOUD_PROJECT = previousProject;
+    }
+  });
+
   it('builds OpenAI-compatible provider config without embedding the secret in JSON', () => {
     const out = buildOpenCodeByokProviderConfig(
       {

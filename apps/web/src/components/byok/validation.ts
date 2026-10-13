@@ -159,13 +159,17 @@ export function validateByokDraft(
   }
 
   if (!baseUrl) {
-    issues.push({
-      field: 'base_url',
-      level: 'error',
-      code: 'base_url_required',
-      message: 'Base URL is required.',
-      action: 'focus_base_url',
-    });
+    // Vertex AI derives its endpoint from GCP project + location — there is
+    // no base URL to validate (auth is ADC on the daemon's host).
+    if (protocol !== 'vertexai') {
+      issues.push({
+        field: 'base_url',
+        level: 'error',
+        code: 'base_url_required',
+        message: 'Base URL is required.',
+        action: 'focus_base_url',
+      });
+    }
   } else {
     // #3225 — a `forbidden` result is a syntactically-valid URL that points at
     // an internal address. Don't block it here: the Test / model-fetch actions

@@ -180,6 +180,7 @@ export type TrackingByokProviderId =
   | 'openai'
   | 'azure_openai'
   | 'google_gemini'
+  | 'google_vertex'
   | 'ollama_cloud'
   | 'senseaudio'
   | 'aihubmix';

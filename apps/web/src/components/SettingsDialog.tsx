@@ -696,12 +696,14 @@ export function shouldShowCustomModelInput(
 
 export function canRunProviderConnectionTest(
   config: Pick<AppConfig, 'apiKey' | 'baseUrl' | 'model'>,
-  options: { requiresApiKey?: boolean } = {},
+  options: { requiresApiKey?: boolean; protocol?: ApiProtocol } = {},
 ): boolean {
   const requiresApiKey = options.requiresApiKey ?? true;
+  // Vertex AI has no base URL — the endpoint comes from project + location.
+  const requiresBaseUrl = options.protocol !== 'vertexai';
   return (
     (!requiresApiKey || Boolean(config.apiKey.trim())) &&
-    Boolean(config.baseUrl.trim()) &&
+    (!requiresBaseUrl || Boolean(config.baseUrl.trim())) &&
     Boolean(config.model.trim())
   );
 }
@@ -710,6 +712,9 @@ export function canFetchProviderModels(
   config: Pick<AppConfig, 'apiKey' | 'baseUrl'>,
   protocol: ApiProtocol,
 ): boolean {
+  // Vertex AI serves a curated model list from the daemon — no key, no base
+  // URL involved in the fetch.
+  if (protocol === 'vertexai') return true;
   return (
     !isProviderModelDiscoveryUnsupported(protocol, config.baseUrl) &&
     protocol !== 'azure' &&
@@ -735,12 +740,12 @@ export function isProviderModelDiscoveryUnsupported(
 
 function missingByokConnectionFields(
   config: Pick<AppConfig, 'apiKey' | 'baseUrl' | 'model'>,
-  options: { requiresApiKey?: boolean } = {},
+  options: { requiresApiKey?: boolean; protocol?: ApiProtocol } = {},
 ): ByokRequiredField[] {
   const requiresApiKey = options.requiresApiKey ?? true;
   const missing: ByokRequiredField[] = [];
   if (requiresApiKey && !config.apiKey.trim()) missing.push('api_key');
-  if (!config.baseUrl.trim()) missing.push('base_url');
+  if (options.protocol !== 'vertexai' && !config.baseUrl.trim()) missing.push('base_url');
   if (!config.model.trim()) missing.push('model');
   return missing;
 }
@@ -750,6 +755,8 @@ function missingByokModelFetchFields(
   protocol?: ApiProtocol,
 ): ByokRequiredField[] {
   const missing: ByokRequiredField[] = [];
+  // Vertex AI's curated list needs neither a key nor a base URL.
+  if (protocol === 'vertexai') return missing;
   // AIHubMix publishes its catalogue on a public endpoint, so its model list
   // loads without a key (the user shouldn't need to paste a key just to browse
   // models). Bedrock uses a static model seed until AWS auth lands in BYOK.
@@ -837,6 +844,12 @@ const API_KEY_CONSOLE_LINKS: Record<ApiProtocol, { host: string; url: string }> 
   google: {
     host: 'aistudio.google.com',
     url: 'https://aistudio.google.com/apikey',
+  },
+  // No key to create for Vertex AI — point at the model garden so the
+  // console link still resolves to something useful.
+  vertexai: {
+    host: 'console.cloud.google.com',
+    url: 'https://console.cloud.google.com/vertex-ai',
   },
   ollama: {
     host: 'ollama.com',
@@ -2669,6 +2682,14 @@ export function SettingsDialog({
             apiProtocol === 'azure'
               ? cfg.apiVersion?.trim() || undefined
               : undefined,
+          ...(apiProtocol === 'vertexai'
+            ? {
+                gcpProject:
+                  cfg.apiProtocolConfigs?.vertexai?.gcpProject?.trim() || undefined,
+                gcpLocation:
+                  cfg.apiProtocolConfigs?.vertexai?.gcpLocation?.trim() || undefined,
+              }
+            : {}),
         },
         controller.signal,
       );
@@ -3492,8 +3513,10 @@ export function SettingsDialog({
   const showProviderPreset =
     protocolProviders.length > 0 && !isFixedOriginGateway(apiProtocol);
   // Fixed-origin gateways resolve their Base URL automatically; nothing for the
-  // user to edit, so hide the field entirely.
-  const showBaseUrlField = !isFixedOriginGateway(apiProtocol);
+  // user to edit, so hide the field entirely. Vertex AI has no base URL at all
+  // (endpoint derived from GCP project + location) and replaces it with its
+  // own project/location fields below.
+  const showBaseUrlField = !isFixedOriginGateway(apiProtocol) && apiProtocol !== 'vertexai';
   const byokRequiresApiKey = byokProviderRequiresApiKey(
     apiProtocol,
     selectedProvider,
@@ -3503,7 +3526,8 @@ export function SettingsDialog({
     if (provider.custom) {
       return canRunProviderConnectionTest(currentApiProtocolConfig(cfg), {
         requiresApiKey: byokRequiresApiKey,
-      }) && isValidApiBaseUrl(cfg.baseUrl);
+        protocol: apiProtocol,
+      }) && (apiProtocol === 'vertexai' || isValidApiBaseUrl(cfg.baseUrl));
     }
     const providerDraft = cfg.byokProviderConfigDrafts?.[
       byokProviderDraftKey(provider.protocol, provider.baseUrl, provider.baseUrl)
@@ -3529,7 +3553,8 @@ export function SettingsDialog({
         knownProvider,
         entry.baseUrl,
       ),
-    }) && isValidApiBaseUrl(entry.baseUrl);
+      protocol: provider.protocol,
+    }) && (provider.protocol === 'vertexai' || isValidApiBaseUrl(entry.baseUrl));
   };
   const byokFirstPartyBaseUrl = useMemo(
     () => byokFirstPartyBaseUrlHint(
@@ -5531,6 +5556,7 @@ export function SettingsDialog({
                     !byokFirstPartyBaseUrl?.hostTypo &&
                     canRunProviderConnectionTest(cfg, {
                       requiresApiKey: byokRequiresApiKey,
+                      protocol: apiProtocol,
                     })
                   }
                   labels={{
@@ -5597,6 +5623,30 @@ export function SettingsDialog({
                   }}
                 />
               ) : null}
+              {apiProtocol === 'vertexai' ? (
+                <div className="field-row settings-vertex-fields" data-testid="settings-vertex-gcp-fields">
+                  <label className="field">
+                    <span className="field-label">{t('settings.vertexProjectLabel')}</span>
+                    <input
+                      type="text"
+                      value={cfg.apiProtocolConfigs?.vertexai?.gcpProject ?? ''}
+                      placeholder={t('settings.vertexProjectPlaceholder')}
+                      onChange={(e) => updateApiConfig({ gcpProject: e.target.value })}
+                    />
+                    <p className="hint">{t('settings.vertexProjectHint')}</p>
+                  </label>
+                  <label className="field">
+                    <span className="field-label">{t('settings.vertexLocationLabel')}</span>
+                    <input
+                      type="text"
+                      value={cfg.apiProtocolConfigs?.vertexai?.gcpLocation ?? ''}
+                      placeholder={t('settings.vertexLocationPlaceholder')}
+                      onChange={(e) => updateApiConfig({ gcpLocation: e.target.value })}
+                    />
+                    <p className="hint">{t('settings.vertexLocationHint')}</p>
+                  </label>
+                </div>
+              ) : (
               <ByokKeyField
                 apiKey={cfg.apiKey}
                 apiKeyConsoleLink={apiKeyConsoleLink}
@@ -5642,6 +5692,7 @@ export function SettingsDialog({
                 }}
                 onToggleShowApiKey={() => setShowApiKey((v) => !v)}
               />
+              )}
               {showBaseUrlField ? (
                 <ByokProviderBaseUrl
                   apiProtocol={apiProtocol}

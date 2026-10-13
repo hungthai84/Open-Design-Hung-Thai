@@ -68,6 +68,14 @@ export const SUGGESTED_MODELS_BY_PROTOCOL: Record<ApiProtocol, readonly string[]
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
   ],
+  // Verified against the Vertex global endpoint on 2026-10-13 — the
+  // max/pro Gemini 3.x tiers and the regional hosts do not serve these runs.
+  vertexai: [
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-2.5-flash',
+  ],
   senseaudio: [
     // SenseAudio is an OpenAI-compatible gateway that fronts both its own
     // models (senseaudio-s2 family) and aggregator routes to deepseek /
@@ -166,6 +174,9 @@ export const FAST_MODEL_BY_PROTOCOL: Record<ApiProtocol, string> = {
   openai: 'gpt-4o-mini',
   azure: 'gpt-4o-mini',
   google: 'gemini-3.5-flash',
+  // The memory extractor does not call Vertex AI (no ADC-driven REST path);
+  // a vertexai chat config falls back to the extractor's own provider.
+  vertexai: 'gemini-3.8-flash',
   // Ollama Cloud doesn't have a clean "fast small model" default that
   // works for the LLM memory extractor — the catalog skews to large
   // open-weight checkpoints. Fall back to a small Gemma so the auto-
@@ -185,6 +196,7 @@ export const API_PROTOCOL_TABS: ReadonlyArray<{
   { id: 'openai', title: 'OpenAI' },
   { id: 'azure', title: 'Azure OpenAI' },
   { id: 'google', title: 'Google Gemini' },
+  { id: 'vertexai', title: 'Google Vertex AI' },
   { id: 'ollama', title: 'Ollama Cloud' },
   { id: 'senseaudio', title: 'SenseAudio' },
   { id: 'aihubmix', title: 'AIHubMix' },
@@ -195,6 +207,7 @@ export const API_PROTOCOL_LABELS: Record<ApiProtocol, string> = {
   openai: 'OpenAI API',
   azure: 'Azure OpenAI',
   google: 'Google Gemini',
+  vertexai: 'Google Vertex AI',
   ollama: 'Ollama Cloud API',
   senseaudio: 'SenseAudio API',
   aihubmix: 'AIHubMix API',
@@ -206,6 +219,10 @@ export const API_KEY_PLACEHOLDERS: Record<ApiProtocol, string> = {
   openai: 'sk-...',
   azure: 'azure key',
   google: 'AIza... or AQ....',
+  // Vertex AI has no API key — auth is Application Default Credentials on
+  // the daemon's host (the attached service account on GCP). The value is
+  // unused; the form hides the key input for this protocol.
+  vertexai: 'not required (ADC)',
   ollama: 'Ollama API key',
   senseaudio: 'SenseAudio API key',
   aihubmix: 'sk-...',
@@ -220,6 +237,8 @@ export const DEFAULT_BASE_URL_BY_PROTOCOL: Record<ApiProtocol, string> = {
   openai: 'https://api.openai.com/v1',
   azure: '',
   google: 'https://generativelanguage.googleapis.com/v1beta',
+  // Vertex AI derives its endpoint from project + location — no base URL.
+  vertexai: '',
   ollama: 'https://ollama.com',
   senseaudio: 'https://api.senseaudio.cn',
   aihubmix: 'https://aihubmix.com/v1',

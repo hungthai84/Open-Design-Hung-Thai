@@ -630,6 +630,12 @@ export const zhTW: Dict = {
   "settings.azureBaseUrlPlaceholder": "https://my-resource.openai.azure.com",
   "settings.azureBaseUrlHint":
     "Find this in Azure portal → your resource → Endpoint.",
+  "settings.vertexProjectLabel": "GCP 專案",
+  "settings.vertexProjectPlaceholder": "my-gcp-project",
+  "settings.vertexProjectHint": "Vertex AI 的計費專案。留空則使用常駐程式的預設專案。",
+  "settings.vertexLocationLabel": "位置",
+  "settings.vertexLocationPlaceholder": "global",
+  "settings.vertexLocationHint": "\"global\" 提供 Gemini 3.x；區域端點不提供。",
   "settings.azureDeploymentModel": "部署名稱",
   "settings.azureCustomDeploymentName": "Custom deployment name",
   "settings.azureDeploymentModelHint":

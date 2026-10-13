@@ -1,4 +1,5 @@
 import type { ByokChatProviderConfig } from '@open-design/contracts';
+import { resolveVertexAiConfig } from './vertex-ai.js';
 
 export const BYOK_OPENCODE_AGENT_ID = 'byok-opencode';
 export const BYOK_OPENCODE_PROVIDER_ID = 'open-design-byok';
@@ -13,6 +14,9 @@ const DEFAULT_BASE_URL_BY_PROTOCOL: Record<ByokChatProviderConfig['protocol'], s
   openai: 'https://api.openai.com/v1',
   azure: '',
   google: 'https://generativelanguage.googleapis.com/v1beta',
+  // Vertex AI has no base URL to configure: the endpoint is derived from the
+  // GCP project + location, and auth is ADC (no key). Empty on purpose.
+  vertexai: '',
   ollama: 'https://ollama.com',
   senseaudio: 'https://api.senseaudio.cn',
   aihubmix: 'https://aihubmix.com/v1',
@@ -23,7 +27,8 @@ type ProviderPackage =
   | '@ai-sdk/openai'
   | '@ai-sdk/openai-compatible'
   | '@ai-sdk/azure'
-  | '@ai-sdk/google';
+  | '@ai-sdk/google'
+  | '@ai-sdk/google-vertex';
 
 export interface OpenCodeByokProviderConfig {
   providerId: string;
@@ -47,6 +52,9 @@ export function buildOpenCodeByokProviderConfig(
   const protocol = provider.protocol;
   if (!Object.prototype.hasOwnProperty.call(DEFAULT_BASE_URL_BY_PROTOCOL, protocol)) {
     return null;
+  }
+  if (protocol === 'vertexai') {
+    return buildVertexAiProviderConfig(provider, model);
   }
   const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
   const rawModel = typeof model === 'string' ? model.trim() : '';
@@ -99,6 +107,47 @@ export function buildOpenCodeByokProviderConfig(
     modelId,
     env: needsApiKey ? { [BYOK_OPENCODE_API_KEY_ENV]: apiKey } : {},
     config,
+  };
+}
+
+function buildVertexAiProviderConfig(
+  provider: ByokChatProviderConfig,
+  model: string | null | undefined,
+): OpenCodeByokProviderConfig | null {
+  const vertexConfig = resolveVertexAiConfig(provider);
+  if (!vertexConfig) return null;
+  const rawModel = typeof model === 'string' ? model.trim() : '';
+  if (!rawModel || rawModel.toLowerCase() === 'default') return null;
+  const modelId = opencodeByokModelId(rawModel);
+  if (!modelId) return null;
+  // @ai-sdk/google-vertex authenticates via ADC (the VM's attached service
+  // account on the deployed studio), so there is no env-carried key. OpenCode
+  // resolves the npm package from its embedded provider set.
+  return {
+    providerId: BYOK_OPENCODE_PROVIDER_ID,
+    modelId,
+    env: {},
+    config: {
+      provider: {
+        [BYOK_OPENCODE_PROVIDER_ID]: {
+          name: 'OpenDesign BYOK',
+          npm: '@ai-sdk/google-vertex',
+          options: {
+            project: vertexConfig.project,
+            location: vertexConfig.location,
+          },
+          models: {
+            [rawModel]: {
+              name: rawModel,
+              limit: {
+                context: DEFAULT_CONTEXT_TOKEN_LIMIT,
+                output: DEFAULT_OUTPUT_TOKEN_LIMIT,
+              },
+            },
+          },
+        },
+      },
+    },
   };
 }
 
@@ -251,6 +300,12 @@ function buildProviderEntry(
           ...apiKeyOption,
         },
       };
+    case 'vertexai':
+      // Diverted to buildVertexAiProviderConfig before the generic flow;
+      // reaching this case means the dispatch above regressed.
+      throw new Error(
+        'vertexai must be handled by buildVertexAiProviderConfig',
+      );
   }
 }
 

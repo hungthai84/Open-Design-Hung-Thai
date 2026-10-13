@@ -7,6 +7,7 @@ const API_PROTOCOL_LABELS: Record<ApiProtocol, string> = {
   openai: 'OpenAI API',
   azure: 'Azure OpenAI',
   google: 'Google Gemini',
+  vertexai: 'Google Vertex AI',
   ollama: 'Ollama Cloud API',
   senseaudio: 'SenseAudio API',
   aihubmix: 'AIHubMix API',
@@ -35,6 +36,7 @@ export function usesAnthropicProxy(cfg: AppConfig): boolean {
     cfg.apiProtocol === 'azure' ||
     cfg.apiProtocol === 'ollama' ||
     cfg.apiProtocol === 'google' ||
+    cfg.apiProtocol === 'vertexai' ||
     cfg.apiProtocol === 'senseaudio' ||
     cfg.apiProtocol === 'aihubmix' ||
     cfg.apiProtocol === 'bedrock' ||

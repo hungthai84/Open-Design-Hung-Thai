@@ -17,6 +17,9 @@ export function byokProviderRequiresApiKey(
   baseUrl: string,
 ): boolean {
   if (provider?.requiresApiKey === false) return false;
+  // Vertex AI authenticates via Application Default Credentials on the
+  // daemon's host — there is no API key to require or store.
+  if (protocol === 'vertexai') return false;
   if (protocol === 'ollama' && isLocalOllamaBaseUrl(baseUrl)) return false;
   return true;
 }
@@ -36,6 +39,7 @@ export const API_PROTOCOL_AGENT_IDS: Record<ApiProtocol, string> = {
   openai: 'openai-api',
   azure: 'azure-openai-api',
   google: 'google-gemini-api',
+  vertexai: 'vertexai-api',
   ollama: 'ollama-cloud-api',
   senseaudio: 'senseaudio-api',
   aihubmix: 'aihubmix-api',

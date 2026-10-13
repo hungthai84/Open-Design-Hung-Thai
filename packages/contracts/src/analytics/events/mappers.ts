@@ -256,6 +256,8 @@ export function feedbackAgentProviderIdToTracking(
       return byokProtocolToTracking('azure') ?? 'other';
     case 'google-gemini-api':
       return byokProtocolToTracking('google') ?? 'other';
+    case 'vertexai-api':
+      return byokProtocolToTracking('vertexai') ?? 'other';
     case 'ollama-cloud-api':
       return byokProtocolToTracking('ollama') ?? 'other';
     case 'senseaudio-api':
@@ -281,6 +283,9 @@ export function byokProtocolToTracking(
     case 'google':
     case 'google_gemini':
       return 'google_gemini';
+    case 'vertexai':
+    case 'google_vertex':
+      return 'google_vertex';
     case 'ollama':
     case 'ollama_cloud':
       return 'ollama_cloud';

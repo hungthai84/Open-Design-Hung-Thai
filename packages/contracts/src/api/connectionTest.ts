@@ -253,6 +253,7 @@ export type ConnectionTestProtocol =
   | 'openai'
   | 'azure'
   | 'google'
+  | 'vertexai'
   | 'ollama'
   | 'senseaudio'
   | 'aihubmix'
@@ -265,6 +266,10 @@ export interface ProviderTestRequest extends ReasoningExecutionRequestFields {
   model: string;
   // Azure only. When omitted, the daemon falls back to its default api-version.
   apiVersion?: string;
+  // Vertex AI only. Both default to the daemon's GOOGLE_CLOUD_* env vars;
+  // location additionally defaults to "global".
+  gcpProject?: string;
+  gcpLocation?: string;
 }
 
 export interface AgentTestRequest {

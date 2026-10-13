@@ -548,6 +548,12 @@ export interface Dict {
   'settings.baseUrlDefaultHint': string;
   'settings.azureBaseUrlPlaceholder': string;
   'settings.azureBaseUrlHint': string;
+  'settings.vertexProjectLabel': string;
+  'settings.vertexProjectPlaceholder': string;
+  'settings.vertexProjectHint': string;
+  'settings.vertexLocationLabel': string;
+  'settings.vertexLocationPlaceholder': string;
+  'settings.vertexLocationHint': string;
   'settings.azureDeploymentModel': string;
   'settings.azureCustomDeploymentName': string;
   'settings.azureDeploymentModelHint': string;

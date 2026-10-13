@@ -38,6 +38,11 @@ import { attachAcpSession } from './agent-protocol/index.js';
 import { attachPiRpcSession } from './agent-protocol/index.js';
 import { attachDshProfileSession } from './agent-protocol/index.js';
 import { createClaudeStreamHandler } from './runtimes/claude-stream.js';
+import {
+  getVertexAccessToken,
+  resolveVertexAiConfig,
+  vertexPublisherModelUrl,
+} from './runtimes/vertex-ai.js';
 import { diagnoseClaudeCliFailure } from './claude-diagnostics.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
@@ -1593,12 +1598,138 @@ function extractOpenAIResponsesText(data: unknown): string {
   return '';
 }
 
+async function testVertexAiProviderConnection(
+  input: ProviderConnectionInput,
+  start: number,
+): Promise<ConnectionTestResponse> {
+  const model = String(input.model ?? '');
+  const vertexConfig = resolveVertexAiConfig(input);
+  if (!vertexConfig) {
+    return {
+      ok: false,
+      kind: 'auth_failed',
+      latencyMs: Date.now() - start,
+      model,
+      detail:
+        'Vertex AI needs a GCP project. Set the Project field or the daemon\'s GOOGLE_CLOUD_PROJECT environment variable.',
+    };
+  }
+  const token = await getVertexAccessToken();
+  if (!token) {
+    return {
+      ok: false,
+      kind: 'auth_failed',
+      latencyMs: Date.now() - start,
+      model,
+      detail:
+        'Vertex AI authenticates via Application Default Credentials. None found — this daemon must run on GCP with an attached service account (metadata server unreachable).',
+    };
+  }
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  if (input.signal?.aborted) {
+    controller.abort();
+  } else {
+    input.signal?.addEventListener('abort', abortFromParent, { once: true });
+  }
+  const timer = setTimeout(() => controller.abort(), providerTimeoutMs());
+  try {
+    const response = await fetch(
+      `${vertexPublisherModelUrl(vertexConfig, model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+        redirect: 'error' as const,
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: SMOKE_PROMPT }] }],
+          generationConfig: { maxOutputTokens: PROVIDER_MAX_TOKENS },
+        }),
+      },
+    );
+    const latencyMs = Date.now() - start;
+    const rawText = await response.text();
+    if (!response.ok) {
+      const { kind, detail } = classifyProviderHttpFailure(
+        'vertexai',
+        'aiplatform.googleapis.com',
+        response.status,
+        rawText,
+        [token],
+      );
+      console.warn(
+        `[test:provider] vertexai ${vertexConfig.location} model=${model} → ${response.status} in ${latencyMs}ms (${kind})${detail ? ` ${detail}` : ''}`,
+      );
+      return { ok: false, kind, latencyMs, model, status: response.status, detail };
+    }
+    let data: unknown = {};
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      // Fall through to the empty-shape failure below.
+    }
+    const completion = inspectProviderCompletion('google', data, model, false);
+    if (!completion.valid) {
+      const providerError = extractProviderErrorDetail(data, rawText);
+      const detail = redactSecrets(
+        providerError || smokeFailureDetail(completion.sample ?? ''),
+        [token],
+      );
+      return {
+        ok: false,
+        kind: isLikelyAuthErrorText(providerError) ? 'auth_failed' : 'unknown',
+        latencyMs,
+        model,
+        status: response.status,
+        detail,
+      };
+    }
+    const candidates = (data as { candidates?: unknown }).candidates;
+    const parts = Array.isArray(candidates)
+      ? (candidates[0] as { content?: { parts?: unknown } })?.content?.parts
+      : undefined;
+    const replyText = Array.isArray(parts)
+      ? parts
+          .map((p: { text?: unknown }) => (typeof p?.text === 'string' ? p.text : ''))
+          .join('')
+      : '';
+    const sample = truncateSample(replyText) || completion.sample;
+    return {
+      ok: true,
+      kind: 'success',
+      latencyMs,
+      model,
+      status: response.status,
+      ...(sample ? { sample } : {}),
+    };
+  } catch (err) {
+    const latencyMs = Date.now() - start;
+    const aborted = input.signal?.aborted === true || controller.signal.aborted;
+    return {
+      ok: false,
+      kind: aborted ? 'timeout' : 'upstream_unavailable',
+      latencyMs,
+      model,
+      detail: redactSecrets(networkErrorDetail(err, [token]), [token]),
+    };
+  } finally {
+    clearTimeout(timer);
+    input.signal?.removeEventListener('abort', abortFromParent);
+  }
+}
+
 export async function testProviderConnection(
   input: ProviderConnectionInput,
 ): Promise<ConnectionTestResponse> {
   const start = Date.now();
   const model = String(input.model ?? '');
   const normalizedInput = normalizeProviderTestInput(input);
+  if (normalizedInput.protocol === 'vertexai') {
+    return testVertexAiProviderConnection(normalizedInput, start);
+  }
   const validated = await validateUserProviderBaseUrl(normalizedInput.baseUrl);
   if (validated.error || !validated.parsed) {
     const kind: ConnectionTestKind = validated.forbidden ? 'forbidden' : 'invalid_base_url';

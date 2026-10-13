@@ -629,6 +629,12 @@ export const zhCN: Dict = {
   "settings.azureBaseUrlPlaceholder": "粘贴 Azure endpoint URL",
   "settings.azureBaseUrlHint":
     "在 Azure portal → 你的 resource → Endpoint 中找到。",
+  "settings.vertexProjectLabel": "GCP 项目",
+  "settings.vertexProjectPlaceholder": "my-gcp-project",
+  "settings.vertexProjectHint": "Vertex AI 的计费项目。留空则使用守护进程的默认项目。",
+  "settings.vertexLocationLabel": "位置",
+  "settings.vertexLocationPlaceholder": "global",
+  "settings.vertexLocationHint": "\"global\" 提供 Gemini 3.x；区域端点不提供。",
   "settings.azureDeploymentModel": "部署名称",
   "settings.azureCustomDeploymentName": "自定义部署名称",
   "settings.azureDeploymentModelHint":

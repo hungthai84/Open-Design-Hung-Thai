@@ -132,7 +132,11 @@ function chatProtocolFromAgent(
 function memoryProviderFromApiProtocol(
   protocol: ApiProtocol,
 ): MemoryExtractionProvider | null {
-  return protocol === 'bedrock' ? null : protocol;
+  // bedrock (AWS credentials, not a single key) and vertexai (ADC-driven,
+  // no extractor path in the daemon) have no memory-extraction equivalent —
+  // the picker falls back to its own configured provider instead of riding
+  // the chat protocol.
+  return protocol === 'bedrock' || protocol === 'vertexai' ? null : protocol;
 }
 
 function cliAgentLabel(agentId: string | null | undefined): string | null {

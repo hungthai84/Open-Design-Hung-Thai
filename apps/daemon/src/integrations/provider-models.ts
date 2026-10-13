@@ -28,6 +28,18 @@ const BEDROCK_MODEL_OPTIONS: ProviderModelOption[] = [
   { id: 'amazon.nova-micro-v1:0', label: 'Amazon Nova Micro' },
 ];
 
+// Vertex AI has no public model-discovery endpoint (publisher models are
+// documented, not listed), so the picker serves a curated seed. Verified
+// against the global endpoint on 2026-10-13: these are the Gemini models
+// `locations/global` serves; regional hosts do not carry Gemini 3.x at all,
+// and the max/pro tiers of 3.x are not (yet) on the global host either.
+const VERTEX_MODEL_OPTIONS: ProviderModelOption[] = [
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+];
+
 function appendVersionedApiPath(baseUrl: string, suffix: string): string {
   const url = new URL(baseUrl);
   const pathname = url.pathname.replace(/\/+$/, '');
@@ -301,6 +313,15 @@ export async function listProviderModels(
       kind: 'unsupported_protocol',
       latencyMs: Date.now() - start,
       detail: 'Azure OpenAI deployment discovery is not supported from the inference endpoint.',
+    };
+  }
+  if (input.protocol === 'vertexai') {
+    return {
+      ok: true,
+      kind: 'success',
+      latencyMs: Date.now() - start,
+      models: VERTEX_MODEL_OPTIONS,
+      detail: 'Vertex AI publisher models are a curated list (no public discovery endpoint).',
     };
   }
 

@@ -247,6 +247,22 @@ export const KNOWN_PROVIDERS: KnownProvider[] = [
     ],
   },
   {
+    // Vertex AI: no key, no base URL — the daemon authenticates via
+    // Application Default Credentials on its host (GCP attached service
+    // account) and derives the endpoint from project + location. The
+    // `global` location is what serves Gemini 3.x.
+    label: 'Google Vertex AI',
+    protocol: 'vertexai',
+    baseUrl: '',
+    preferredModels: [
+      'gemini-3.8-flash',
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-2.5-flash',
+    ],
+    requiresApiKey: false,
+  },
+  {
     label: 'SiliconFlow (CN)',
     protocol: 'openai',
     baseUrl: 'https://api.siliconflow.cn/v1',

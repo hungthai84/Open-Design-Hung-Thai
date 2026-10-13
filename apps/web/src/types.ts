@@ -116,6 +116,7 @@ export type ApiProtocol =
   | 'openai'
   | 'azure'
   | 'google'
+  | 'vertexai'
   | 'ollama'
   | 'senseaudio'
   | 'aihubmix'
@@ -268,6 +269,12 @@ export interface ApiProtocolConfig {
   byokSpeechModel?: string;
   /** BYOK only — default speech voice id for the generate_speech tool. */
   byokSpeechVoice?: string;
+  /** Vertex AI BYOK only — GCP project id whose billing account is charged.
+   *  Empty string means "use the daemon's GOOGLE_CLOUD_PROJECT default". */
+  gcpProject?: string;
+  /** Vertex AI BYOK only — Vertex location (`global` serves Gemini 3.x;
+   *  empty means "use the daemon's GOOGLE_CLOUD_LOCATION / global"). */
+  gcpLocation?: string;
 }
 
 export interface ByokProviderConfigDraft {
