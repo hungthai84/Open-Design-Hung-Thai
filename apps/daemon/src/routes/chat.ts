@@ -222,11 +222,15 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     // AIHubMix's catalogue (GET /api/v1/models?type=llm) is public, so its
     // model list loads without a key. Every other protocol needs the key to
     // hit its /v1/models endpoint.
-    const apiKeyRequired = protocol !== 'aihubmix' && protocol !== 'bedrock';
+    // Vertex AI is keyless (daemon-side GCP ADC) and derives its endpoint from
+    // project + location, so baseUrl and apiKey are not required for it.
+    const apiKeyRequired =
+      protocol !== 'aihubmix' && protocol !== 'bedrock' && protocol !== 'vertexai';
+    const baseUrlRequired = protocol !== 'vertexai';
     if (
       typeof body.baseUrl !== 'string' ||
       typeof body.apiKey !== 'string' ||
-      !body.baseUrl.trim() ||
+      (baseUrlRequired && !body.baseUrl.trim()) ||
       (apiKeyRequired && !body.apiKey.trim())
     ) {
       return sendApiError(
@@ -297,12 +301,14 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
             'protocol must be one of anthropic|openai|azure|google|ollama|senseaudio|aihubmix|bedrock',
           );
         }
-        const apiKeyRequired = protocol !== 'bedrock';
+        const apiKeyRequired =
+          protocol !== 'bedrock' && protocol !== 'vertexai';
+        const baseUrlRequired = protocol !== 'vertexai';
         if (
           typeof body.baseUrl !== 'string' ||
           typeof body.apiKey !== 'string' ||
           typeof body.model !== 'string' ||
-          !body.baseUrl.trim() ||
+          (baseUrlRequired && !body.baseUrl.trim()) ||
           (apiKeyRequired && !body.apiKey.trim()) ||
           !body.model.trim()
         ) {
@@ -331,6 +337,18 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
             model: body.model,
             apiVersion:
               typeof body.apiVersion === 'string' ? body.apiVersion : undefined,
+            ...(protocol === 'vertexai'
+              ? {
+                  gcpProject:
+                    typeof body.gcpProject === 'string' && body.gcpProject.trim()
+                      ? body.gcpProject.trim()
+                      : undefined,
+                  gcpLocation:
+                    typeof body.gcpLocation === 'string' && body.gcpLocation.trim()
+                      ? body.gcpLocation.trim()
+                      : undefined,
+                }
+              : {}),
             signal: controller.signal,
           });
           return res.json(result);
