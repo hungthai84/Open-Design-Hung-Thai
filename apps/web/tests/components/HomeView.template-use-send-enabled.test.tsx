@@ -241,7 +241,20 @@ const LIVE_DASHBOARD = {
   },
 };
 
+const CLAUDE_ANIMATION = {
+  ...BASE,
+  id: 'example-claude-animation', title: 'Hand-painted character animation',
+  source: '/tmp/claude-animation', fsPath: '/tmp/claude-animation',
+  manifest: {
+    name: 'example-claude-animation', title: 'Hand-painted character animation', version: '0.1.0',
+    description: 'A five-second silent character animation.',
+    od: { kind: 'scenario', taskKind: 'new-generation', mode: 'video',
+      inputs: [], useCase: { query: 'Animate Clawd meeting a butterfly for five seconds.' } },
+  },
+};
+
 const ALL = [
+  CLAUDE_ANIMATION,
   PITCH_DECK,
   DESIGN_BRIEF,
   CONTROL_DECK,
@@ -308,6 +321,26 @@ function renderHome(handoffId: number, pluginId: string) {
     </I18nProvider>,
   );
 }
+
+describe('Claude Animation preset routing', () => {
+  it('creates a local video project with the fixed renderer settings from the Home preset', async () => {
+    writeHomeGuideStage('done');
+    stubFetch();
+    const onSubmit = vi.fn();
+    render(<I18nProvider initial="en"><HomeView projects={[]} onSubmit={onSubmit}
+      onOpenProject={() => undefined}
+      promptHandoff={createPluginUseHandoff(1, CLAUDE_ANIMATION.id, { action: 'use-with-query' })} />
+    </I18nProvider>);
+    const submit = await screen.findByTestId('home-hero-submit');
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      projectKind: 'video',
+      skillId: 'claude-animation',
+      projectMetadata: expect.objectContaining({ videoModel: 'claude-animation-p5', videoLength: 5, videoAspect: '16:9' }),
+    })));
+  });
+});
 
 // The reported state was permanent ("等半天了都发送不了"), so every assertion
 // below is taken after the bind has settled AND after a further quiet period —

@@ -29,6 +29,7 @@
  * The composed string is what the daemon sees as `systemPrompt` and what
  * the Anthropic path sends as `system`.
  */
+import { claudeAnimationPrompt } from './claude-animation.js';
 import type { ChatSessionMode } from '../api/chat.js';
 import type { ProjectMetadata, ProjectTemplate } from '../api/projects.js';
 import { OFFICIAL_DESIGNER_PROMPT, renderOfficialDesignerPrompt } from './official-system.js';
@@ -347,7 +348,7 @@ export function composeSystemPrompt({
       memoryBody,
       userInstructions,
       projectInstructions,
-    });
+    }) + claudeAnimationPrompt(metadata, sessionMode);
   }
   // Discovery + philosophy goes FIRST so its hard rules ("emit a form on
   // requirements decision, brand resolution, and TodoWrite workflow, run
@@ -586,7 +587,7 @@ export function composeSystemPrompt({
     parts.push(ACTIVE_DESIGN_SYSTEM_VISUAL_DIRECTION_OVERRIDE);
   }
 
-  return parts.join('');
+  return parts.join('') + claudeAnimationPrompt(metadata, sessionMode);
 }
 
 /**

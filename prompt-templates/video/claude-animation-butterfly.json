@@ -1,0 +1,23 @@
+{
+  "id": "claude-animation-butterfly",
+  "surface": "video",
+  "title": "Hand-painted animation: a bird meets a butterfly",
+  "summary": "A 5-second silent, hand-painted character story in a sunny garden. Landscape 16:9.",
+  "category": "Character Animation",
+  "tags": [
+    "hand-painted",
+    "character",
+    "p5",
+    "local",
+    "silent"
+  ],
+  "model": "claude-animation-p5",
+  "aspect": "16:9",
+  "prompt": "Create a 5-second silent hand-painted animation of an original rounded teal bird meeting a pink butterfly in a sunny garden. Begin with an iris opening, let the bird notice the butterfly, react with a happy bounce, then hold the affectionate reaction before the iris closes. Use the claude-animation template and local claude-animation-p5 renderer. Landscape 16:9, 1920×1080, 24 fps. Prefer flat colour washes and boiling ink outlines; no watercolour fills, lettering, audio, or external scripts. Deliver a playable MP4 through the Open Design media dispatcher.",
+  "source": {
+    "repo": "JohnHeibel/ClaudeAnimationBase",
+    "license": "MIT",
+    "author": "John Heibel",
+    "url": "https://github.com/JohnHeibel/ClaudeAnimationBase/tree/0ac8bf2b31942376cb6b8c4074715595d512acd2"
+  }
+}

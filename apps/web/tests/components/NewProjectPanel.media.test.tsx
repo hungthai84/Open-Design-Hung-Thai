@@ -19,6 +19,34 @@ describe('NewProjectPanel media provider badges', () => {
     vi.unstubAllGlobals();
   });
 
+  it('binds Claude Animation to its template and offers only 5s landscape output', async () => {
+    const onCreate = vi.fn();
+    const animation = {
+      id: 'claude-animation', name: 'Hand-painted character animation', description: 'Hand-painted video',
+      mode: 'video' as const, surface: 'video' as const, previewType: 'html',
+      designSystemRequired: false, defaultFor: [], triggers: [], upstream: null,
+      hasBody: true, examplePrompt: 'Clawd meets a butterfly', aggregatesExamples: false,
+    };
+    render(<NewProjectPanel skills={[animation]} designTemplates={[animation]}
+      designSystems={[]} defaultDesignSystemId={null} templates={[]}
+      onDeleteTemplate={vi.fn()} promptTemplates={[]} onCreate={onCreate} mediaProviders={{}} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Video' }));
+    fireEvent.click(screen.getByTestId('model-picker-trigger'));
+    fireEvent.click(screen.getByTestId('model-picker-option-claude-animation-p5'));
+    await waitFor(() => expect(screen.getByRole('radio', { name: '16:9' })).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.queryByRole('radio', { name: '9:16' })).toBeNull();
+    const length = screen.getByText('Length').closest('label')?.querySelector('select');
+    expect(length?.value).toBe('5');
+    expect(length?.options.length).toBe(1);
+    fireEvent.change(screen.getByTestId('new-project-name'), { target: { value: 'Butterfly' } });
+    fireEvent.click(screen.getByTestId('create-project'));
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      skillId: 'claude-animation',
+      metadata: expect.objectContaining({ kind: 'video', videoModel: 'claude-animation-p5', videoLength: 5, videoAspect: '16:9' }),
+    }));
+  });
+
   it('treats daemon-restored apiKeyConfigured providers as configured', () => {
     render(
       <NewProjectPanel

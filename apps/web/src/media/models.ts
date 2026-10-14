@@ -33,6 +33,7 @@ export type MediaProviderId =
   | 'volcengine'
   | 'grok'
   | 'hyperframes'
+  | 'claude-animation'
   | 'nanobanana'
   | 'imagerouter'
   | 'openrouter'
@@ -116,6 +117,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     defaultBaseUrl: 'https://api.x.ai/v1',
     docsUrl: 'https://docs.x.ai/developers/model-capabilities/video/generation',
   },
+  { id: 'claude-animation', label: 'Hand-painted character animation', hint: 'Local hand-painted character animation · 5s · 16:9 · silent', integrated: true, credentialsRequired: false, settingsVisible: false },
   {
     id: 'hyperframes',
     label: 'HyperFrames',
@@ -537,6 +539,7 @@ export const IMAGE_MODELS: MediaModel[] = [
  * Seedance Lite), kling.ts and friends.
  */
 export const VIDEO_MODELS: MediaModel[] = [
+  { id: 'claude-animation-p5', label: 'Hand-painted character animation', hint: 'Local hand-painted character animation · 5s · 16:9 · silent', provider: 'claude-animation', caps: ['t2v'] },
   { id: 'vela/doubao-seedance-2-0-260128', label: 'seedance-2.0 (Cloud)', hint: 'OpenDesign Cloud · managed text/image-to-video · 720p default', provider: 'vela', caps: ['t2v', 'i2v'] },
   // Volcengine — Seedance 2.0 (integrated).
   {

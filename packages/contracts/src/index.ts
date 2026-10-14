@@ -111,3 +111,5 @@ export * from './analytics/observability.js';
 export * from './observability/index.js';
 
 export * from './api/amr-continuation.js';
+
+export * from './prompts/claude-animation.js';

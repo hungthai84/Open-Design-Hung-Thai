@@ -528,6 +528,9 @@ export function NewProjectPanel({
       // The HyperFrames-HTML render path lives in the `hyperframes` skill.
       // When the user has chosen `hyperframes-html` (via dropdown or template),
       // pin the project to that skill explicitly.
+      if (mediaSurface === 'video' && videoModel === 'claude-animation-p5') {
+        return list.find((s) => s.id === 'claude-animation')?.id ?? null;
+      }
       if (mediaSurface === 'video' && videoModel === 'hyperframes-html') {
         const hyper = list.find((s) => s.id === 'hyperframes');
         if (hyper) return hyper.id;
@@ -596,6 +599,12 @@ export function NewProjectPanel({
       setVideoAspect(a as MediaAspect);
     }
   }
+  useEffect(() => {
+    if (videoModel !== 'claude-animation-p5') return;
+    setVideoAspect('16:9');
+    setVideoLength(5);
+  }, [videoModel]);
+
   function handleVideoModel(id: string) {
     setVideoModel(id);
     setVideoModelTouched(true);
@@ -2706,12 +2715,13 @@ function MediaProjectOptions(props:
         <AspectCards
           label={t('newproj.aspectLabel')}
           value={props.videoAspect}
+          aspects={props.videoModel === 'claude-animation-p5' ? ['16:9'] : MEDIA_ASPECTS}
           onChange={props.onVideoAspect}
         />
         <label className="newproj-label">
           <span>{t('newproj.videoLengthLabel')}</span>
           <select value={props.videoLength} onChange={(e) => props.onVideoLength(Number(e.target.value))}>
-            {VIDEO_LENGTHS_SEC.map((sec) => (
+            {(props.videoModel === 'claude-animation-p5' ? [5] : VIDEO_LENGTHS_SEC).map((sec) => (
               <option key={sec} value={sec}>{t('newproj.videoLengthSeconds', { n: sec })}</option>
             ))}
           </select>
@@ -2772,7 +2782,7 @@ function MediaProjectOptions(props:
 export function supportedModels(surface: 'image' | 'video' | 'audio', models: MediaModel[]): MediaModel[] {
   const supportedProviders: Record<'image' | 'video' | 'audio', Set<string>> = {
     image: new Set(['vela', 'openai', 'volcengine', 'grok', 'nanobanana', 'openrouter', 'imagerouter', 'leonardo', 'custom-image', 'aihubmix', 'minimax']),
-    video: new Set(['volcengine', 'hyperframes', 'grok', 'openrouter', 'imagerouter', 'aihubmix']),
+    video: new Set(['volcengine', 'hyperframes', 'claude-animation', 'grok', 'openrouter', 'imagerouter', 'aihubmix']),
     audio: new Set(['minimax', 'fishaudio', 'senseaudio', 'elevenlabs', 'openai', 'volcengine', 'aihubmix']),
   };
   return models.filter((model) => {
@@ -3010,10 +3020,12 @@ function AspectCards({
   label,
   value,
   onChange,
+  aspects = MEDIA_ASPECTS,
 }: {
   label: string;
   value: MediaAspect;
   onChange: (value: MediaAspect) => void;
+  aspects?: readonly MediaAspect[];
 }) {
   const labels: Record<MediaAspect, string> = {
     '1:1': 'Square',
@@ -3026,7 +3038,7 @@ function AspectCards({
     <div className="newproj-media-field">
       <div className="newproj-label">{label}</div>
       <div className="newproj-aspect-segmented" role="radiogroup" aria-label={label}>
-        {MEDIA_ASPECTS.map((aspect) => {
+        {aspects.map((aspect) => {
           const active = value === aspect;
           return (
             <button
@@ -3173,8 +3185,8 @@ function buildMetadata(input: {
       return {
         kind,
         ...(videoModel ? { videoModel } : {}),
-        videoAspect: input.videoAspect,
-        videoLength: input.videoLength,
+        videoAspect: videoModel === 'claude-animation-p5' ? '16:9' : input.videoAspect,
+        videoLength: videoModel === 'claude-animation-p5' ? 5 : input.videoLength,
         ...buildPromptTemplateMetadata(input.promptTemplate),
         ...inspirations,
       };

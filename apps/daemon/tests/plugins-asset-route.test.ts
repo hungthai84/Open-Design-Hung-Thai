@@ -100,6 +100,7 @@ beforeAll(async () => {
   );
   await writeFile(path.join(installedRoot, 'notes.markdown'), '# notes\n');
   await writeFile(path.join(installedRoot, 'payload.bin'), 'not a text asset');
+  await writeFile(path.join(installedRoot, 'sample.mp4'), 'mp4 fixture');
   void migratePlugins;
   void upsertInstalledPlugin;
   void Database;
@@ -114,6 +115,13 @@ afterAll(async () => {
 });
 
 describe('GET /api/plugins/:id/asset/*', () => {
+  it('serves a bundled MP4 preview as video/mp4', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/sample.mp4`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get('content-type')).toBe('video/mp4');
+    expect(resp.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
   it('returns 404 for an unknown plugin', async () => {
     const resp = await fetch(`${baseUrl}/api/plugins/unknown/asset/index.html`);
     expect(resp.status).toBe(404);

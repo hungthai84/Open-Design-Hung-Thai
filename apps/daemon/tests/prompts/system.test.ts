@@ -91,6 +91,14 @@ describe('composeSystemPrompt — activeStageBlocks splice (spec §23.4)', () =>
 });
 
 describe('composeSystemPrompt', () => {
+  it('allows agent-authored p5 scenes while retaining daemon media delivery', () => {
+    const prompt = composeSystemPrompt({
+      metadata: { kind: 'video', videoModel: 'claude-animation-p5', videoLength: 5, videoAspect: '16:9' },
+    });
+    expect(prompt).toContain('Hand-painted Animation — agent-authored, daemon-rendered');
+    expect(prompt).toContain('--model claude-animation-p5 --length 5 --aspect 16:9');
+    expect(prompt).toContain('Do not add CDN scripts, npm installs, Chrome launches, audio');
+  });
   it('injects Chinese quick brief guidance when the UI locale is zh-CN', () => {
     const prompt = composeSystemPrompt({ locale: 'zh-CN' });
 

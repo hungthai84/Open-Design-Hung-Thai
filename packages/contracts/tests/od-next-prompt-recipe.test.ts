@@ -37,6 +37,20 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
 };
 
 describe('OD Next V2 prompt recipe', () => {
+  it('keeps local character animation dispatch guidance across legacy and OD Next', () => {
+    const context = {
+      metadata: { kind: 'video' as const, videoModel: 'claude-animation-p5', videoLength: 5, videoAspect: '16:9' as const },
+      sessionMode: 'design' as const,
+    };
+    for (const extra of [{}, { odNextStrategyRecipe: recipe }]) {
+      const prompt = composeSystemPrompt({ ...context, ...extra });
+      expect(prompt).toContain('Hand-painted Animation — agent-authored, daemon-rendered');
+      expect(prompt).toContain('--model claude-animation-p5 --length 5 --aspect 16:9');
+    }
+    expect(composeSystemPrompt({ ...context, sessionMode: 'chat' }))
+      .not.toContain('Hand-painted Animation — agent-authored, daemon-rendered');
+  });
+
   it('reports runtime capabilities without restricting deliverables to the scene catalog', () => {
     const facts = renderOdNextRuntimeFactsV2({ ...recipe, planningFacts: {
       capabilitySnapshotHash: A, inputRefs: ['request'],
