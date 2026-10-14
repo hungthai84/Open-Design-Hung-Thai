@@ -1165,7 +1165,8 @@ test('muse uses exec --prompt-file and never embeds the prompt in argv or stdin'
     'exec',
     '--prompt-file',
     promptFilePath,
-    '--yolo',
+    '--disable-approval',
+    '--trust-workspace',
     '--user-input-auto-resolve',
     '--model',
     'spark',
@@ -1173,6 +1174,11 @@ test('muse uses exec --prompt-file and never embeds the prompt in argv or stdin'
     'high',
   ]);
   assert.equal(args.includes(prompt), false);
+  // Unattended runs must keep Muse's sandbox on: --yolo (and its
+  // --disable-sandbox half) would give every prompt unrestricted host
+  // filesystem/network execution instead of workspace containment.
+  assert.equal(args.includes('--yolo'), false);
+  assert.equal(args.includes('--disable-sandbox'), false);
 });
 
 test('muse omits model and reasoning flags for default options', () => {
@@ -1183,9 +1189,12 @@ test('muse omits model and reasoning flags for default options', () => {
     'exec',
     '--prompt-file',
     promptFilePath,
-    '--yolo',
+    '--disable-approval',
+    '--trust-workspace',
     '--user-input-auto-resolve',
   ]);
+  assert.equal(args.includes('--yolo'), false);
+  assert.equal(args.includes('--disable-sandbox'), false);
 });
 
 test('muse requires a daemon-provided prompt file path', () => {
