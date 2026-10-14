@@ -830,7 +830,7 @@ export async function runDesktopMain(
     if (activeDesktop == null) {
       return {
         executablePath: process.execPath,
-        capabilities: { frameRenderer: true },
+        capabilities: { frameRenderer: true, frozenArtifactResources: true },
         pid: process.pid,
         state: "idle",
         updatedAt: new Date().toISOString(),
@@ -842,7 +842,7 @@ export async function runDesktopMain(
     return {
       executablePath: process.execPath,
       ...activeDesktop.status(),
-      capabilities: { frameRenderer: true },
+      capabilities: { frameRenderer: true, frozenArtifactResources: true },
       ...update,
     };
   }
