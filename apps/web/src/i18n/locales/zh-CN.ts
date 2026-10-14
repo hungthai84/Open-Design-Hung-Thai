@@ -1,6 +1,13 @@
 import type { Dict } from "../types";
 
 export const zhCN: Dict = {
+  'chat.dockOptions': "对话位置",
+  'chat.openFullView': "在完整视图中打开",
+  'chat.moveLeftPane': "移至左侧窗格",
+  'chat.moveRightPane': "移至右侧窗格",
+  'chat.minimizeConversation': "变成最小",
+  "workspace.copyProject": "复制",
+  "workspace.shareToTeam": "分享给团队",
   'invite.header.eyebrow': "团队邀请",
   'invite.loading': "正在加载邀请…",
   'invite.landing.title': "加入团队",
@@ -2124,6 +2131,16 @@ export const zhCN: Dict = {
   "ds.emptyNoMatch": "没有匹配的设计体系。",
   "ds.badgeDefault": "默认",
   "ds.preview": "预览完整体系",
+  "ds.detailTheme": "主题",
+  "ds.detailComponents": "组件",
+  "ds.detailGraphics": "图形",
+  "ds.detailGuidelines": "设计规范",
+  "ds.detailNavigation": "设计系统模块",
+  "ds.detailEmpty": "此模块暂无内容",
+  "ds.foundationFont": "字体",
+  "ds.foundationShadow": "阴影",
+  "ds.foundationRadius": "圆角",
+  "ds.foundationSpacing": "间距",
   "ds.previewTitle": "预览完整设计体系",
   "ds.categoryAll": "全部",
   "ds.categoryUncategorized": "未分类",
@@ -2271,6 +2288,7 @@ export const zhCN: Dict = {
   "chat.annotationUploadFailed": "附件上传失败，请重试",
   "chat.conversationsTitle": "对话历史",
   "chat.conversationsAria": "对话历史",
+  "entry.newConversation": "新建会话",
   "chat.newConversation": "新建对话",
   "chat.newConversationsTitle": "新建对话",
   "chat.conversationsHeading": "对话",
@@ -4727,7 +4745,7 @@ export const zhCN: Dict = {
   "dsManager.createTitle": "新建设计体系",
   "dsManager.createBody":
     "把你的品牌、产品、代码、素材和设计参考教给 Open Design。",
-  "dsManager.createAction": "创建",
+  "dsManager.createAction": "创建设计系统",
   "dsManager.emptyMine":
     "还没有设计体系。从真实的产品上下文创建一个，审阅草稿后再发布，供以后的项目使用。",
   "dsManager.badgeDefault": "对话默认",

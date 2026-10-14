@@ -60,13 +60,9 @@
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-6);
-  /* Trim the large blank band while keeping the hero clear of the tab strip.
-     96px landed the composer card ~300px below the scroll column's top (the
-     logo + type carousel above it add ~204px) — per product: 输入框整块上移，
-     顶距从 446 收到 300。 Then +20 (per product: 整个模块向下偏移 20), which is
-     the whole block's offset: everything from the title down rides this
-     padding. */
-  padding: 116px 0 var(--spacing-4);
+  /* Keep the title, composer and type pills together. The extra 28px puts
+     the type row 32px above the bottom edge in the reference home layout. */
+  padding: 144px 0 var(--spacing-4);
 }
 .home-hero__brand {
   position: relative;
@@ -3325,6 +3321,86 @@
     transition: none;
   }
 }
+
+/* Natural image heights form the recommendation masonry. */
+.home-hero__plugin-presets.home-hero__plugin-presets--masonry {
+  display: block;
+  max-height: none;
+  overflow: visible;
+  columns: 3;
+  column-gap: var(--spacing-12, 12px);
+  padding: 4px;
+}
+.home-hero__plugin-preset-card {
+  position: relative;
+  break-inside: avoid;
+  margin-bottom: var(--spacing-12, 12px);
+}
+.home-hero__masonry-tile {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-large);
+  overflow: hidden;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.home-hero__masonry-tile:focus-visible,
+.home-hero__masonry-tile.is-active {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.home-hero__masonry-thumb {
+  display: block;
+  width: 100%;
+  background: var(--bg-subtle);
+}
+.home-hero__masonry-thumb img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.home-hero__plugin-preset-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+}
+.home-hero__plugin-preset-preview-action {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-large);
+  background: var(--bg-panel);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+}
+.home-hero__plugin-preset-card:hover .home-hero__plugin-preset-preview-action,
+.home-hero__plugin-preset-card:focus-within .home-hero__plugin-preset-preview-action {
+  opacity: 1;
+}
+@media (max-width: 900px) {
+  .home-hero__plugin-presets.home-hero__plugin-presets--masonry { columns: 2; }
+}
+@media (max-width: 480px) {
+  .home-hero__plugin-presets.home-hero__plugin-presets--masonry { columns: 1; }
+}
+@media (hover: none) {
+  .home-hero__plugin-preset-preview-action { opacity: 1; }
+}
+.home-hero__masonry-tile.is-pending { opacity: 0.8; }
+.home-hero__masonry-tile:disabled,
+.home-hero__plugin-preset-preview-action:disabled { cursor: not-allowed; }
 
 /* Each preset is wrapped in a positioning cell so the "Open as project"
    overlay can sit over the thumbnail without nesting a button inside the

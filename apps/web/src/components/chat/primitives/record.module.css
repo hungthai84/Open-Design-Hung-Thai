@@ -1440,19 +1440,18 @@
   --stream-radius: 16px;
   margin-block: var(--stream-gap);
   border-radius: var(--stream-radius);
-  /*
-   * 稿子:`--stream-surface: #FAFAFA`(`thinking-stream.css:25`,853da24ea5 与交付稿
-   * 8015870095 逐字相同)—— 一枚**不透明**底色。换成产品 token 是为了深浅两套主题
-   * 自动跟着翻,但必须挑对那一档:`--chat-bg-panel` → `--bg-panel` → `#fafafa`,
-   * 值和稿子一致且不透明。
-   *
-   * ⚠️ 这里原来写的是 `--chat-bg-fill-tertiary`(`rgba(0,0,0,0.03)`)—— **半透明**。
-   * 半透明的后果不是「差一点点」,是这块灰底根本没有确定的颜色:它坐在什么上面就
-   * 跟着变。陈列页里它坐 `--bg-panel`、会话里坐 `--bg`,同一块底在两处不是同一个色,
-   * 而稿子给的恰恰是一个定值。
-   */
-  background: var(--chat-bg-panel);
+  /* 思考正文使用透明背景，与会话底色保持一致。 */
+  background: transparent;
   padding: var(--stream-pad);
+}
+
+/* 思考框加高，上下边缘柔和渐隐，正文仍在透明框内滚动。 */
+.fold.thoughts > .body.scroll {
+  max-height: 160px;
+  overflow-x: hidden;
+  clip-path: inset(0 round var(--stream-radius));
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent);
 }
 /*
  * ⚠️ **特异性,不是字面值。** 这条原来写的是 `.fold.flat[open] > summary + .body.stream`
@@ -1602,7 +1601,7 @@
  *
  * **想完了那一态也一起退**(产品裁决 2026-09-02,偏离稿子):稿子把「收起后的
  * `.think`」当结论、留深色,前提是那一态没有自己的容器、就落在流水里;产品这一版
- * 两态共用一只灰底容器(见上面 `.stream, .thoughts > .body.stack`),同一只盒子里
+ * 两态共用一只透明容器(见上面 `.stream, .thoughts > .body.stack`),同一只盒子里
  * 换墨色比换容器更突兀。
  */
 .fold .thoughts > .body > * {

@@ -1,0 +1,41 @@
+.iconBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  padding: 2px;
+  border-radius: 999px;
+  color: var(--type-color);
+  background: color-mix(in srgb, var(--type-color) 20%, transparent);
+}
+
+.iconBadge[data-type='prototype'] {
+  --type-color: #028BFD;
+  background: #E5F3FE;
+}
+
+.iconBadge[data-type='deck'] {
+  --type-color: #FB9942;
+  background: #FFF4EF;
+}
+
+.iconBadge[data-type='document'] {
+  --type-color: #4AC26B;
+  background: #EDF8F0;
+}
+
+:global(.home-hero__type-pill):has(.iconBadge) {
+  box-sizing: border-box;
+  min-height: 36px;
+  height: 36px;
+  padding: 2px 14px 2px 2px;
+}
+
+.row :global(.home-hero__type-pill) {
+  min-height: 36px;
+  font-size: 14px;
+  gap: 8px;
+}

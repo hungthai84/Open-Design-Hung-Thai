@@ -159,7 +159,7 @@ vi.mock('../../src/components/Loading', () => ({
   CenteredLoader: () => <div data-testid="loader" />,
 }));
 
-vi.mock('../../src/components/ChatPane', () => ({
+vi.mock('../../src/components/chat/ProjectChatPane', () => ({
   ChatPane: ({
     messages,
     onSend,
@@ -424,7 +424,11 @@ describe('ProjectView API empty response handling', () => {
     await waitFor(() => expect(chatPaneMockState.resizeObserverCallbacks.length).toBeGreaterThan(0));
 
     for (let round = 0; round < 3; round += 1) {
-      fireEvent.click(screen.getByTestId('chat-collapse-toggle'));
+      expect(screen.queryByTestId('chat-collapse-toggle')).toBeNull();
+      const separator = screen.getByRole('separator', { name: 'Resize chat panel' });
+      fireEvent.keyDown(separator, { key: 'Home' });
+      expect(separator).toHaveAttribute('aria-valuenow', '345');
+      fireEvent.keyDown(separator, { key: 'ArrowLeft' });
 
       const split = document.querySelector<HTMLDivElement>('.split');
       expect(split).not.toBeNull();
@@ -445,6 +449,24 @@ describe('ProjectView API empty response handling', () => {
       expect(split?.classList.contains('split-focus')).toBe(false);
       expect(chatSlot).not.toHaveAttribute('aria-hidden');
     }
+  });
+
+  it('collapses only when a resize drag crosses the minimum and can restore the chat', async () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    renderProjectView();
+    const separator = screen.getByRole('separator', { name: 'Resize chat panel' });
+    Object.defineProperty(separator, 'setPointerCapture', { value: vi.fn() });
+    fireEvent.keyDown(separator, { key: 'Home' });
+    fireEvent.pointerDown(separator, { button: 0, clientX: 500 });
+    fireEvent.pointerMove(window, { clientX: 520 });
+    fireEvent.pointerUp(window);
+    expect(separator).toHaveAttribute('aria-valuenow', '365');
+    fireEvent.pointerDown(separator, { button: 0, clientX: 520 });
+    fireEvent.pointerMove(window, { clientX: 499 });
+    await waitFor(() => expect(screen.queryByRole('separator', { name: 'Resize chat panel' })).toBeNull());
+    expect(screen.getByTestId('file-workspace')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('workspace-focus-toggle'));
+    expect(screen.getByRole('separator', { name: 'Resize chat panel' })).toHaveAttribute('aria-valuenow', '345');
   });
 
   it('marks attached saved comments as failed when an API completion has no output', async () => {

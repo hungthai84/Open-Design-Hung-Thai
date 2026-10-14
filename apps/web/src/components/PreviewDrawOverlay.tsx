@@ -82,6 +82,7 @@ interface Props {
 const SUBMIT_ORDER: AnnotationAction[] = ['draft', 'queue', 'send'];
 
 const STROKE_COLOR = '#ff3b30';
+const BOX_COLOR = '#00ff08';
 const STROKE_WIDTH = 4;
 const TARGET_COLOR = '#1677ff';
 // Text-annotation glyph height as a fraction of the frame height, so a dropped
@@ -1439,7 +1440,7 @@ export function PreviewDrawOverlay({
                 maxWidth: '100%',
                 padding: '8px 12px',
                 borderRadius: 999,
-                background: 'rgba(20,20,20,0.92)',
+                background: '#212121',
                 color: '#fff',
                 boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
                 backdropFilter: 'blur(8px)',
@@ -1463,7 +1464,7 @@ export function PreviewDrawOverlay({
                 maxWidth: '100%',
                 overflowX: 'auto',
                 padding: '6px 8px',
-                background: 'rgba(20,20,20,0.92)',
+                background: '#212121',
                 borderRadius: 12,
                 boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
                 backdropFilter: 'blur(8px)',
@@ -1542,7 +1543,7 @@ export function PreviewDrawOverlay({
               maxWidth: '100%',
               overflow: 'visible',
               padding: 6,
-              background: 'rgba(20,20,20,0.92)',
+              background: '#212121',
               color: '#fff',
               borderRadius: 22,
               boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
@@ -1637,11 +1638,11 @@ export function PreviewDrawOverlay({
               disabled={sending}
               placeholder={t('chat.annotationNotePlaceholder')}
               style={{
-                background: 'rgba(218, 97, 56, 0.18)',
-                border: '1px solid rgba(248, 150, 104, 0.82)',
+                background: 'rgba(0, 255, 8, 0.18)',
+                border: '1px solid #00ff08',
                 borderRadius: 999,
                 outline: 'none',
-                boxShadow: '0 0 0 3px rgba(218, 97, 56, 0.22)',
+                boxShadow: '0 0 0 3px rgba(0, 255, 8, 0.22)',
                 color: 'inherit',
                 flexGrow: 1,
                 flexShrink: 1,
@@ -1767,7 +1768,7 @@ const tooltipStyle = `
     transform: translateX(-50%) translateY(2px);
     padding: 4px 7px;
     border-radius: var(--radius-medium, 4px);
-    background: rgba(20,20,20,0.94);
+    background: #212121;
     color: #fff;
     font-size: 12px;
     line-height: 1.2;
@@ -1871,8 +1872,8 @@ function drawNormalizedBox(ctx: CanvasRenderingContext2D, box: NormalizedRect, w
   const boxWidth = Math.max(1, box.width * width);
   const boxHeight = Math.max(1, box.height * height);
   ctx.save();
-  ctx.fillStyle = 'rgba(255, 59, 48, 0.10)';
-  ctx.strokeStyle = STROKE_COLOR;
+  ctx.fillStyle = 'rgba(0, 255, 8, 0.10)';
+  ctx.strokeStyle = BOX_COLOR;
   ctx.lineWidth = Math.max(2, Math.round(Math.min(width, height) * 0.002));
   ctx.setLineDash([10, 6]);
   ctx.fillRect(left, top, boxWidth, boxHeight);
@@ -2001,8 +2002,6 @@ const previewDrawDockDockedStyle: CSSProperties = {
   transform: 'translateX(-50%)',
   maxWidth: 'min(760px, calc(100% - 144px))',
 };
-
-
 
 
 

@@ -13,6 +13,7 @@ import {
 import { navigate, type Route } from '../../src/router';
 import type { Project } from '../../src/types';
 import { setWorkspaceTabsDock } from '../../src/components/workspaceTabsDock';
+import { ENTRY_RAIL_STATE_EVENT, RAIL_OPEN_STORAGE_KEY } from '../../src/components/entryRailBridge';
 
 afterEach(() => {
   setWorkspaceTabsDock(null);
@@ -161,6 +162,25 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     document.querySelector('[data-testid="blank-workspace-area"]')?.remove();
   });
 
+  it('preserves the sidebar toggle and its focus across collapse and expand', () => {
+    window.localStorage.setItem(RAIL_OPEN_STORAGE_KEY, 'true');
+    render(<>
+      <div className="entry-nav-rail__panel-actions" />
+      <WorkspaceTabsBar route={homeRoute} projects={[project]} />
+    </>);
+    const toggle = screen.getByTestId('entry-rail-collapse');
+    const search = screen.getByTestId('entry-nav-search');
+    toggle.focus();
+
+    for (const open of [false, true]) {
+      act(() => window.dispatchEvent(new CustomEvent(ENTRY_RAIL_STATE_EVENT, { detail: { open } })));
+      expect(screen.getByTestId('entry-rail-collapse')).toBe(toggle);
+      expect(screen.getByTestId('entry-nav-search')).toBe(search);
+      expect(document.activeElement).toBe(toggle);
+      expect(toggle.getAttribute('aria-expanded')).toBe(String(open));
+    }
+  });
+
   it('keeps Home tab as a singleton and avoids duplication', async () => {
     const { rerender } = render(
       <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
@@ -244,13 +264,13 @@ describe('WorkspaceTabsBar navigation semantics', () => {
 
     const trigger = await screen.findByTestId('workspace-tabs-dropdown-trigger');
     fireEvent.click(trigger);
-    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(screen.getByRole('menu')).toBeTruthy();
 
     act(() => setWorkspaceTabsDock(null));
     rerender(
       <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
     );
-    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
 
     act(() => setWorkspaceTabsDock(secondDock));
     rerender(
@@ -258,7 +278,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     );
     const restoredTrigger = await screen.findByTestId('workspace-tabs-dropdown-trigger');
     expect(restoredTrigger.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
 
     firstDock.remove();
     secondDock.remove();
@@ -370,17 +390,12 @@ describe('WorkspaceTabsBar navigation semantics', () => {
     });
   });
 
-  it('ships no tab-bar chrome buttons and no reachable Search tabs popover', async () => {
+  it('keeps workspace creation out of the global tab bar and removes Search tabs', async () => {
     const { rerender } = render(
       <WorkspaceTabsBar route={{ kind: 'home', view: 'home' }} projects={[project]} />,
     );
 
-    // #5517 removed both top-right chrome buttons. The "+" was the radial
-    // template menu's only entry point and the magnifier was the Search-tabs
-    // popover's only entry point, so neither overlay can be opened any more.
-    // This is the regression guard for that removal: if a future change
-    // re-introduces either control it must be a deliberate decision that
-    // updates this test (and re-enables the popover-dismissal spec below).
+    // Browser-tab creation belongs to FileWorkspace, outside the global tab strip.
     expect(screen.queryByRole('button', { name: 'New tab' })).toBeNull();
     expect(screen.queryByTestId('workspace-tabs-new-tab')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Search tabs' })).toBeNull();
@@ -1868,5 +1883,25 @@ describe('WorkspaceTabsBar identity-scope tab reset', () => {
         'project-alpha',
       );
     });
+  });
+});
+
+describe('project dropdown duplication', () => {
+  it('duplicates the chosen project and offers team sharing', async () => {
+    window.localStorage.clear();
+    const dock = document.createElement('div');
+    document.body.append(dock);
+    setWorkspaceTabsDock(dock);
+    const duplicate = vi.fn().mockResolvedValue(undefined);
+    try {
+      render(<WorkspaceTabsBar route={projectRoute} projects={[project]} onDuplicateProject={duplicate} />);
+      fireEvent.click(await screen.findByTestId('workspace-tabs-dropdown-trigger'));
+      expect(screen.queryByRole('listbox')).toBeNull();
+      expect(screen.getAllByRole('menuitem')).toHaveLength(4);
+      expect(screen.getByRole('menuitem', { name: 'workspace.shareToTeam' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'workspace.copyProject' }));
+      await waitFor(() => expect(duplicate).toHaveBeenCalledWith(project.id));
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    } finally { cleanup(); setWorkspaceTabsDock(null); dock.remove(); }
   });
 });

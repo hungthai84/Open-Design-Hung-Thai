@@ -96,20 +96,33 @@ export function TabLauncherMenu({
 
   // Outside-click / Escape to dismiss.
   useEffect(() => {
-    function onDown(e: MouseEvent) {
+    let iframeFocusFrame: number | null = null;
+    function onDown(e: PointerEvent) {
       const target = e.target as Node;
       if (anchor?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
       onClose();
     }
+    // Clicks inside a preview iframe never bubble into this document.
+    function onWindowBlur() {
+      if (iframeFocusFrame !== null) window.cancelAnimationFrame(iframeFocusFrame);
+      iframeFocusFrame = window.requestAnimationFrame(() => {
+        iframeFocusFrame = null;
+        const focused = document.activeElement;
+        if (focused?.tagName === 'IFRAME' && !menuRef.current?.contains(focused)) onClose();
+      });
+    }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
     }
-    document.addEventListener('mousedown', onDown);
+    document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('blur', onWindowBlur);
     return () => {
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', onWindowBlur);
+      if (iframeFocusFrame !== null) window.cancelAnimationFrame(iframeFocusFrame);
     };
   }, [anchor, onClose]);
 

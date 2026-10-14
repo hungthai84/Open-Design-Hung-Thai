@@ -88,7 +88,13 @@ export function targetFromSnapshot(snapshot: PreviewCommentSnapshot): PreviewCom
     selector: snapshot.selector,
     label: snapshot.label,
     text: trimContextText(snapshot.text),
-    position: normalizePosition(snapshot.position),
+    position: {
+      ...normalizePosition(snapshot.position),
+      ...(snapshot.hoverPoint ? { pinOffset: {
+        x: snapshot.hoverPoint.x - snapshot.position.x,
+        y: snapshot.hoverPoint.y - snapshot.position.y,
+      } } : {}),
+    },
     htmlHint: trimHtmlHint(snapshot.htmlHint),
     style: normalizeStyle(snapshot.style),
     selectionKind: snapshot.selectionKind === 'pod' ? 'pod' : 'element',
@@ -698,6 +704,7 @@ function visualAnnotationIntentWithoutScreenshot(): string {
 
 function normalizePosition(input: PreviewComment['position']): PreviewComment['position'] {
   return {
+    ...(input?.pinOffset ? { pinOffset: { x: finite(input.pinOffset.x), y: finite(input.pinOffset.y) } } : {}),
     x: finite(input?.x),
     y: finite(input?.y),
     width: finite(input?.width),

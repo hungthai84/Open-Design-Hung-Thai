@@ -136,6 +136,8 @@ export function RailRecentRow({
   project,
   workspaceContext,
   runStatus,
+  showLeadingIcon = true,
+  expanded,
   onOpen,
   onRename,
   onDelete,
@@ -145,6 +147,9 @@ export function RailRecentRow({
   /** This project's live run status, when it has one (per product: 如果有项目在
    *  进行，这个 icon 换成状态). Drives the leading glyph and nothing else. */
   runStatus?: ProjectDisplayStatus;
+  /** Recent history is a flat list; only project folders show a leading glyph. */
+  showLeadingIcon?: boolean;
+  expanded?: boolean;
   onOpen?: (id: string) => void | Promise<unknown>;
   onRename?: (id: string, name: string) => void;
   onDelete?: (id: string) => Promise<boolean | void> | boolean | void;
@@ -181,6 +186,7 @@ export function RailRecentRow({
   // second, differently-labelled one.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [draftName, setDraftName] = useState(project.name);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -319,28 +325,35 @@ export function RailRecentRow({
       ) : (
         <button
           type="button"
-          className="entry-nav-rail__recent-item"
-          onClick={() => { void onOpen?.(project.id); }}
+          className={`entry-nav-rail__recent-item${opening ? ' is-active' : ''}`}
+          aria-busy={opening || undefined}
+          onClick={() => {
+            if (!onOpen || opening) return;
+            setOpening(true);
+            void Promise.resolve().then(() => onOpen(project.id)).finally(() => {
+              if (activeRef.current) setOpening(false);
+            });
+          }}
           /* No `title`: the OS tooltip it produced opened right where the hover
              preview does and covered it (per product: hover 这的文本的气泡去掉).
              The full name lives in that preview now — a surface we control,
              which can also wrap it instead of ellipsizing. */
+          aria-expanded={expanded}
           data-testid="entry-nav-recent-item"
         >
-          {/* Live run states share the project switcher's glyphs. Completed,
-              unread projects retain their folder and show a trailing blue dot;
-              RailRecentSection clears that notice when the project is opened. */}
-          <span className="entry-nav-rail__recent-icon">
-            {runStatus && runStatus !== 'succeeded' && hasRunStatusGlyph(runStatus) ? (
-              <ProjectRunStatusIcon
-                status={runStatus}
-                size={14}
-                label={t(STATUS_LABEL_KEYS[runStatus])}
-              />
-            ) : (
-              <Icon name="folder" size={16} />
-            )}
-          </span>
+          {showLeadingIcon ? (
+            <span className="entry-nav-rail__recent-icon">
+              {runStatus && runStatus !== 'succeeded' && hasRunStatusGlyph(runStatus) ? (
+                <ProjectRunStatusIcon
+                  status={runStatus}
+                  size={14}
+                  label={t(STATUS_LABEL_KEYS[runStatus])}
+                />
+              ) : (
+                <Icon name={expanded ? 'folder-5' : 'folder-3'} size={16} />
+              )}
+            </span>
+          ) : null}
           <span className="entry-nav-rail__recent-name">{project.name}</span>
           {runStatus === 'succeeded' && (
             <span

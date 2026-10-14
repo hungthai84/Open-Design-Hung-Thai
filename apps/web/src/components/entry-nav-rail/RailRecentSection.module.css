@@ -1,0 +1,37 @@
+.scrollable {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scrollable > button {
+  flex-shrink: 0;
+}
+
+.scrollBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.fixedAction {
+  flex-shrink: 0;
+}
+
+.toggle {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 36px;
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-radius: var(--radius-large, 8px);
+  color: var(--rail-ink-quiet);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.toggle:hover {
+  background: var(--bg-subtle);
+}

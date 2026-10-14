@@ -174,18 +174,10 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-/* Archive toggle, parked in the card's top-right corner. Always on (per
-   product: 去 hover 的所有状态) — the card carries no hover feedback at all now,
-   so a reveal-on-hover button would simply be unreachable with a mouse. It sat
-   at `opacity: 0` until `.item:hover`/`:focus-within` opened it, which is
-   exactly the state this card no longer has; touch already got it permanently
-   through a `(hover: none)` block, so this is that treatment everywhere. The
-   chevron it once competed with is inline beside the title, not in the corner. */
+/* Archive action sits before the CTA in the card footer. */
 .archiveAction {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 1;
+  position: relative;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -338,6 +330,7 @@
 
 .itemActions {
   display: flex;
+  gap: 8px;
   align-items: center;
   justify-content: flex-end;
   padding: 0 13px 12px;
@@ -448,4 +441,11 @@
   .panel {
     animation: none;
   }
+}
+
+/* Sidebar messages open over the upper part of the owning sidebar. */
+.railBackdrop {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }

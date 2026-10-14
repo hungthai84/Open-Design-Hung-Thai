@@ -750,9 +750,8 @@ const MAC_WINDOW_CHROME =
   process.platform === "darwin"
     ? ({
         titleBarStyle: "hiddenInset" as const,
-        // The web chrome is 44px tall; native 14px controls share the Home
-        // button's centre at y=22 (44 / 2 - 14 / 2 = 15).
-        trafficLightPosition: { x: 12, y: 15 },
+        // Windowed mode uses the renderer's compact controls; fullscreen uses
+        // native controls so macOS owns their title-bar placement and reveal.
         // Frosted-glass window: the desktop wallpaper blurs through the whole
         // window (NSVisualEffectView). The web shell keeps html/body
         // transparent in desktop mode (see apps/web app-wash.css) so the
@@ -766,30 +765,21 @@ const MAC_WINDOW_CHROME =
 
 const MAC_WINDOW_CHROME_CSS = `
   .app-chrome-header {
-    /* Windowed: the home pill sits 4px after the traffic lights (lights span
-       x:12 + 52px = 64px). Fullscreen (class synced from main below): the
-       lights are hidden, so the pill left-aligns with the nav-rail card's
-       10px inset instead. */
+    /* Keep windowed chrome actions clear of the custom window controls. */
     --app-chrome-traffic-space: 64px !important;
     --app-chrome-traffic-margin: 4px !important;
     -webkit-app-region: drag;
   }
-  html.is-window-fullscreen .app-chrome-header {
-    --app-chrome-traffic-space: 10px !important;
-    --app-chrome-traffic-margin: 0px !important;
-  }
-  /* The workspace tab strip carries its own 10px edge inset — the SAME inset
-     the nav-rail card below it uses, which is what puts the Home pill's glyph
-     on the rail's 首页 axis. In fullscreen there are no traffic lights to
-     clear, so a spacer here double-counts that inset and slides the pill (and
-     only the pill) 10px right of the icon column. Zero it for this header;
-     the windowed rule above still clears the lights. */
-  html.is-window-fullscreen .workspace-tabs-chrome.app-chrome-header {
-    --app-chrome-traffic-space: 0px !important;
-  }
   .app-chrome-traffic-space {
     flex: 0 0 var(--app-chrome-traffic-space) !important;
     width: var(--app-chrome-traffic-space) !important;
+  }
+  html.is-window-fullscreen .app-chrome-header {
+    --app-chrome-traffic-space: 0px !important;
+    --app-chrome-traffic-margin: 0px !important;
+  }
+  html.is-window-fullscreen .workspace-mac-window-controls {
+    display: none !important;
   }
   .app-chrome-header button,
   .app-chrome-header a,
@@ -1619,11 +1609,10 @@ function installWindowChromeCssHook(window: BrowserWindow): void {
   window.on("leave-full-screen", () => void syncWindowFullscreenClass(window));
 }
 
-/** Mirrors the macOS fullscreen state onto <html> so the injected window
- *  chrome CSS can reposition the tab-strip home pill (the traffic lights
- *  disappear in fullscreen). */
+/** Mirrors macOS fullscreen state onto <html> for desktop chrome styling. */
 async function syncWindowFullscreenClass(window: BrowserWindow): Promise<void> {
   if (process.platform !== "darwin" || window.isDestroyed()) return;
+  syncNativeWindowButtons(window);
   const flag = window.isFullScreen();
   try {
     await window.webContents.executeJavaScript(
@@ -1701,9 +1690,18 @@ function createDesktopPetWindow(preloadPath: string, osLocale: string | undefine
   return petWindow;
 }
 
-function showWindowButtons(window: BrowserWindow): void {
-  if (process.platform !== "darwin" || window.isDestroyed()) return;
-  window.setWindowButtonVisibility(true);
+export function syncNativeWindowButtons(
+  window: Pick<BrowserWindow, "isDestroyed" | "isFullScreen" | "setWindowButtonVisibility"> & {
+    webContents: Pick<BrowserWindow["webContents"], "getURL">;
+  },
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== "darwin" || window.isDestroyed()) return;
+  // Fullscreen controls belong to macOS's revealed title bar. The static
+  // renderer-crash page also needs native controls to remain operable.
+  window.setWindowButtonVisibility(
+    window.isFullScreen() || window.webContents.getURL().startsWith("data:text/html;charset=utf-8,"),
+  );
 }
 
 // Windows focus-stealing prevention can leave a detached-spawned GUI
@@ -1994,6 +1992,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
   ipcMain.removeHandler("shell:open-external");
   ipcMain.removeHandler("shell:open-path");
   ipcMain.removeHandler("browser:clear-data");
+  ipcMain.removeHandler("od:window-control");
   for (const channel of UPDATER_IPC_CHANNELS) {
     ipcMain.removeHandler(channel);
   }
@@ -2210,12 +2209,11 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
   const window = new BrowserWindow({
     height: 900,
     icon: resolveDesktopIconPath(),
-    // Below this size the project page's left/right split (chat
-    // composer + designs panel + preview pane) overlaps and the top
-    // navigation clips, so prevent Electron from honoring user drags
-    // that would shrink the window past the usable breakpoint.
+    // Keep the Home content card at its 800px track floor beside the 56px
+    // destinations and 200px workspace rail. Project splits also need this
+    // usable width, so window drags stop before either layout is squeezed.
     minHeight: 600,
-    minWidth: 900,
+    minWidth: 1056,
     // Starts hidden: the splash window is what the user sees while the real web
     // app loads in here. We reveal this window only once the app has actually
     // mounted (see `revealWhenReady` below), so there is never a flash of the
@@ -2236,7 +2234,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     width: 1280,
   });
   installWindowChromeCssHook(window);
-  showWindowButtons(window);
+  syncNativeWindowButtons(window);
   attachDownloadSaveAsDialog(window);
   window.on("page-title-updated", (event) => {
     event.preventDefault();
@@ -2376,6 +2374,24 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
       throw new Error("host IPC is only available to the main Open Design window");
     }
   };
+  ipcMain.handle("od:window-control", (event, action: unknown): OpenDesignHostActionResult => {
+    requireMainWindowSender(event);
+    if (window.isDestroyed()) return { ok: false, reason: "desktop window is unavailable" };
+    switch (action) {
+      case "close":
+        window.close();
+        break;
+      case "minimize":
+        window.minimize();
+        break;
+      case "toggle-full-screen":
+        window.setFullScreen(!window.isFullScreen());
+        break;
+      default:
+        return { ok: false, reason: "unsupported window control" };
+    }
+    return { ok: true };
+  });
   const discoverUpdateDaemonBaseUrl = async (): Promise<string> => {
     const daemonUrl = await options.discoverDaemonUrl?.();
     const baseUrl = daemonUrl ?? await options.discoverUrl();
@@ -2575,8 +2591,8 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     }
   });
 
-  window.on("focus", () => showWindowButtons(window));
-  window.on("blur", () => showWindowButtons(window));
+  window.on("focus", () => syncNativeWindowButtons(window));
+  window.on("blur", () => syncNativeWindowButtons(window));
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedChildWindowUrl(url)) return { action: "allow" };
@@ -2710,7 +2726,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
   const revealMainWindow = (): void => {
     if (revealed || window.isDestroyed()) return;
     revealed = true;
-    showWindowButtons(window);
+    syncNativeWindowButtons(window);
     window.show();
     window.focus();
     ensureWindowVisible(window);
@@ -2877,7 +2893,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
         if (!revealed) {
           void revealWhenReady();
         } else {
-          showWindowButtons(window);
+          syncNativeWindowButtons(window);
         }
       } else if (url == null) {
         pendingUrl = null;
@@ -2924,6 +2940,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
         ipcMain.removeHandler(channel);
       }
       ipcMain.removeHandler("browser:clear-data");
+      ipcMain.removeHandler("od:window-control");
       if (splash != null && !splash.isDestroyed()) splash.close();
       if (!petWindow.isDestroyed()) petWindow.close();
       if (!window.isDestroyed()) window.close();

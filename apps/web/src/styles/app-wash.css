@@ -91,21 +91,21 @@ html:has(.workspace-shell--desktop[data-host-platform='win32']) {
    Craft look. The desktop and darwin markers come from the host bridge
    (App.tsx data-client-type/data-host-platform). */
 html:has(.workspace-shell--desktop[data-host-platform='darwin']) {
-  /* 20% (per product, down from 62%) — a thin scrim, so most of the real
+  /* 16% — a thin scrim, so the real
      wallpaper reads through the glass. One number for both focus states: the
      window used to thin to 15% while unfocused, and the step was small enough
      to read as the wallpaper shifting under the app rather than as a focus
      cue, so the scrim now holds steady. */
   --app-wash: linear-gradient(
-    color-mix(in srgb, var(--wash-base) 20%, transparent),
-    color-mix(in srgb, var(--wash-base) 20%, transparent)
+    color-mix(in srgb, var(--wash-base) 16%, transparent),
+    color-mix(in srgb, var(--wash-base) 16%, transparent)
   );
   background: transparent;
 }
 html:has(.workspace-shell--desktop[data-host-platform='darwin']) body {
   background: transparent;
 }
-/* No focus response: the scrim is the same 20% focused and unfocused (per
+/* No focus response: the scrim is the same 16% focused and unfocused (per
    product). `.is-window-blurred` is still toggled on <html> by App.tsx and is
    still the hook to key off if a focus-dependent material ever comes back —
    it just no longer moves this one. */

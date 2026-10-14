@@ -141,15 +141,17 @@ describe('updater rocket placement after the account avatar', () => {
     expect(slot, 'rocket must live in the updater slot').not.toBeNull();
     expect(slot?.contains(trigger)).toBe(false);
 
-    // AFTER the avatar chip, in the same account container. The message-centre
-    // bell became a peer of the identity (it used to be a row behind the
-    // account menu), so the cluster reads trigger -> bell -> updater slot and
-    // nothing else may slip in.
+    // The avatar and updater share the persistent navigation rail. Workspace
+    // controls stay together in the collapsible workspace panel.
     const account = trigger.closest('.entry-nav-rail__account');
     expect(account?.contains(slot as Node)).toBe(true);
     const bell = screen.getByTestId('entry-nav-account-message-center');
-    expect(trigger.nextElementSibling).toBe(bell);
-    expect(bell.nextElementSibling).toBe(slot);
+    const workspaceSwitcher = screen.getByTestId('workspace-switcher');
+    expect(trigger.nextElementSibling).toBe(slot);
+    expect(workspaceSwitcher.closest('.entry-nav-rail__team-wrap')?.nextElementSibling).toBe(bell);
+    expect(account?.contains(bell)).toBe(false);
+    expect(account?.contains(workspaceSwitcher)).toBe(false);
+    expect(screen.getByTestId('primary-navigation-account-host').contains(rocket)).toBe(true);
     expect(
       trigger.compareDocumentPosition(rocket) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

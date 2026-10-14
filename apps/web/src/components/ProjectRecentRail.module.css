@@ -1,0 +1,23 @@
+.footer {
+  flex: 0 0 auto;
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* The panel already supplies the same inset as the Home account row. */
+  padding: 0;
+}
+
+.footer:empty { display: none; }
+
+.footer :global(.entry-nav-rail__team-wrap) { flex: 1 1 auto; min-width: 0; }
+.footer :global(.entry-nav-rail__team) { margin: 0; }
+.footer :global(.entry-nav-rail__team-menu) {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  max-width: calc(100vw - 80px);
+}

@@ -980,7 +980,7 @@
   /* 28px account controls with 8px above and below. */
   grid-template-rows: 44px minmax(0, 1fr);
 }
-/* Both project toolbars share the top row, inset 8px from the window. */
+/* Floating controls sit above the project cards, matching the home page. */
 .workspace-shell.workspace-shell--project {
   position: relative;
   grid-template-rows: 0 minmax(0, 1fr);
@@ -991,10 +991,59 @@
   left: 8px;
   width: max-content;
   max-width: calc(100% - 16px);
-  height: 48px;
-  min-height: 48px;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
   overflow: visible;
+}
+.workspace-file-chrome {
+  display: flex;
+  box-sizing: border-box;
+  padding-top: 14px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  pointer-events: none;
+}
+.workspace-file-chrome > .ws-tabs-bar {
+  flex: 1 1 auto;
+  height: 30px;
+  min-width: 0;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+.workspace-file-chrome,
+.workspace-file-chrome > .ws-tabs-bar {
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.workspace-file-chrome .ws-tab,
+.workspace-file-chrome .ws-tab *,
+.workspace-file-chrome button,
+.workspace-file-chrome button * {
+  -webkit-app-region: no-drag;
+}
+.workspace-file-chrome .ws-tabs-bar > .ws-tab {
+  width: auto;
+  max-width: 180px;
+  flex: 0 0 auto;
+}
+.workspace-file-chrome .ws-tab .ws-tab-anim,
+.workspace-file-chrome .ws-tab .ws-tab-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.workspace-file-chrome .ws-tab .ws-tab-label {
+  max-width: 120px;
+}
+.workspace-file-chrome > .workspace-tabs-new-btn.workspace-launcher-btn {
+  position: static;
+  width: 24px;
+  height: 24px;
+  margin: 0 0 0 auto;
+  pointer-events: auto;
 }
 .workspace-shell--project > .workspace-tabs-chrome > .workspace-tabs-home-chrome,
 .workspace-shell--project > .workspace-tabs-chrome > .workspace-tabs-strip {
@@ -1008,8 +1057,14 @@
   min-width: 32px;
   max-width: 32px;
 }
-.workspace-shell--project .app .split-chat-slot {
-  padding-top: 8px;
+/* Keep 8px between the destination buttons' right edge (48px) and the
+   project chat card. */
+.workspace-shell--project .workspace-shell__body {
+  padding-left: 56px;
+}
+.workspace-shell--project .split-chat-tabs-dock > .workspace-tabs-home-chrome,
+.workspace-shell--project > .workspace-tabs-chrome > .workspace-tabs-home-chrome {
+  display: none;
 }
 .split-chat-tabs-dock > .workspace-tabs-home-chrome {
   order: -1;
@@ -1019,34 +1074,38 @@
   margin: 0;
 }
 .workspace-shell--desktop[data-host-platform='darwin'] .split-chat-tabs-dock {
-  padding-left: 68px;
+  /* Leave room beside the macOS window controls without pushing the title
+     deep into the project card. */
+  padding-left: 20px;
 }
 html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin'] .split-chat-tabs-dock {
   padding-left: 0;
 }
 .workspace-shell--project .app .workspace {
-  margin-top: 8px;
+  margin-top: 48px;
 }
-/* With chat hidden, reserve the shared chrome row above the full-width
-   preview so the account and preview controls remain independently usable. */
+/* Keep the same card inset when chat is hidden. */
 .workspace-shell--project .app .split.split-focus .workspace {
-  margin-top: 56px;
+  margin-top: 48px;
 }
 /* The project chrome no longer spans the window. Restore native dragging
    in the exposed top gutter, the reserved chat header space, and the empty
    parts of the preview toolbar. Its three control groups stay interactive. */
-.workspace-shell--desktop.workspace-shell--project::before {
-  content: '';
+.workspace-window-drag-region {
+  /* Electron collects native hit regions from DOM elements. Keep this a
+     real shell child rather than relying on a generated pseudo-element. */
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 8px;
+  height: 40px;
   z-index: 119;
+  /* Native drag hit regions are handled by Electron. Let ordinary pointer
+     events reach the controls excluded with app-region: no-drag below. */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
   -webkit-app-region: drag;
-}
-.workspace-shell--desktop.workspace-shell--project:has(.split-focus)::before {
-  height: 56px;
 }
 .workspace-shell--desktop.workspace-shell--project .split-chat-slot::before {
   content: '';
@@ -1075,12 +1134,18 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
    classic full-width chrome row again. */
 .split-chat-tabs-dock:where(:not([data-chat-root], [data-chat-root] *)) {
   position: relative;
+  /* The desktop window-drag overlay is at 119. Keep the project switcher,
+     history and collapse controls above it so native clicks reach them. */
+  z-index: 120;
   display: flex;
+  box-sizing: border-box;
+  padding-top: 14px;
+  margin-bottom: 8px;
   /* Match the preview toolbar centre, including its 1px pane border. */
   align-items: center;
   gap: 8px;
-  height: 48px;
-  min-height: 48px;
+  height: 40px;
+  min-height: 40px;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -1149,6 +1214,8 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
+  /* The header owns both transcript-aligned insets. */
+  margin-inline: 0;
   -webkit-app-region: no-drag;
 }
 .workspace-tabs-dropdown__trigger:where(:not([data-chat-root], [data-chat-root] *)) {
@@ -1159,7 +1226,8 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
   gap: 8px;
   width: 100%;
   height: 36px;
-  padding: 0 10px 0 12px;
+  /* Align the title with the transcript: 16px inset + the card's 0.5px border. */
+  padding: 0 10px 0 calc(16px + 0.5px);
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -1197,7 +1265,7 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
   right: 0;
   padding: 6px;
   border: 1px solid var(--material-separator);
-  border-radius: 12px;
+  border-radius: var(--radius-xxlarge);
   background: #fff;
   box-shadow: var(--shadow-lg);
   /* Six 32px rows plus vertical padding and borders. Global border-box sizing
@@ -1205,6 +1273,10 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
   max-height: calc(6 * 32px + 2 * 6px + 2 * 1px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.workspace-tabs-dropdown__menu:where(:not([data-chat-root], [data-chat-root] *))::-webkit-scrollbar {
+  display: none;
 }
 /* Hover preview for the row under the pointer. Anchored to the dropdown (the
    menu's own positioning parent) rather than to the row, so sweeping the list
@@ -1713,15 +1785,32 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
   background: var(--veil-page, transparent);
 }
 .app .split-chat-slot:where(:not([data-chat-root], [data-chat-root] *)) {
-  /* Inset the pane so it reads as a floating card (same treatment as the home
-     sidebar's .entry-nav-rail__panel). Top inset is 0 so the card sits 8px
-     higher — the tab strip's own 10px bottom breathing is the only gap to it,
-     giving a 10px tab-to-content spacing (was 18px). Bottom/left stay 8px; the
-     slot's overflow:hidden (shell.css) clips the card's shadow cleanly at the
-     slot edge. Right side is 0 so the gap to the workspace card is just the
-     4px resize-handle column. */
-  padding: 0 0 8px 8px;
-  background: var(--veil-page, transparent);
+  /* The title occupies the top chrome row; only the conversation below
+     owns the card surface. Keep its top aligned with the preview card. */
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* This shell rule also owns the data-chat-root pane, whose upstream styles
+   otherwise reset the card surface. */
+.workspace-shell .app .split-chat-slot > .pane {
+  border: 0.5px solid #f7f7f7;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+[data-theme='dark'] .workspace-shell .app .split-chat-slot > .pane {
+  background: var(--bg-panel);
+  border-color: var(--border);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .workspace-shell .app .split-chat-slot > .pane {
+    background: var(--bg-panel);
+    border-color: var(--border);
+  }
 }
 .app .split-chat-slot > .pane:where(:not([data-chat-root], [data-chat-root] *)) {
   /* overflow:hidden still rounds the content (the composer is a separate
@@ -1730,7 +1819,7 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
   border: 0;
   border-radius: var(--radius-lg);
   box-shadow: none;
-  /* Let the page ground show through without tint or backdrop blur. */
+  /* The workspace shell supplies the card surface above. */
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -1738,7 +1827,7 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
 }
 .app .split-resize-handle:where(:not([data-chat-root], [data-chat-root] *)) {
   --split-resize-gradient-surface: #fff;
-  width: var(--project-chat-handle-width, 4px);
+  width: var(--project-chat-handle-width, 8px);
   min-width: 0;
   background: transparent;
 }
@@ -2927,13 +3016,13 @@ html.is-window-fullscreen .workspace-shell--desktop[data-host-platform='darwin']
 }
 
 .app .workspace:where(:not([data-chat-root], [data-chat-root] *)) {
-  /* Matches the top tab strip's effect exactly, same as the chat card
-     (.split-chat-slot > .pane). Inset 8px keeps the ground gutter between
+  /* The preview keeps the translucent app ground beside the white chat card.
+     Inset 8px keeps the ground gutter between
      the cards; overflow:hidden rounds the content and the toolbar dropdowns
      open downward into the preview so they aren't clipped. Left side is 0 so
-     the gap to the chat card is just the 4px resize-handle column (focus
-     mode restores it below). Top margin is 0 so the card sits 8px higher,
-     matching the chat card; the tab strip's own 10px bottom breathing is the
+     the gap to the chat card is just the 2px resize-handle column (focus
+     mode restores it below). Project pages set the top inset above to match
+     the home cards; the tab strip's own 10px bottom breathing is the
      only tab-to-content gap (10px, was 18px). */
   margin: 0 8px 8px 0;
   padding: 0;
@@ -4394,3 +4483,100 @@ body.od-quick-switcher-open .chat-composer-fixed-layer .composer-send:disabled:w
 }
 .workspace-tabs-dropdown__actions button:hover { background: var(--bg-subtle); }
 .workspace-tabs-dropdown__actions .is-danger { color: var(--red, #dc2626); }
+
+/* Preserve the expanded Home recent-project column while viewing a project. */
+.workspace-shell--project .workspace-shell__body:has(.project-recent-rail) {
+  display: flex;
+}
+.project-recent-rail {
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+  padding-top: 40px;
+  --rail-ink-quiet: var(--text-muted);
+}
+.project-recent-rail > .entry-nav-rail__panel {
+  margin: 8px var(--spacing-8) 8px 0;
+  overflow: visible;
+}
+.project-recent-rail:has(.entry-nav-rail__team-menu) {
+  z-index: 200;
+}
+.project-recent-rail__resizer {
+  flex: 0 0 8px;
+  align-self: stretch;
+  position: relative;
+  z-index: 140;
+  width: 8px;
+  margin: 44px 0 8px -8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+.project-recent-rail__resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.5px;
+  height: min(30%, 240px);
+  transform: translate(-50%, -50%);
+  border-radius: 1px;
+  background: linear-gradient(to bottom, transparent, var(--brand) 50%, transparent);
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out);
+  pointer-events: none;
+}
+.project-recent-rail__resizer:hover::after,
+.project-recent-rail__resizer:focus-visible::after,
+.project-recent-rail__resizer.is-resizing::after {
+  opacity: 1;
+}
+.workspace-shell__body:has(.project-recent-rail__resizer.is-resizing) {
+  cursor: col-resize;
+  user-select: none;
+}
+.workspace-shell__body:has(.project-recent-rail__resizer.is-resizing) iframe {
+  pointer-events: none;
+}
+.project-recent-rail__resizer:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+.workspace-shell--project .workspace-shell__body:has(.project-recent-rail) > .app {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* The open recent-project rail already leaves an 8px inset before the preview.
+   Do not add the focus-mode workspace gutter when the chat is collapsed. */
+.workspace-shell--project:has(.project-recent-rail[data-open='true']) .app .split.split-focus .workspace {
+  margin-left: 0;
+}
+.project-recent-rail__actions.entry-nav-rail__search-row {
+  position: absolute;
+  /* The 34px search/collapse buttons share the 27px centerline of the
+     project title and file tabs in the adjacent top row. */
+  top: 10px;
+  left: 52px;
+  z-index: 132;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: 0;
+  -webkit-app-region: no-drag;
+}
+.project-recent-rail__actions .entry-nav-rail__collapse {
+  margin-left: 0;
+}
+.workspace-shell--project:has(.project-recent-rail[data-open='false']) .split-chat-tabs-dock {
+  padding-left: 80px;
+}
+/* When the preview starts beside the collapsed rail, reserve the 72px
+   search/toggle group plus an 8px gap before its file tabs. */
+.workspace-shell--project:has(.project-recent-rail[data-open='false']) .split.split-focus [data-testid='workspace-tab-chrome'],
+.workspace-shell--project:has(.project-recent-rail[data-open='false']) .split[data-conversation-placement='right'] [data-testid='workspace-tab-chrome'] {
+  left: 80px;
+}

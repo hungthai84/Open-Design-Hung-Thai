@@ -1403,25 +1403,25 @@
   z-index: 2;
   left: 0;
   top: 0;
-  width: 42px;
-  height: 42px;
+  width: 29.4px;
+  height: 29.4px;
   padding: 0;
-  border: 3px solid #fff;
-  border-radius: 50% 50% 50% 10px;
-  background: #d96a46;
-  color: white;
-  font-size: 18px;
+  border: 2.1px solid #fff;
+  border-radius: 50% 50% 50% 7px;
+  background: var(--upgrade-ground);
+  color: var(--upgrade-ink);
+  font-size: 12.6px;
   font-weight: 700;
-  line-height: 36px;
+  line-height: 25.2px;
   text-align: center;
-  box-shadow: 0 10px 22px rgba(33, 24, 18, 0.22);
+  box-shadow: 0 7px 15.4px rgba(33, 24, 18, 0.22);
   pointer-events: auto;
   transform: translate(-50%, -50%);
 }
 .comment-saved-pin:hover,
 .comment-active-pin:hover {
-  background: #c95e3e;
-  transform: translate(-50%, calc(-50% - 1px));
+  background: var(--upgrade-ground);
+  transform: translate(-50%, calc(-50% - 0.7px));
 }
 .comment-active-pin {
   pointer-events: none;
@@ -1899,7 +1899,7 @@
 }
 .comment-side-select-all {
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   padding: 4px 6px;
   background: transparent;
   color: var(--text-muted);
@@ -1993,22 +1993,13 @@
 .comment-side-item {
   position: relative;
   border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: 10px 12px 10px 8px;
+  border-radius: 16px;
+  padding: 12px;
   background: transparent;
   color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.comment-side-item.selected {
-  background: var(--comment-accent-surface);
-  border-color: var(--comment-accent-border);
-}
-.comment-side-item.active {
-  background: var(--comment-accent-surface-strong);
-  border-color: var(--comment-accent-border);
-  box-shadow: inset 3px 0 0 var(--comment-accent);
 }
 .comment-side-item.dragging {
   opacity: 0.45;
@@ -2017,7 +2008,7 @@
 .comment-side-item-drop-after::after {
   content: '';
   position: absolute;
-  left: 32px;
+  left: 12px;
   right: 12px;
   height: 2px;
   border-radius: var(--radius-pill);
@@ -2035,32 +2026,11 @@
   align-items: center;
   gap: 6px;
 }
-.comment-side-drag-handle {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-faint);
+.comment-side-item-head[draggable='true'] {
   cursor: grab;
 }
-.comment-side-drag-handle:active:not(:disabled) {
+.comment-side-item-head[draggable='true']:active {
   cursor: grabbing;
-}
-.comment-side-drag-handle:disabled {
-  cursor: default;
-  opacity: 0.35;
-}
-.comment-side-drag-handle:hover:not(:disabled),
-.comment-side-drag-handle:focus-visible {
-  border-color: var(--border);
-  background: var(--bg-panel);
-  color: var(--text);
 }
 .comment-side-author {
   display: inline-flex;
@@ -2124,8 +2094,9 @@
   flex-shrink: 0;
 }
 .comment-side-check.checked {
-  background: var(--comment-accent);
-  border-color: var(--comment-accent);
+  background: var(--upgrade-ground);
+  border-color: var(--upgrade-ground);
+  color: var(--upgrade-ink);
 }
 .comment-side-body {
   font-size: 13px;
@@ -2156,17 +2127,42 @@
   display: block;
 }
 .comment-side-selectbar {
+  position: relative;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
-  background: var(--comment-accent-surface);
+  background: transparent;
+}
+.comment-side-selectbar::before,
+.comment-side-selectbar::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 56px;
+  pointer-events: none;
+}
+.comment-side-selectbar::before {
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 60%);
+  mask-image: linear-gradient(to bottom, transparent, #000 60%);
+}
+.comment-side-selectbar::after {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 35%, #000);
+  mask-image: linear-gradient(to bottom, transparent 35%, #000);
 }
 .comment-side-selectcount {
   flex: 1;
   font-size: 12px;
-  color: var(--comment-accent-strong);
+  color: #00ff08;
 }
 .comment-side-selectbar .ghost {
   background: transparent;
@@ -2184,23 +2180,26 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--comment-accent);
+  background: #202020;
   color: #fff;
-  border: 1px solid var(--comment-accent);
+  border: 1px solid #202020;
   border-radius: var(--radius-sm);
   padding: 5px 10px;
   font-size: 12px;
   cursor: pointer;
 }
+.comment-side-selectbar [data-testid='comment-side-send-claude'] {
+  border-radius: var(--radius-pill);
+}
 .comment-side-selectbar .primary:disabled {
-  background: color-mix(in srgb, var(--comment-accent) 45%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--comment-accent) 45%, var(--border));
+  background: color-mix(in srgb, #202020 45%, var(--bg-panel));
+  border-color: color-mix(in srgb, #202020 45%, var(--border));
   color: color-mix(in srgb, #fff 68%, var(--text-muted));
   cursor: not-allowed;
 }
 .comment-side-selectbar .primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--comment-accent) 88%, #000);
-  border-color: color-mix(in srgb, var(--comment-accent) 88%, #000);
+  background: #121212;
+  border-color: #121212;
 }
 .comment-side-new-comment {
   flex: 0 0 auto;

@@ -9,6 +9,8 @@ export type PreviewCommentStatus =
   | 'failed';
 
 export interface PreviewCommentPosition {
+  /** Click offset from the target origin; absent for legacy corner pins. */
+  pinOffset?: { x: number; y: number };
   x: number;
   y: number;
   width: number;

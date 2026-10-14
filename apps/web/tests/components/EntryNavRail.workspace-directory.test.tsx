@@ -207,6 +207,7 @@ describe('workspace switcher directory', () => {
     expect(list.contains(createTeam)).toBe(false);
     expect(actions.contains(invite)).toBe(true);
     expect(actions.contains(createTeam)).toBe(true);
+    expect(invite.parentElement).toBe(createTeam.parentElement);
 
     Object.defineProperty(list, 'scrollTop', { configurable: true, value: 68, writable: true });
     fireEvent.scroll(list);
@@ -217,9 +218,9 @@ describe('workspace switcher directory', () => {
     const lastWorkspace = menu().getByRole('menuitem', { name: 'Workspace 7' });
     lastWorkspace.focus();
     fireEvent.keyDown(lastWorkspace, { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(invite);
-    fireEvent.keyDown(invite, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(createTeam);
+    fireEvent.keyDown(createTeam, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(invite);
   });
 
   it('shows the last known list immediately on a later open, with no loading row', async () => {

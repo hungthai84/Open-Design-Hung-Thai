@@ -11649,7 +11649,8 @@ body.entry-resizing:where([data-chat-root], [data-chat-root] *) { cursor: col-re
   gap: 8px;
   width: 100%;
   height: 36px;
-  padding: 0 10px 0 12px;
+  /* Align the title with the transcript: 16px inset + the card's 0.5px border. */
+  padding: 0 10px 0 calc(16px + 0.5px);
   border: 0;
   border-radius: 12px;
   background: #fff;
@@ -11686,7 +11687,7 @@ body.entry-resizing:where([data-chat-root], [data-chat-root] *) { cursor: col-re
   right: 0;
   padding: 6px;
   border: 1px solid var(--material-separator);
-  border-radius: 12px;
+  border-radius: var(--radius-xxlarge);
   background: #fff;
   box-shadow: var(--shadow-lg);
   /* Six 32px rows plus vertical padding and borders. Global border-box sizing
@@ -11694,6 +11695,10 @@ body.entry-resizing:where([data-chat-root], [data-chat-root] *) { cursor: col-re
   max-height: calc(6 * 32px + 2 * 6px + 2 * 1px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.workspace-tabs-dropdown__menu:where([data-chat-root], [data-chat-root] *)::-webkit-scrollbar {
+  display: none;
 }
 .workspace-tabs-dropdown__row:where([data-chat-root], [data-chat-root] *) {
   display: flex;
@@ -12231,7 +12236,7 @@ body.entry-resizing:where([data-chat-root], [data-chat-root] *) { cursor: col-re
 .app .chat-log:where([data-chat-root], [data-chat-root] *),
 .chat-skin .chat-log:where([data-chat-root], [data-chat-root] *) {
   gap: 12px;
-  padding: 18px 18px 20px;
+  padding: 16px 16px 20px;
   /* Let the pane's clear glass show — the card material stays uniform with
      the tab strip instead of re-painting an opaque transcript slab. */
   background: transparent;
@@ -12960,17 +12965,17 @@ body.entry-resizing:where([data-chat-root], [data-chat-root] *) { cursor: col-re
 }
 
 .app .split-chat-slot > .pane:where([data-chat-root], [data-chat-root] *) {
-  --chat-composer-inline-inset: 10px;
+  --chat-composer-inline-inset: 8px;
 }
 
 .app .composer:where([data-chat-root], [data-chat-root] *),
 .chat-skin .composer:where([data-chat-root], [data-chat-root] *) {
-  padding: 9px 10px 11px;
+  padding: 8px var(--chat-composer-inline-inset, 8px);
   background: transparent;
 }
 .chat-composer-fixed-layer .composer:where([data-chat-root], [data-chat-root] *) {
   gap: 5px;
-  padding: 0;
+  padding: 8px var(--chat-composer-inline-inset, 8px);
   /* Bottommost gray card removed — the white shell sits directly on the chat
      card. (Dark keeps --bg-panel below, which matches the dark shell, so no
      separate card shows there either.) */

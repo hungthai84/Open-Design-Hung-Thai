@@ -88,6 +88,14 @@ function renderHtmlPreview(
   return { ...view, activeFrame, srcDocFrame: srcDocFrame as HTMLIFrameElement };
 }
 
+function selectPreviewViewport(viewport: 'desktop' | 'tablet' | 'mobile') {
+  const button = screen.getByRole('button', { name: 'Preview viewport' });
+  for (let attempt = 0; attempt < 3 && button.getAttribute('data-viewport') !== viewport; attempt += 1) {
+    fireEvent.click(button);
+  }
+  expect(button.getAttribute('data-viewport')).toBe(viewport);
+}
+
 async function openImageExportDialog() {
   fireEvent.click(await screen.findByRole('button', { name: /export/i }));
   fireEvent.click(screen.getByRole('menuitem', { name: /export as image/i }));
@@ -325,8 +333,7 @@ describe('FileViewer image export', () => {
     });
 
     renderHtmlPreview();
-    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
-    fireEvent.click(screen.getByRole('option', { name: /mobile/i }));
+    selectPreviewViewport('mobile');
     await openImageExportDialog();
     await clickSave();
 
@@ -354,8 +361,7 @@ describe('FileViewer image export', () => {
     imageDataUrlToBlobMock.mockResolvedValueOnce(new Blob(['png'], { type: 'image/png' }));
 
     renderHtmlPreview();
-    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
-    fireEvent.click(screen.getByRole('option', { name: /desktop/i }));
+    selectPreviewViewport('desktop');
     await openImageExportDialog();
     await clickSave();
 
@@ -388,8 +394,7 @@ describe('FileViewer image export', () => {
       '<html><body><div class="deck"><section class="slide">Cover</section></div></body></html>',
       'srcdoc',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
-    fireEvent.click(screen.getByRole('option', { name: /mobile/i }));
+    selectPreviewViewport('mobile');
     await openImageExportDialog();
     await clickSave();
 

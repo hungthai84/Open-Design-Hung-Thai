@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useI18n, type Locale } from '../i18n';
@@ -28,6 +28,7 @@ function formatPublishedDate(value: string, locale: Locale): string | null {
 }
 
 interface Props {
+  placement?: 'edge' | 'rail';
   /** Hide the built-in bell trigger — the host renders its own entry point
    *  (e.g. an account-menu row) and drives the panel via `open`/`onOpenChange`. */
   hideTrigger?: boolean;
@@ -47,6 +48,7 @@ type SyncState = 'loading' | 'ready' | 'error';
 
 export function MessageCenter({
   hideTrigger = false,
+  placement = 'edge',
   returnFocusRef,
   open: controlledOpen,
   onOpenChange,
@@ -65,6 +67,29 @@ export function MessageCenter({
     },
     [onOpenChange],
   );
+  const [railPosition, setRailPosition] = useState<CSSProperties>();
+  useLayoutEffect(() => {
+    if (!open || placement !== 'rail') return;
+    const anchor = returnFocusRef?.current ?? triggerRef.current;
+    const rail = anchor?.closest('.entry-nav-rail__panel, .project-destinations');
+    const updatePosition = () => {
+      const rect = rail?.getBoundingClientRect() ?? anchor?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(380, window.innerWidth - 24);
+      const top = Math.max(12, Math.min(rect.top + 8, window.innerHeight - 160));
+      setRailPosition({
+        position: 'fixed', margin: 0,
+        left: Math.max(12, Math.min(rect.left + 8, window.innerWidth - width - 12)),
+        top, width,
+        height: Math.min(560, Math.max(120, window.innerHeight - top - 80)),
+      });
+    };
+    updatePosition();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updatePosition);
+    if (rail) observer?.observe(rail);
+    window.addEventListener('resize', updatePosition);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', updatePosition); };
+  }, [open, placement, returnFocusRef]);
   const [messages, setMessages] = useState<MessageCenterMessage[]>([]);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   /** Archived ids + which shelf the list is showing. Archiving is a third
@@ -251,7 +276,7 @@ export function MessageCenter({
     {hideTrigger ? null : <button ref={triggerRef} type="button" className={`settings-icon-btn od-tooltip ${styles.trigger}`} onClick={() => setOpen(!open)} title={t('messageCenter.openAria')} data-tooltip={t('messageCenter.openAria')} data-tooltip-placement="bottom" aria-label={openLabel} aria-haspopup="dialog" aria-expanded={open} data-testid="message-center-trigger">
       <Icon name="bell" size={17} />{unreadCount > 0 ? <span className={styles.badge} aria-hidden>{unreadBadgeLabel(unreadCount)}</span> : null}
     </button>}
-    {open ? createPortal(<div className={styles.backdrop} data-testid="message-center-backdrop"><aside ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid="message-center-dialog">
+    {open ? createPortal(<div className={`${styles.backdrop}${placement === 'rail' ? ` ${styles.railBackdrop}` : ''}`} data-testid="message-center-backdrop"><aside ref={panelRef} className={styles.panel} style={placement === 'rail' ? railPosition : undefined} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid="message-center-dialog">
       <header className={styles.header}>
         <div className={styles.headerCopy}>
           <h2 id={titleId}>
@@ -341,16 +366,14 @@ function MessageItem({
         <strong>{message.title}</strong>
         <Icon name="chevron-up" size={16} className={styles.expandIcon} />
       </span>
-      <span className={styles.bodyPreview}>{message.body}</span>
-      {expanded && imageUrl ? <span className={styles.itemMedia}><img src={imageUrl} alt="" loading="lazy" /></span> : null}
       <span className={styles.itemMeta}>
         <span>{message.typeName}</span>
         {formatted ? <time dateTime={message.publishedAt}>{formatted}</time> : null}
       </span>
+      <span className={styles.bodyPreview}>{message.body}</span>
+      {expanded && imageUrl ? <span className={styles.itemMedia}><img src={imageUrl} alt="" loading="lazy" /></span> : null}
     </button>
-    {/* Outside the summary button: a button inside a button is invalid markup,
-        and clicking the summary expands + marks read, which archiving must
-        not do. */}
+    <div className={styles.itemActions}>
     <button
       type="button"
       className={`${styles.archiveAction} od-tooltip`}
@@ -364,7 +387,8 @@ function MessageItem({
           aria-label still say which way this click goes. */}
       <Icon name="more-vertical" size={15} />
     </button>
-    {expanded && message.ctaLabel && ctaUrl ? <div className={styles.itemActions}><button type="button" className={styles.primaryAction} onClick={() => window.open(ctaUrl, '_blank', 'noopener,noreferrer')}>{message.ctaLabel}</button></div> : null}
+      {expanded && message.ctaLabel && ctaUrl ? <button type="button" className={styles.primaryAction} onClick={() => window.open(ctaUrl, '_blank', 'noopener,noreferrer')}>{message.ctaLabel}</button> : null}
+    </div>
   </article>;
 }
 

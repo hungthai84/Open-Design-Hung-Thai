@@ -1,0 +1,12 @@
+/* Project-owned grid placement; keep both panes mounted to preserve state. */
+.right:global(.split) {
+  grid-template-columns: var(--project-workspace-panel-track) var(--project-chat-handle-width) var(--project-chat-panel-width);
+}
+.right > :global(.split-chat-slot) { grid-column: 3; grid-row: 1; }
+.right > :global(.split-resize-handle) { grid-column: 2; grid-row: 1; }
+.right > [data-testid='workspace-edit-layout'] { grid-column: 1; grid-row: 1; }
+/* The resize handle supplies the same gap as when chat is on the left. */
+.right:global(.split) :global(.workspace) { margin-right: 0; }
+.full:global(.split) { grid-template-columns: minmax(0, 1fr) 0 0; }
+.full > :global(.split-chat-slot) { grid-column: 1; grid-row: 1; }
+.full > [data-testid='workspace-edit-layout'] { display: none; }

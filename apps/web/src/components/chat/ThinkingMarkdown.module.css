@@ -1,7 +1,7 @@
 .think {
   min-width: 0;
   margin: 0;
-  color: var(--chat-text-strong);
+  color: var(--chat-stream-ink);
   font-size: var(--chat-t-mini);
   line-height: var(--chat-lh-body);
   overflow-wrap: anywhere;
@@ -23,7 +23,7 @@
 }
 
 .think :global(.md-h) {
-  color: var(--chat-text-strong);
+  color: var(--chat-stream-ink);
   font-size: inherit;
   line-height: var(--chat-lh-row);
   font-weight: 600;
@@ -42,11 +42,12 @@
 .think :global(.md-quote) {
   padding-inline-start: 0.75em;
   border-inline-start: var(--chat-stroke) solid var(--chat-border-strong);
-  color: var(--chat-text-muted);
+  color: var(--chat-stream-ink);
 }
 
 .think :global(.md-inline-code),
 .think :global(.md-code) {
+  color: var(--chat-stream-ink);
   font-family: var(--chat-font-mono);
   font-size: var(--chat-t-cap);
 }

@@ -42,6 +42,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -53,7 +54,12 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from '@open-design/components';
+import { useWorkspaceConversationFocus } from '../useWorkspaceConversationFocus';
 import historyStyles from '../ConversationHistoryDock.module.css';
+import dockStyles from '../WorkspaceComposerDock.module.css';
+import { WorkspaceConversationResizeHandle } from '../WorkspaceConversationResizeHandle';
+import { WorkspaceComposerHeader, type ConversationPlacement } from '../WorkspaceComposerHeader';
 import { hasOdCard, OD_NEXT_STRATEGY_ID, type ProjectMediaTask } from './contracts';
 import { useAnalytics } from '../../../analytics/provider';
 import { getResolvedDeviceId } from '../../../analytics/client';
@@ -942,9 +948,15 @@ interface Props {
   /** True when the collapse control renders OUTSIDE this pane (lifted into
    *  the tabs dock row) — suppresses the header's collapse/back slot. */
   collapseControlLifted?: boolean;
+  workspaceComposerDocked?: boolean;
+  workspaceConversationExpanded?: boolean;
+  onWorkspaceConversationExpandedChange?: (expanded: boolean) => void;
+  onExpandConversation?: () => void;
+  onConversationPlacementChange?: (placement: ConversationPlacement) => void;
   backLabel?: string;
   projectHeader?: ReactNode;
   historyPortalTarget?: HTMLElement | null;
+  hideProjectHeader?: boolean;
   designSystemPicker?: ReactNode;
   config?: AppConfig;
 }
@@ -1365,9 +1377,15 @@ export function ChatPane({
   onBack,
   onCollapse,
   collapseControlLifted,
+  workspaceComposerDocked = false,
+  workspaceConversationExpanded = false,
+  onWorkspaceConversationExpandedChange,
+  onExpandConversation,
+  onConversationPlacementChange,
   backLabel,
   projectHeader,
   historyPortalTarget,
+  hideProjectHeader = false,
   designSystemPicker,
   config,
 }: Props) {
@@ -1520,6 +1538,8 @@ export function ChatPane({
   const composerRef = useRef<ChatComposerHandle | null>(null);
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
+  const composerContentRef = useRef<HTMLDivElement | null>(null);
+  const restoreComposerFocusRef = useRef(false);
   const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
@@ -1872,6 +1892,22 @@ export function ChatPane({
     top: number;
   } | null>(null);
   const [composerSlotHeight, setComposerSlotHeight] = useState(0);
+  const [floatingConversationHeight, setFloatingConversationHeight] = useState<number | null>(null);
+  const conversationFocusOwner = useId();
+  const [conversationMinimized, setConversationMinimized] = useState(false);
+  const minimized = workspaceComposerDocked && conversationMinimized;
+  const markConversationInteraction = useWorkspaceConversationFocus(conversationFocusOwner,
+    workspaceComposerDocked && workspaceConversationExpanded && !minimized,
+    onWorkspaceConversationExpandedChange);
+  useEffect(() => { setConversationMinimized(false); }, [workspaceComposerDocked, activeConversationId]);
+  useLayoutEffect(() => {
+    if (minimized || !restoreComposerFocusRef.current) return;
+    restoreComposerFocusRef.current = false;
+    composerContentRef.current?.querySelector<HTMLElement>('[contenteditable="true"], textarea, input')?.focus();
+  }, [minimized]);
+  useEffect(() => {
+    if (workspaceComposerDocked) setTab('chat');
+  }, [workspaceComposerDocked]);
   const [editingQueuedSendId, setEditingQueuedSendId] = useState<string | null>(null);
   const [queuedSendExpanded, setQueuedSendExpanded] = useState(false);
   // Reverse scan (no array copy) + memo so this and the maps below don't
@@ -3637,13 +3673,17 @@ export function ChatPane({
     let frame: number | null = null;
     const updateRect = () => {
       frame = null;
-      const rect = slot.getBoundingClientRect();
-      const paneTop = slot.closest<HTMLElement>('.pane')?.getBoundingClientRect().top ?? 0;
+      const workspace = slot.closest('.split')?.querySelector<HTMLElement>('[data-testid="file-workspace"]');
+      const docked = workspaceComposerDocked && Boolean(workspace);
+      const rect = docked ? workspace!.getBoundingClientRect() : slot.getBoundingClientRect();
+      // Reserve the expand control and keep the bar inside the workspace card.
+      const dockWidth = Math.max(0, Math.min(480, rect.width - 64));
+      const paneTop = docked ? rect.top : slot.closest<HTMLElement>('.pane')?.getBoundingClientRect().top ?? 0;
       setComposerPortalRect((prev) => {
         const next = {
-          left: Math.round(rect.left),
-          width: Math.round(rect.width),
-          bottom: Math.max(0, Math.round(window.innerHeight - rect.bottom)),
+          left: Math.round(docked ? rect.right - dockWidth - 16 : rect.left),
+          width: Math.round(docked ? dockWidth : rect.width),
+          bottom: Math.max(0, Math.round(window.innerHeight - rect.bottom + (docked ? 16 : 0))),
           top: Math.max(0, Math.round(paneTop)),
         };
         if (
@@ -3671,6 +3711,8 @@ export function ChatPane({
     resizeObserver?.observe(slot);
     const pane = slot.closest('.pane');
     if (pane) resizeObserver?.observe(pane);
+    const workspace = slot.closest('.split')?.querySelector('[data-testid="file-workspace"]');
+    if (workspace) resizeObserver?.observe(workspace);
     window.addEventListener('resize', scheduleUpdate);
     window.visualViewport?.addEventListener('resize', scheduleUpdate);
 
@@ -3680,7 +3722,7 @@ export function ChatPane({
       window.removeEventListener('resize', scheduleUpdate);
       window.visualViewport?.removeEventListener('resize', scheduleUpdate);
     };
-  }, [tab]);
+  }, [tab, workspaceComposerDocked]);
 
   useLayoutEffect(() => {
     if (tab !== 'chat' || !composerPortalTarget || !composerPortalRect) return;
@@ -3690,7 +3732,7 @@ export function ChatPane({
     let frame: number | null = null;
     const updateHeight = () => {
       frame = null;
-      const nextHeight = Math.ceil(layer.getBoundingClientRect().height);
+      const nextHeight = Math.ceil((composerContentRef.current ?? layer).getBoundingClientRect().height);
       setComposerSlotHeight((prev) => (prev === nextHeight ? prev : nextHeight));
     };
     const scheduleUpdate = () => {
@@ -3703,13 +3745,13 @@ export function ChatPane({
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(scheduleUpdate)
         : null;
-    resizeObserver?.observe(layer);
+    resizeObserver?.observe(composerContentRef.current ?? layer);
 
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
     };
-  }, [composerPortalRect, composerPortalTarget, tab]);
+  }, [composerPortalRect, composerPortalTarget, tab, minimized]);
 
   const composerNode = (
     <>
@@ -3806,6 +3848,20 @@ export function ChatPane({
   const composerSlotStyle: CSSProperties | undefined = shouldPortalComposer
     ? { minHeight: composerSlotHeight > 0 ? composerSlotHeight : undefined }
     : undefined;
+  const floatingConversation = workspaceComposerDocked && workspaceConversationExpanded && !minimized && shouldPortalComposer;
+  const floatingMaxHeight = composerPortalRect && typeof window !== 'undefined'
+    ? Math.max(0, window.innerHeight - composerPortalRect.top - composerPortalRect.bottom - 16) : 480;
+  const floatingMinHeight = Math.min(floatingMaxHeight, Math.max(280, composerSlotHeight + 108));
+  const floatingHeight = Math.min(floatingMaxHeight, Math.max(floatingMinHeight,
+    floatingConversationHeight ?? Math.min(480, typeof window !== 'undefined' ? window.innerHeight * 0.6 : 480)));
+  const conversationTitle = conversations.find(item => item.id === activeConversationId)?.title || t('chat.untitledConversation');
+  const floatingPaneStyle: CSSProperties | undefined = floatingConversation && composerPortalRect ? {
+    left: composerPortalRect.left,
+    bottom: composerPortalRect.bottom,
+    width: composerPortalRect.width,
+    height: floatingHeight,
+    maxHeight: `max(0px, calc(100dvh - ${composerPortalRect.top + composerPortalRect.bottom + 16}px))`,
+  } : undefined;
 
   const historyControl = (
     <div
@@ -3935,8 +3991,15 @@ export function ChatPane({
        页面上像是没渲染,而单测一条都不会红。
        抹在 .pane 自己身上、**不另外包一层**:包一层会打断 `.split-chat-slot > .pane`
        这类子选择器(全仓 11 条),聊天卡的圆角 / 白底 / backdrop-filter 会集体失效。 */
-    <div {...chatSeam('pane')}>
-      {historyPortalTarget ? (
+    <div {...chatSeam(`pane${floatingConversation ? ` ${dockStyles.floatingPane}` : ''}`)}
+      style={floatingPaneStyle}
+      data-workspace-conversation-owner={conversationFocusOwner}
+      onFocusCapture={event => markConversationInteraction(event.nativeEvent)}
+      onPointerDownCapture={event => markConversationInteraction(event.nativeEvent)}
+      data-testid={floatingConversation ? 'workspace-conversation-popover' : undefined}>
+      {floatingConversation ? (
+        <div className={dockStyles.floatingHeaderSpace} aria-hidden />
+      ) : hideProjectHeader ? null : historyPortalTarget ? (
         createPortal(<div {...chatSeam()}>{historyControl}</div>, historyPortalTarget)
       ) : (
         <div className="chat-project-header">
@@ -4678,16 +4741,51 @@ export function ChatPane({
                    * (联系支持弹窗、产物卡浮层、输入框)。
                    */
                   <div
-                    {...chatSeam('chat-composer-fixed-layer')}
+                    {...chatSeam(`chat-composer-fixed-layer${workspaceComposerDocked ? ` ${dockStyles.dock}` : ''}`)}
+                    data-testid="chat-composer-floating-layer"
+                    data-conversation-expanded={floatingConversation || undefined}
+                    data-minimized={minimized || undefined}
+                    data-workspace-conversation-owner={conversationFocusOwner}
                     ref={composerLayerRef}
                     data-chat-panel-top={composerPortalRect.top}
                     style={{
-                      left: composerPortalRect.left,
+                      left: composerPortalRect.left + (minimized ? composerPortalRect.width - 48 : 0),
                       bottom: composerPortalRect.bottom,
-                      width: composerPortalRect.width,
+                      width: minimized ? 48 : composerPortalRect.width,
+                      maxHeight: floatingPaneStyle?.maxHeight,
+                      height: floatingPaneStyle?.height,
                     }}
                   >
-                    {composerNode}
+                    {floatingConversation ? <WorkspaceConversationResizeHandle
+                      height={floatingHeight} minHeight={floatingMinHeight} maxHeight={floatingMaxHeight}
+                      onResize={setFloatingConversationHeight}
+                    /> : null}
+                    {minimized ? <Button className={dockStyles.bubble}
+                      data-testid="chat-composer-bubble" aria-label={t('workspace.showChat')} title={conversationTitle}
+                      onClick={() => {
+                        restoreComposerFocusRef.current = true;
+                        setConversationMinimized(false);
+                        onWorkspaceConversationExpandedChange?.(true);
+                      }}><Icon name="comment" size={22} /></Button> : null}
+                    {workspaceComposerDocked && !minimized ? (
+                      <WorkspaceComposerHeader
+                        title={conversationTitle}
+                        owner={conversationFocusOwner}
+                        expanded={floatingConversation}
+                        onExpand={onExpandConversation}
+                        onPlacementChange={onConversationPlacementChange}
+                        onMinimize={() => {
+                          setConversationMinimized(true);
+                          onWorkspaceConversationExpandedChange?.(false);
+                        }}
+                      />
+                    ) : null}
+                    <div ref={composerContentRef} className={dockStyles.composerContent} hidden={minimized}
+                      onFocusCapture={() => {
+                        if (workspaceComposerDocked && !minimized) onWorkspaceConversationExpandedChange?.(true);
+                      }}>
+                      {composerNode}
+                    </div>
                   </div>,
                   composerPortalTarget,
                 )

@@ -1,3 +1,5 @@
+import type { RailConversationModel } from './entry-nav-rail/RailConversationTree';
+import { useProjectShareRequest, clearProjectShareRequest } from '../state/projectShareRequest';
 import {
   startTransition,
   useCallback,
@@ -251,7 +253,8 @@ import { Icon } from './Icon';
 import { useWorkspaceTabsDockRef } from './workspaceTabsDock';
 import { localizePluginTitle } from './plugins-home/localization';
 import { AvatarMenu } from './AvatarMenu';
-import historyDockStyles from './chat/ConversationHistoryDock.module.css';
+import placementStyles from './chat/ConversationPlacement.module.css';
+import type { ConversationPlacement } from './chat/WorkspaceComposerHeader';
 import { DesignSystemPicker } from './DesignSystemPicker';
 import { PresenceBar } from '../collab/PresenceBar';
 import { useProjectCollab } from '../collab/useProjectCollab';
@@ -559,6 +562,7 @@ function ensureConversationPresent(
 }
 
 interface Props {
+  onRailConversationsChange?: (model: RailConversationModel | null) => void;
   project: Project;
   /**
    * Exact project-bound Workspace authority resolved by the route gate.
@@ -701,7 +705,8 @@ const DEFAULT_CHAT_PANEL_WIDTH = 460;
 const MIN_CHAT_PANEL_WIDTH = 345;
 const MAX_CHAT_PANEL_WIDTH = 720;
 const MIN_WORKSPACE_PANEL_WIDTH = 400;
-const SPLIT_RESIZE_HANDLE_WIDTH = 4;
+// Keep the chat and workspace cards 8px apart, including the resize gutter.
+const SPLIT_RESIZE_HANDLE_WIDTH = 8;
 const BYOK_OPENCODE_UNAVAILABLE_MESSAGE =
   'BYOK API runs require OpenCode. Install OpenCode, then rescan local agents in Settings before retrying.';
 const BYOK_PROVIDER_REQUIRED_MESSAGE =
@@ -1720,6 +1725,7 @@ export function reconcileProjectDetail(
 }
 
 export function ProjectView({
+  onRailConversationsChange,
   project,
   workspaceContextOverride,
   initialWorkspaceScope,
@@ -2250,6 +2256,10 @@ export function ProjectView({
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
   const [workspaceFocused, setWorkspaceFocused] = useState(false);
+  const [floatingConversationOpen, setFloatingConversationOpen] = useState(false);
+  const floatingConversationExpanded = workspaceFocused && floatingConversationOpen;
+  useEffect(() => { setFloatingConversationOpen(false); }, [workspaceFocused, activeConversationId]);
+  const [conversationPlacement, setConversationPlacement] = useState<ConversationPlacement>('left');
   // Read by `renderPreferredChatPanelWidth` instead of closing over
   // `workspaceFocused` directly, so that callback's identity (and therefore
   // the ResizeObserver effect keyed on it, below) doesn't need to depend on
@@ -2268,8 +2278,8 @@ export function ProjectView({
   // Chat-column dock host for the workspace tab strip (workspaceTabsDock.ts);
   // FileWorkspace registers its own focus-mode host when the chat collapses.
   const chatTabsDockRef = useWorkspaceTabsDockRef();
-  const [historyPortalTarget, setHistoryPortalTarget] = useState<HTMLDivElement | null>(null);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
+  const commentInspectorPortalId = useId();
   // Per-session override for the BYOK chat's generate_image tool. Seeded once
   // from the New Project → Media model pick (project.metadata.imageModel) — but
   // only when that pick belongs to the active BYOK provider (see
@@ -2637,6 +2647,7 @@ export function ProjectView({
           return { ...queuedItem, meta: item.meta };
         })
     : [];
+  const [railNewConversationPlacement, setRailNewConversationPlacement] = useState<{ id: string; afterId: string | null } | null>(null);
   const newConversationDisabled = creatingConversation;
   const activeCompletionNotificationRunsRef = useRef<Set<string>>(new Set());
   const completedNotificationRunsRef = useRef<Set<string>>(new Set());
@@ -9024,6 +9035,7 @@ export function ProjectView({
         workspaceContext: projectRunWorkspaceContext,
       });
       if (!fresh) throw new Error('Could not create a conversation for this project.');
+      setRailNewConversationPlacement({ id: fresh.id, afterId: activeConversationId });
       // Eagerly clear messages and update ref so rapid clicks don't create
       // duplicate empty conversations before the effect resolves.
       setMessages([]);
@@ -9100,6 +9112,23 @@ export function ProjectView({
     );
     setMessageLoadRetryNonce((nonce) => nonce + 1);
   }, [activeConversationId, commitPreviewComments, failedMessagesConversationId, project.id, openTabsState.active]);
+
+  const createFromRail = useCallback(async () => {
+    setWorkspaceFocused(false);
+    await handleNewConversation();
+  }, [handleNewConversation]);
+  useEffect(() => {
+    onRailConversationsChange?.({
+      projectId: project.id,
+      conversations,
+      activeConversationId,
+      creating: creatingConversation || !messagesInitialized || projectCollab.viewerOnly,
+      newConversationPlacement: railNewConversationPlacement,
+      onCreate: createFromRail,
+      onSelect: handleSelectConversation,
+    });
+  }, [onRailConversationsChange, project.id, conversations, activeConversationId, creatingConversation, messagesInitialized, projectCollab.viewerOnly, railNewConversationPlacement, createFromRail, handleSelectConversation]);
+  useEffect(() => () => onRailConversationsChange?.(null), [onRailConversationsChange]);
 
   const refreshConversationsForProgrammaticBrandRetry = useCallback(
     async (conversationId: string): Promise<boolean> => {
@@ -9790,6 +9819,14 @@ export function ProjectView({
     },
     [requestOpenFile],
   );
+  const pendingProjectShare = useProjectShareRequest();
+  useEffect(() => {
+    if (!pendingProjectShare || pendingProjectShare.projectId !== project.id) return;
+    if (!projectFiles.some((file) => file.name === pendingProjectShare.fileName)) return;
+    handleArtifactShare(pendingProjectShare.fileName);
+    clearProjectShareRequest(pendingProjectShare);
+  }, [pendingProjectShare, project.id, projectFiles, handleArtifactShare]);
+
   // Mirrors share, but opens the workspace's Download/Export menu (PDF / image /
   // zip / standalone HTML / save-as-template) instead of a bare file download.
   const handleArtifactDownload = useCallback(
@@ -9989,6 +10026,12 @@ export function ProjectView({
       state.hasMoved = true;
       const rawWidth = state.startWidth + (state.isRtl ? -delta : delta);
       applyChatPanelWidth(rawWidth, { commitState: false });
+      // Dragging inward beyond the usable minimum enters the same floating
+      // composer mode as collapsing the conversation, in either placement.
+      if (rawWidth < Math.min(MIN_CHAT_PANEL_WIDTH, chatPanelMaxWidthRef.current)) {
+        finishChatPanelResize(true);
+        setWorkspaceFocused(true);
+      }
     };
 
     const flushPendingPointerMove = () => {
@@ -10004,7 +10047,7 @@ export function ProjectView({
     resizeStateRef.current = {
       startClientX: event.clientX,
       startWidth: chatPanelWidthRef.current,
-      isRtl: window.getComputedStyle(split).direction === 'rtl',
+      isRtl: (window.getComputedStyle(split).direction === 'rtl') !== (conversationPlacement === 'right'),
       hasMoved: false,
     };
 
@@ -10018,7 +10061,7 @@ export function ProjectView({
     };
     const handlePointerEnd = () => {
       flushPendingPointerMove();
-      finishChatPanelResize(true);
+      if (resizeStateRef.current) finishChatPanelResize(true);
     };
     const handlePointerCancel = () => {
       flushPendingPointerMove();
@@ -10038,7 +10081,7 @@ export function ProjectView({
     window.addEventListener('pointerup', handlePointerEnd);
     window.addEventListener('pointercancel', handlePointerCancel);
     window.addEventListener('blur', handlePointerCancel);
-  }, [applyChatPanelWidth, finishChatPanelResize, renderPreferredChatPanelWidth]);
+  }, [applyChatPanelWidth, finishChatPanelResize, renderPreferredChatPanelWidth, conversationPlacement]);
 
   const handleChatResizeBlur = useCallback(() => {
     if (!pointerCleanupRef.current) return;
@@ -10050,7 +10093,7 @@ export function ProjectView({
   const handleChatResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     let nextWidth: number | null = null;
     const split = splitRef.current;
-    const isRtl = split ? window.getComputedStyle(split).direction === 'rtl' : false;
+    const isRtl = (split ? window.getComputedStyle(split).direction === 'rtl' : false) !== (conversationPlacement === 'right');
     if (event.key === 'ArrowLeft') {
       nextWidth = chatPanelWidthRef.current + (isRtl ? 1 : -1) * CHAT_PANEL_KEYBOARD_STEP;
     } else if (event.key === 'ArrowRight') {
@@ -10064,7 +10107,10 @@ export function ProjectView({
     event.preventDefault();
     const next = applyChatPanelWidth(nextWidth);
     saveChatPanelWidth(next);
-  }, [applyChatPanelWidth]);
+    if (nextWidth < Math.min(MIN_CHAT_PANEL_WIDTH, chatPanelMaxWidthRef.current)) {
+      setWorkspaceFocused(true);
+    }
+  }, [applyChatPanelWidth, conversationPlacement]);
 
   // Hand the pending prompt to ChatPane exactly once per project. The local
   // project-scoped snapshot survives the conversation-id remount, while the
@@ -10893,8 +10939,11 @@ export function ProjectView({
           wants the Finalize + Continue-in-CLI buttons back in the chrome. */}
       <div
         ref={splitRef}
+        data-conversation-placement={conversationPlacement}
         className={[
           projectSplitClassName(workspaceFocused),
+          !workspaceFocused && conversationPlacement === 'right' ? placementStyles.right : '',
+          !workspaceFocused && conversationPlacement === 'full' ? placementStyles.full : '',
           resizingChatPanel && !workspaceFocused ? 'is-resizing-chat' : '',
         ].filter(Boolean).join(' ')}
         style={projectSplitStyle(workspaceFocused, splitLeftPanelWidth, workspacePanelTrack)}
@@ -10902,11 +10951,11 @@ export function ProjectView({
         <div
           className={[
             'split-chat-slot',
-            chatSlotHidden ? 'split-chat-slot-hidden' : '',
+            chatSlotHidden && !floatingConversationExpanded ? 'split-chat-slot-hidden' : '',
           ].filter(Boolean).join(' ')}
-          aria-hidden={chatSlotHidden || undefined}
+          aria-hidden={(chatSlotHidden && !floatingConversationExpanded) || undefined}
         >
-          {/* Home, project switcher, history and collapse share one top row.
+          {/* The project switcher occupies the chat header.
               Focus mode releases this dock for the preview's dock host. */}
           {!workspaceFocused ? (
             <div
@@ -10914,27 +10963,11 @@ export function ProjectView({
               data-testid="workspace-tabs-dock"
               data-workspace-dock="chat"
               ref={chatTabsDockRef}
-            >
-              {/* The dropdown portals into this dock; the history and collapse
-                  controls follow it on the right. */}
-              <div className={historyDockStyles.dock} ref={setHistoryPortalTarget} data-testid="chat-history-dock" />
-              <button
-                type="button"
-                className="split-chat-collapse od-tooltip"
-                onClick={() => setWorkspaceFocused(true)}
-                title={t('chat.collapsePane')}
-                aria-label={t('chat.collapsePane')}
-                data-tooltip={t('chat.collapsePane')}
-                data-tooltip-placement="bottom"
-                data-testid="chat-collapse-toggle"
-              >
-                <Icon name="panel-left" size={16} />
-              </button>
-            </div>
+            />
           ) : null}
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled ? (
             <ChatPane
-              historyPortalTarget={historyPortalTarget}
+              hideProjectHeader
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
@@ -11135,6 +11168,14 @@ export function ProjectView({
               onBack={onBack}
               onCollapse={() => setWorkspaceFocused(true)}
               collapseControlLifted={!workspaceFocused}
+              workspaceComposerDocked={workspaceFocused}
+              workspaceConversationExpanded={floatingConversationExpanded}
+              onWorkspaceConversationExpandedChange={setFloatingConversationOpen}
+              onConversationPlacementChange={placement => {
+                setConversationPlacement(placement);
+                setWorkspaceFocused(false);
+              }}
+              onExpandConversation={() => setFloatingConversationOpen(open => !open)}
               backLabel={t('project.backToProjects')}
               projectHeader={(
                 <span className="chat-project-title-line">
@@ -11182,7 +11223,20 @@ export function ProjectView({
             </div>
           )}
         </div>
-        {!workspaceFocused ? (
+        {/* The comment panel is a floating card over the workspace in EVERY
+            state (per product: 任何状态下评论卡片都在这个位置). It used to dock
+            inside the chat column, which put it in a different place —  and
+            made it invisible in full-screen preview, where that column is
+            hidden. Keep the empty host mounted so FileViewer can resolve its
+            portal before opening; `:empty` hides all chrome and hit testing
+            until the localized comment panel is portaled in. Exactly one
+            element ever carries `commentInspectorPortalId`. */}
+        <div
+          id={commentInspectorPortalId}
+          className="comment-float-host"
+          data-testid="comment-float-host"
+        />
+        {!workspaceFocused && conversationPlacement !== 'full' ? (
           <div
             className="split-resize-handle"
             role="separator"
@@ -11267,6 +11321,7 @@ export function ProjectView({
           onConnectRepo={handleConnectRepo}
           githubConnected={githubConnected}
           onCommentModeChange={setCommentInspectorActive}
+          commentPortalId={commentInspectorPortalId}
           fileActionsBefore={projectCollab.enabled ? (
             <PresenceBar
               members={projectCollab.present}

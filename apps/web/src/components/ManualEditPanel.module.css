@@ -50,6 +50,14 @@
   background: transparent;
 }
 
+.docked :global(.cc-quad-head) {
+  border-radius: 16px;
+}
+
+.docked :global(.cc-quad-head:hover:not(:disabled)) {
+  background: var(--manual-edit-field-bg-hover);
+}
+
 .footerActions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -61,6 +69,18 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+
+.footerActions :global(.manual-edit-footer-left .manual-edit-footer-btn),
+.footerActions :global(.manual-edit-footer-left .manual-edit-footer-btn:hover:not(:disabled)) {
+  background: transparent;
+  border-color: transparent;
+}
+
+.footerActions :global(.manual-edit-footer-right .manual-edit-footer-btn.subtle),
+.footerActions :global(.manual-edit-footer-right .manual-edit-footer-btn.subtle:hover:not(:disabled)) {
+  background: transparent;
+  border-color: var(--border-strong);
 }
 
 .footerActions :global(.manual-edit-footer-btn) {
@@ -251,7 +271,7 @@
   z-index: 10001;
 }
 .selectMenu :global(.od-select-option) {
-  border-radius: 6px;
+  border-radius: 12px;
   font: inherit;
   color: inherit;
 }

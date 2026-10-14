@@ -3,7 +3,6 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -12,6 +11,7 @@ import {
 } from 'react';
 import { Button } from '@open-design/components';
 import { WorkspaceAccountDock } from './workspace/WorkspaceAccountDock';
+import { useWorkspaceTabChromeDock } from './workspace/WorkspaceEditLayout';
 import { createPortal } from 'react-dom';
 import type { DesignSystemEditClickProps, TrackingArtifactKind, TrackingProjectKind } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
@@ -177,8 +177,6 @@ import {
 } from './sketch-model';
 import { AnimatePresence } from 'motion/react';
 
-import { useDismissOnOutsideInteraction } from '../hooks/useDismissOnOutsideInteraction';
-import { TabLabel } from './workspace/TabLabel';
 import HybridTabs, { HybridTabLabel } from './ui/hybrid-tabs';
 import {
   requestChromeViewMode,
@@ -1337,7 +1335,6 @@ export function FileWorkspace({
   activePluginActionPaths,
   hiddenPluginActionPaths,
   focusMode = false,
-  onFocusModeChange,
   designSystemProject = null,
   designSystemBrandId = null,
   designSystemEditable = true,
@@ -1476,12 +1473,6 @@ export function FileWorkspace({
   // "+" launcher (file search + registry-driven create-new actions:
   // Side Chat, Terminal, Browser).
   const [launcherOpen, setLauncherOpen] = useState(false);
-  // The strip's own "⌄": every file in the project, so reaching one that has
-  // no tab open does not mean a detour through the 设计文件 pane and back.
-  const [pagesMenuOpen, setPagesMenuOpen] = useState(false);
-  const pagesMenuRef = useRef<HTMLDivElement | null>(null);
-  const pagesMenuId = useId();
-  useDismissOnOutsideInteraction(pagesMenuOpen, pagesMenuRef, () => setPagesMenuOpen(false));
   const [projectShareMenuOpen, setProjectShareMenuOpen] = useState(false);
   const [projectShareAccess, setProjectShareAccess] = useState<'private' | 'workspace'>('private');
   const [projectShareAccessMenuOpen, setProjectShareAccessMenuOpen] = useState(false);
@@ -1509,6 +1500,8 @@ export function FileWorkspace({
   const launcherBtnRef = useRef<HTMLButtonElement | null>(null);
   const projectShareRef = useRef<HTMLDivElement | null>(null);
   const tabsBarRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const tabChromeDock = useWorkspaceTabChromeDock();
   // Focus-mode dock host for the workspace tab strip (workspaceTabsDock.ts).
   const focusTabsDockRef = useWorkspaceTabsDockRef();
   const draggedTabNameRef = useRef<string | null>(null);
@@ -2250,7 +2243,6 @@ export function FileWorkspace({
 
   function openWorkspaceTabLauncher() {
     setLauncherOpen(true);
-    // No "+" to return focus to any more; the menu takes focus itself.
     launcherBtnRef.current?.focus();
   }
 
@@ -2464,7 +2456,7 @@ export function FileWorkspace({
     };
     tabBar.addEventListener('wheel', onWheel, { passive: false });
     return () => tabBar.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [tabChromeDock]);
 
   // Browser-style tab bar: when the active tab changes (open from a chat
   // file chip, switch via Cmd+P, etc.), scroll it into view so the user
@@ -3839,7 +3831,7 @@ export function FileWorkspace({
   }, [onWorkspaceContextsChange, workspaceContexts]);
 
   useEffect(() => {
-    const shell = tabsBarRef.current?.closest<HTMLElement>('.ws-tabs-shell');
+    const shell = toolbarRef.current;
     const lead = shell?.querySelector<HTMLElement>('.ws-tabs-lead');
     const actions = shell?.querySelector<HTMLElement>('.ws-tabs-actions');
     if (!shell || !lead || !actions) return;
@@ -3882,7 +3874,7 @@ export function FileWorkspace({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', requestMeasure);
     };
-  }, [browserTabs.length, designSystemProject, tabNames.length]);
+  }, [browserTabs.length, designSystemProject, tabNames.length, tabChromeDock]);
 
   useEffect(() => {
     if (!projectShareMenuOpen) return;
@@ -4004,72 +3996,139 @@ export function FileWorkspace({
     }
   }
 
-  // One selector names the current preview; its menu includes every design file.
-  const selectedFileLabel = previewEntryTabName ?? activeWorkspaceContext?.label
-    ?? t('workspace.allProjectFiles');
-  const pagesSwitcher =
-    visibleFiles.length > 0 ? (
-          <div className="ws-pages-switcher ws-file-selector" ref={pagesMenuRef}>
-            <span
-              id={APP_CHROME_TAB_ACTION_ID}
-              className="ws-tab-action-slot"
-              data-app-chrome-tab-action="true"
-            />
-            <button
-              type="button"
-              className="ws-file-selector-trigger"
-              data-testid="workspace-pages-menu"
-              aria-haspopup="listbox"
-              aria-expanded={pagesMenuOpen}
-              aria-controls={pagesMenuOpen ? pagesMenuId : undefined}
-              aria-label={t('workspace.allProjectFiles')}
-              title={t('workspace.allProjectFiles')}
-              data-tooltip={t('workspace.allProjectFiles')}
-              data-tooltip-placement="bottom"
-              onClick={() => setPagesMenuOpen((v) => !v)}
-            >
-              <span className="ws-file-selector-label" title={selectedFileLabel}>{selectedFileLabel}</span>
-              <Icon name="chevron-down" size={15} />
-            </button>
-            {/* The 设计文件 pane already lists every file, and this whole zone
-                is hidden there — an open menu would keep a document-level
-                pointerdown listener alive inside a `display: none` box. */}
-            {pagesMenuOpen && !designFilesTabActive ? (
-              <div
-                className="ws-pages-menu"
-                id={pagesMenuId}
-                role="listbox"
-                aria-label={t('workspace.allProjectFiles')}
-              >
-                {visibleFiles.map((file) => {
-                  const selected = activeTab === file.name || previewEntryTabName === file.name;
-                  const icon = kindIconName(file.kind, false);
-                  return (
-                    <button
-                      key={file.name}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      className={`ws-pages-menu-item${selected ? ' active' : ''}`}
-                      title={file.name}
-                      onClick={() => {
-                        setPagesMenuOpen(false);
-                        openFile(file.name);
-                      }}
-                    >
-                      <span className="ws-pages-menu-label">
-                        {icon ? <Icon name={icon} size={14} /> : null}
-                        <span className="ws-pages-menu-name">{file.name}</span>
-                      </span>
-                      {selected ? <Icon name="check" size={13} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-    ) : null;
-
+  const tabChrome = (
+    <div className="workspace-file-chrome" data-testid="workspace-file-chrome">
+        <div
+          ref={tabsBarRef}
+          className={`ws-tabs-bar${tabsOverflowing ? ' is-overflowing' : ''}`}
+          role="tablist"
+          aria-label={t('workspace.pages')}
+          onWheel={(event) => {
+            // Translate vertical wheel into horizontal tab scroll so Windows
+            // mouse-wheel users (no horizontal wheel/trackpad) can reach
+            // overflowed tabs. Only act when there's actually horizontal
+            // overflow and the gesture is predominantly vertical.
+            const el = event.currentTarget;
+            if (el.scrollWidth <= el.clientWidth) return;
+            if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+            el.scrollLeft += event.deltaY;
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setDragOverTab(null);
+          }}
+          onDrop={(event) => {
+            if (event.target !== event.currentTarget) return;
+            clearTabDragState();
+          }}
+        >
+          {visibleOrderedWorkspaceTabs.map((entry) => {
+            if (entry.kind === 'browser') {
+              const browserTab = entry.browserTab;
+              const browserUrl = browserTab.url?.trim() ?? '';
+              const browserTitle = browserUrl
+                ? browserTab.title?.trim() || labelFromUrl(browserUrl)
+                : browserTab.label;
+              const browserHandlers = tabHandlersFor(browserTab.id);
+              return (
+                <Tab
+                  key={browserTab.id}
+                  label={browserTitle}
+                  title={browserUrl ? `${browserTitle}\n${browserUrl}` : browserTitle}
+                  active={activeTab === browserTab.id}
+                  onActivate={browserHandlers.onActivate}
+                  onClose={browserHandlers.onClose}
+                  kind="browser"
+                />
+              );
+            }
+            const name = entry.name;
+            const sketchEntry = sketches[name];
+            const dirtyMark =
+              sketchEntry && (sketchEntry.dirty || !sketchEntry.persisted) ? ' •' : '';
+            const onDisk = visibleFiles.find((f) => f.name === name);
+            const liveArtifact = liveArtifactEntries.find((entry) => entry.tabId === name);
+            const kind = liveArtifact ? 'live-artifact' : onDisk?.kind ?? (isSketchName(name) ? 'sketch' : 'text');
+            const isTerminal = isTerminalTabId(name);
+            const isSideChat = isSideChatTabId(name);
+            // Terminal and side-chat tabs are not files: give them a friendly
+            // label + glyph instead of the raw `terminal:<id>` / `chat:<id>` id.
+            let label: string;
+            if (isTerminal) {
+              // Number multiple terminals so the tabs stay distinguishable.
+              const ordinal = tabNames.filter(isTerminalTabId).indexOf(name) + 1;
+              label =
+                ordinal > 1
+                  ? `${t('workspace.newTerminal')} ${ordinal}`
+                  : t('workspace.newTerminal');
+            } else if (isSideChat) {
+              const conv = conversations.find(
+                (c) => c.id === conversationIdFromSideChatTabId(name),
+              );
+              label = conv?.title?.trim() || t('workspace.sideChatDefaultTitle');
+            } else {
+              label = `${liveArtifact?.title ?? name}${dirtyMark}`;
+            }
+            const iconNameOverride: IconName | undefined = isTerminal
+              ? 'terminal'
+              : isSideChat
+                ? 'comment'
+                : undefined;
+            const handlers = tabHandlersFor(name);
+            // The sync badge only makes sense on a real design-file tab: a
+            // terminal / side-chat tab has no on-disk content to sync, and a
+            // live artifact is baked output, not the source file being pulled
+            // or published.
+            const tabSyncBadge =
+              fileSyncBadge && !isTerminal && !isSideChat && !liveArtifact
+                ? fileSyncBadge
+                : null;
+            return (
+              <Tab
+                key={name}
+                label={label}
+                iconNameOverride={iconNameOverride}
+                syncBadge={tabSyncBadge}
+                active={activeTab === name || (activeTab === PREVIEW_TAB && previewEntryTabName === name)}
+                onActivate={handlers.onActivate}
+                onClose={handlers.onClose}
+                kind={kind}
+                liveArtifact={liveArtifact}
+                draggable={persistedTabs.includes(name)}
+                dragging={draggedTabName === name}
+                dragOverEdge={
+                  dragOverTab?.name === name && draggedTabName !== name
+                    ? dragOverTab.edge
+                    : null
+                }
+                onDragStart={handlers.onDragStart}
+                onDragOver={handlers.onDragOver}
+                onDragLeave={handlers.onDragLeave}
+                onDrop={handlers.onDrop}
+                onDragEnd={handlers.onDragEnd}
+              />
+            );
+          })}
+        </div>
+      {!viewerOnly ? (
+        <button
+          ref={launcherBtnRef}
+          type="button"
+          className="workspace-tabs-new-btn workspace-launcher-btn od-tooltip"
+          aria-label={t('workspace.newTab')}
+          aria-haspopup="dialog"
+          aria-expanded={launcherOpen}
+          title={t('workspace.newTab')}
+          data-tooltip={t('workspace.newTab')}
+          data-tooltip-placement="bottom"
+          data-testid="workspace-add-tab"
+          onClick={() => setLauncherOpen((open) => !open)}
+        >
+          <Icon name="plus-circle" size={18} />
+        </button>
+      ) : null}
+    </div>
+  );
 
   return (
     <div
@@ -4080,6 +4139,7 @@ export function FileWorkspace({
       ].filter(Boolean).join(' ')}
       data-testid="file-workspace"
     >
+      {tabChromeDock ? createPortal(tabChrome, tabChromeDock) : tabChrome}
       {projectShareConfirm ? (
         <MoveToTeamConfirmDialog
           action={projectShareConfirm === 'workspace' ? 'to-team' : 'to-personal'}
@@ -4092,26 +4152,11 @@ export function FileWorkspace({
         />
       ) : null}
       <SketchEnginePrewarm />
-      <div className="ws-tabs-shell">
+      <div className="ws-tabs-shell" ref={toolbarRef}>
         <div className="ws-tabs-lead">
-        {onFocusModeChange && focusMode ? (
-          <button
-            type="button"
-            className="icon-only ws-focus-expand od-tooltip"
-            data-testid="workspace-focus-toggle"
-            aria-pressed={focusMode}
-            title={t('workspace.showChat')}
-            data-tooltip={t('workspace.showChat')}
-            data-tooltip-placement="bottom"
-            aria-label={t('workspace.showChat')}
-            onClick={() => onFocusModeChange(false)}
-          >
-            <Icon name="panel-right" size={16} />
-          </button>
-        ) : null}
         {/* Focus mode keeps the project tab strip on this same row (the chat
             column — its usual dock — is collapsed): the strip portals in here,
-            between the expand-chat control and the file tabs, so the chrome
+            before the view switcher, so the chrome
             row above stays Home + account only. See workspaceTabsDock.ts. */}
         {focusMode ? (
           <div
@@ -4251,36 +4296,9 @@ export function FileWorkspace({
           className="ws-tabs-lead-slot"
           data-app-chrome-tab-lead="true"
         />
-        <div
-          ref={tabsBarRef}
-          className={`ws-tabs-bar${tabsOverflowing ? ' is-overflowing' : ''}`}
-          role="group"
-          aria-label={t('workspace.pages')}
-          onWheel={(event) => {
-            // Translate vertical wheel into horizontal tab scroll so Windows
-            // mouse-wheel users (no horizontal wheel/trackpad) can reach
-            // overflowed tabs. Only act when there's actually horizontal
-            // overflow and the gesture is predominantly vertical.
-            const el = event.currentTarget;
-            if (el.scrollWidth <= el.clientWidth) return;
-            if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-            el.scrollLeft += event.deltaY;
-          }}
-          onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-            setDragOverTab(null);
-          }}
-          onDrop={(event) => {
-            if (event.target !== event.currentTarget) return;
-            clearTabDragState();
-          }}
-        >
-          {pagesSwitcher}
-        </div>
         <div className="share-menu chrome-share-menu chrome-share-menu--unified ws-tabs-share" data-app-chrome-share="true" />
         </div>
-        {/* Pinned to the right for project/file actions; the tab launcher sits
-            next to the file tabs so its spatial relationship stays clear. */}
+        {/* Project/file actions stay on the preview toolbar. */}
         <div className="ws-tabs-actions">
           {fileActionsBefore ? (
             <div className="ws-tabs-file-actions-before">{fileActionsBefore}</div>
@@ -4304,8 +4322,7 @@ export function FileWorkspace({
       </div>
       {launcherOpen ? (
         <TabLauncherMenu
-          /* The "+" it used to hang off is gone (per product), so it anchors to
-             the tab strip — which is where the tab it creates will appear. */
+          /* Anchor the original launcher to the button above the card. */
           anchor={launcherBtnRef.current ?? tabsBarRef.current}
           files={visibleFiles}
           workspaceContexts={workspaceContexts}
@@ -8634,13 +8651,8 @@ const Tab = memo(function Tab({
           data-app-chrome-tab-action="true"
         />
       ) : null}
-      {/* Discrete strip: the label, the badges and the close button are the
-          ACTIVE tab's — an icon-wide tab has no room for them, and the title
-          the tooltip carries is how a collapsed tab still names itself.
-          A tab with NO glyph is the exception: collapsing it would leave an
-          empty chip, so a page tab (which dropped its chain) carries its name
-          whether or not it is the one you are on. */}
-      <TabLabel show={active || iconName === null}>
+      {/* Keep every file and browser name visible in the horizontal strip. */}
+      <span className="ws-tab-anim">
         <span className="ws-tab-text">
           <span className="ws-tab-label">{label}</span>
           {meta ? <span className="ws-tab-meta">{meta}</span> : null}
@@ -8653,7 +8665,7 @@ const Tab = memo(function Tab({
             refreshStatus={liveArtifact.refreshStatus}
           />
         ) : null}
-      </TabLabel>
+      </span>
       {trailing}
       {active && closable && onClose ? (
         <button

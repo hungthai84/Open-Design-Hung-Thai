@@ -25,6 +25,7 @@ import { REMIX_ICON_PATHS } from '../../src/components/remix-icon-paths';
 import { ENABLE_BLANK_PAGE_WORKSPACE_ENTRYPOINT } from '../../src/components/workspace/tab-launcher';
 import { I18nProvider } from '../../src/i18n';
 import { DesignFilesPanel } from '../../src/components/DesignFilesPanel';
+import { WorkspaceEditLayout } from '../../src/components/workspace/WorkspaceEditLayout';
 import { projectSplitClassName, projectSplitStyle } from '../../src/components/ProjectView';
 import {
   fetchProjectFileText,
@@ -428,8 +429,7 @@ function getTabByName(container: HTMLElement, name: RegExp): HTMLElement {
 }
 
 /**
- * Open the tab launcher. The "+" that used to sit after the strip is gone
- * (per product), so ⌘T is the way in — the same handler the button called.
+ * Open the tab launcher through its keyboard shortcut.
  */
 function openTabLauncher() {
   // The handler listens on `window` in the capture phase.
@@ -1158,122 +1158,64 @@ describe('FileWorkspace upload input', () => {
     await waitFor(() => expect(screen.queryByTestId('design-files-building')).toBeNull());
   });
 
-  describe('all-project-files menu', () => {
-    function renderRow(onTabsStateChange = vi.fn()) {
-      render(
-        <FileWorkspace
-          projectId="project-pages-menu"
-          projectKind="prototype"
-          files={[
-            workspaceFile('index.html'),
-            workspaceFile('about.html'),
-            workspaceFile('notes.txt'),
-          ]}
-          liveArtifacts={[]}
-          onRefreshFiles={vi.fn()}
-          isDeck={false}
-          tabsState={{ tabs: ['index.html'], active: 'index.html' }}
-          onTabsStateChange={onTabsStateChange}
-        />,
-      );
-      return screen.getByTestId('workspace-pages-menu');
-    }
-    const options = () =>
-      Array.from(document.querySelectorAll<HTMLElement>('.ws-pages-menu [role="option"]'));
-
-    it('lists every project file, not just the open tabs', () => {
-      fireEvent.click(renderRow());
-
-      expect(options().map((row) => row.textContent)).toEqual([
-        expect.stringContaining('index.html'),
-        expect.stringContaining('about.html'),
-        expect.stringContaining('notes.txt'),
-      ]);
-      // The one on screen is marked, so a long list still says where you are.
-      expect(options()[0]!.getAttribute('aria-selected')).toBe('true');
-      expect(options()[1]!.getAttribute('aria-selected')).toBe('false');
+  describe('horizontal file and browser tabs', () => {
+    beforeEach(() => {
+      vi.stubGlobal('matchMedia', vi.fn(() => ({
+        matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      })));
     });
 
-    it('opens the file you pick and closes behind itself', async () => {
+    function renderRow() {
       const onTabsStateChange = vi.fn();
-      fireEvent.click(renderRow(onTabsStateChange));
-      fireEvent.click(options().find((row) => row.textContent?.includes('about.html'))!);
+      render(<WorkspaceEditLayout><FileWorkspace
+        projectId="horizontal-tabs"
+        projectKind="prototype"
+        files={[workspaceFile('index.html'), workspaceFile('example.html')]}
+        liveArtifacts={[]}
+        onRefreshFiles={vi.fn()}
+        isDeck={false}
+        tabsState={{
+          tabs: ['index.html', 'example.html'],
+          active: '__browser__:1',
+          browserTabs: [{ id: '__browser__:1', label: 'Browser', title: 'dribbble.com', url: 'https://dribbble.com', insertAfter: 'example.html' }],
+        }}
+        onTabsStateChange={onTabsStateChange}
+      /></WorkspaceEditLayout>);
+      return onTabsStateChange;
+    }
 
-      expect(document.querySelector('.ws-pages-menu')).toBeNull();
-      // `openFile` waits on any in-flight manual edit before it commits.
-      await waitFor(() =>
-        expect(onTabsStateChange).toHaveBeenCalledWith(
-          expect.objectContaining({
-            tabs: ['index.html', 'about.html'],
-            active: 'about.html',
-          }),
-        ),
-      );
-    });
-
-    it('shows one selector rather than a strip of file tabs', async () => {
-      const trigger = renderRow();
-      expect(trigger.textContent).toContain('index.html');
-      expect(document.querySelectorAll('.ws-tabs-bar [role="tab"]')).toHaveLength(0);
-      fireEvent.click(trigger);
-      fireEvent.click(options().find((row) => row.textContent?.includes('about.html'))!);
-      await waitFor(() => expect(trigger.textContent).toContain('about.html'));
-      expect(document.querySelectorAll('.ws-file-selector')).toHaveLength(1);
-      expect(document.querySelectorAll('.ws-tabs-bar [role="tab"]')).toHaveLength(0);
+    it('shows each file and browser as a named tab outside the preview card', () => {
+      renderRow();
+      const chrome = screen.getByTestId('workspace-tab-chrome');
+      const tabs = within(chrome).getAllByRole('tab');
+      expect(tabs.map(tab => tab.querySelector('.ws-tab-label')?.textContent)).toEqual([
+        'index.html', 'example.html', 'dribbble.com',
+      ]);
+      expect(chrome.contains(screen.getByTestId('workspace-add-tab'))).toBe(true);
+      expect(screen.getByTestId('file-workspace').contains(tabs[0]!)).toBe(false);
+      expect(screen.queryByTestId('workspace-pages-menu')).toBeNull();
+      expect(tabs[2]!.getAttribute('aria-selected')).toBe('true');
       expect(document.querySelectorAll('[data-app-chrome-tab-action]')).toHaveLength(1);
     });
 
-    // Everything in the pill is a fixed box that cannot shrink — and neither
-    // can `.ws-tab-anim`, because motion owns its width. So a tab still sized
-    // for "name + close" does not clamp the name, it pushes the "⌄" out
-    // through the pill's own rounded end.
-    it('leaves the pill room for the controls instead of pushing them out', () => {
-      expect(
-        cssDeclarations(drawerCss, '.ws-tabs-bar .ws-tab:has(.ws-pages-switcher)'),
-      ).toMatch(/max-width:\s*300px/);
-      // The browser tab's fixed width has no room for either control.
-      expect(
-        cssDeclarations(drawerCss, '.ws-tabs-bar .ws-tab.browser-tab:has(.ws-pages-switcher)'),
-      ).toMatch(/width:\s*auto/);
+    it('switches directly between a file and browser without opening a menu', async () => {
+      const onChange = renderRow();
+      const chrome = within(screen.getByTestId('workspace-tab-chrome'));
+      fireEvent.click(chrome.getByRole('tab', { name: 'example.html' }));
+      await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ active: 'example.html' })));
+      fireEvent.click(chrome.getByRole('tab', { name: /dribbble.com/ }));
+      await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ active: '__browser__:1' })));
+      expect(document.querySelectorAll('[data-app-chrome-tab-action]')).toHaveLength(1);
     });
 
-    // `.ws-tab-add`'s 28px circle is sized against the 44px row; in a 30px
-    // pill it fills the whole height and collides with the rounded end.
-    it('wears the pill\'s icon box in a tab, not the row\'s', () => {
-      const box = cssDeclarations(drawerCss, '.ws-tab > .ws-pages-switcher .ws-pages-trigger');
-      expect(box).toMatch(/width:\s*18px/);
-      expect(box).toMatch(/height:\s*18px/);
-      // Right-anchored there: the trigger sits at the pill's right end, and a
-      // 200–320px panel opening rightward from it runs off the row.
-      expect(
-        cssDeclarations(drawerCss, '.ws-tab > .ws-pages-switcher .ws-pages-menu'),
-      ).toMatch(/right:\s*0/);
-    });
-
-    it('closes on Escape and on a press outside it', () => {
-      const trigger = renderRow();
-
-      fireEvent.click(trigger);
-      fireEvent.keyDown(document, { key: 'Escape' });
-      expect(document.querySelector('.ws-pages-menu')).toBeNull();
-
-      fireEvent.click(trigger);
-      fireEvent.pointerDown(document.body);
-      expect(document.querySelector('.ws-pages-menu')).toBeNull();
-    });
-
-    it('leaves the row on 设计文件, where the pane below lists the same files', () => {
-      expect(
-        cssDeclarations(drawerCss, ".ws-tabs-center[data-hide-tabs='true'] > .ws-pages-switcher"),
-      ).toMatch(/display:\s*none/);
-    });
-
-    // The overflow fade is an adjacent-sibling rule; inserting anything after
-    // the strip silently moves the fade off whatever now abuts it.
-    it('keeps the overflow fade on whichever control abuts the strip', () => {
-      expect(
-        cssDeclarations(drawerCss, '.ws-tabs-bar.is-overflowing + .ws-pages-switcher'),
-      ).toMatch(/box-shadow/);
+    it('closes the active browser while retaining the file tabs', async () => {
+      const onChange = renderRow();
+      const browserTab = within(screen.getByTestId('workspace-tab-chrome')).getByRole('tab', { name: /dribbble.com/ });
+      fireEvent.click(within(browserTab).getByRole('button', { name: /Close tab/i }));
+      await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+        tabs: ['index.html', 'example.html'], active: DESIGN_FILES_TAB,
+      })));
+      expect(within(screen.getByTestId('workspace-tab-chrome')).getAllByRole('tab')).toHaveLength(2);
     });
   });
 
@@ -1776,12 +1718,11 @@ describe('FileWorkspace upload input', () => {
       />,
     );
 
-    // While chat is visible the collapse trigger lives in ChatPane.
-    // FileWorkspace only renders an expand control once chat is hidden.
+    // Chat visibility controls stay with the chat pane and composer.
     expect(markup).not.toContain('data-testid="workspace-focus-toggle"');
   });
 
-  it('renders the expand control on the LEFT of the tab bar while focused', () => {
+  it('keeps the preview toolbar free of chat controls while focused', () => {
     const markup = renderToStaticMarkup(
       <FileWorkspace
         projectId="project-1"
@@ -1798,24 +1739,10 @@ describe('FileWorkspace upload input', () => {
     );
 
     expect(markup).toContain('class="ws-tabs-shell"');
-    expect(markup).toContain('data-testid="workspace-focus-toggle"');
-    // The expand control sits before the tabs bar (left side) so its
-    // direction matches where the chat pane re-emerges from. It leads the
-    // row's left zone (`.ws-tabs-lead`), ahead of the view switcher and — in
-    // focus mode — the project tab strip's dock host (the strip portals into
-    // it, see workspaceTabsDock.ts); the file tabs follow in the centre zone.
-    expect(markup).toMatch(
-      /<div class="ws-tabs-shell"><div class="ws-tabs-lead">\s*<button[^>]*data-testid="workspace-focus-toggle"[\s\S]*?<\/button>\s*(?:<div class="ws-tabs-project-dock"[^>]*><\/div>\s*)?<div[^>]*class="ws-tabs-views(?: [^"]+)?"/,
-    );
-    // …and the file-tab strip really is the centre zone, after that lead.
-    // The viewport-switcher slot leads that centre zone (the open viewer
-    // portals 桌面端/平板/手机 into it; empty and CSS-collapsed with nothing
-    // open), so the tabs bar follows it.
-    // `data-hide-tabs` rides on the centre zone: 设计文件 (the resting view
-    // here) hides the open-file strip and the "+" through it.
-    expect(markup).toMatch(
-      /<\/div><div class="ws-tabs-center"[^>]*><div id="app-chrome-tab-lead" class="ws-tabs-lead-slot" data-app-chrome-tab-lead="true"><\/div><div class="ws-tabs-bar"/,
-    );
+    expect(markup).not.toContain('data-testid="workspace-focus-toggle"');
+    expect(markup).toContain('data-testid="workspace-tabs-dock-focus"');
+    expect(markup).toContain('data-testid="project-preview-tab"');
+    expect(markup).toContain('data-testid="design-files-tab"');
   });
 
   it('keeps the pages switcher before opened file tabs', () => {
@@ -1838,7 +1765,7 @@ describe('FileWorkspace upload input', () => {
     );
   });
 
-  it('labels the same workspace control as chat restore while focused', () => {
+  it('does not duplicate the chat restore action while focused', () => {
     const markup = renderToStaticMarkup(
       <FileWorkspace
         projectId="project-1"
@@ -1854,7 +1781,7 @@ describe('FileWorkspace upload input', () => {
       />,
     );
 
-    expect(markup).toContain('Show chat');
+    expect(markup).not.toContain('Show chat');
   });
 });
 
@@ -3196,15 +3123,8 @@ describe('FileWorkspace launcher tab creation', () => {
     );
 
     expect(screen.getByTestId('design-files-tab').textContent).toContain('Design Files');
-    // Design Files is a plain tab in the strip (role="tab"), so it is part of
-    // the rendered tab list rather than a dropdown trigger sitting outside it.
-    expect(renderedTabLabels()).toEqual([
-      'Preview',
-      'Design Files',
-      'Browser',
-      'New Terminal',
-      'Side chat',
-    ]);
+    expect(Array.from(document.querySelectorAll('.workspace-file-chrome .ws-tab-label'))
+      .map(label => label.textContent)).toEqual(['Browser', 'New Terminal', 'Side chat']);
   });
 
   it('does not flash a shared-project notice while read-only access is provisional', () => {
@@ -4713,7 +4633,7 @@ describe('FileWorkspace sketch save', () => {
 });
 
 describe('FileWorkspace add-module menu', () => {
-  it('opens the add-module menu with Browser available and Terminal hidden', () => {
+  it('opens the original add-module menu from the plus outside the card', async () => {
     render(
       <FileWorkspace
         projectId="project-1"
@@ -4729,23 +4649,31 @@ describe('FileWorkspace add-module menu', () => {
 
     expect(screen.queryByTestId('tab-launcher-menu')).toBeNull();
 
-    act(() => {
-      openTabLauncher();
-    });
+    const add = screen.getByTestId('workspace-add-tab');
+    expect(add.closest('[data-testid="file-workspace"]')).toBeNull();
+    await act(async () => fireEvent.click(add));
 
     const browserItem = screen.getByRole('button', { name: /New Browser/ });
     const menu = browserItem.closest('[data-testid="tab-launcher-menu"]');
     expect(menu).not.toBeNull();
+    expect(screen.getByTestId('tab-launcher-search')).toBe(document.activeElement);
+    for (const action of ['new-sketch', 'create-document', 'upload-design-files']) {
+      expect(screen.getByTestId(`tab-launcher-action-${action}`)).toBeTruthy();
+    }
     expect(screen.queryByRole('button', { name: /New Terminal/ })).toBeNull();
 
     // The tab strip is a horizontal scroll container that also clips
     // vertically, so the launcher menu is portaled to <body> and cannot be
-    // clipped by the scrolling bar. (The "+" that used to stand outside the
-    // bar for the same reason is gone — ⌘T is the way in.)
+    // clipped by the scrolling bar.
     const tabsBar = document.querySelector('.ws-tabs-bar');
     expect(tabsBar).not.toBeNull();
     expect(tabsBar!.contains(menu)).toBe(false);
     expect(document.querySelector('.ws-add-tab')).toBeNull();
+    await act(async () => fireEvent.click(add));
+    expect(screen.queryByTestId('tab-launcher-menu')).toBeNull();
+    await act(async () => fireEvent.click(add));
+    await act(async () => fireEvent.keyDown(document, { key: 'Escape' }));
+    expect(screen.queryByTestId('tab-launcher-menu')).toBeNull();
   });
 
   it('orders launcher sections as create new, files, then tabs in one scroll body', () => {
@@ -4789,10 +4717,10 @@ describe('FileWorkspace add-module menu', () => {
     expect(fileHeader.compareDocumentPosition(tabsHeader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('adds a new browser tab every time the Browser module is selected', () => {
+  it.each(['launcher', 'outside-plus'] as const)('adds and focuses a new browser tab for each %s activation', async (entryPoint) => {
     const onTabsStateChange = vi.fn();
     render(
-      <FileWorkspace
+      <WorkspaceEditLayout><FileWorkspace
         projectId="project-1"
         projectKind="prototype"
         files={[]}
@@ -4801,30 +4729,21 @@ describe('FileWorkspace add-module menu', () => {
         isDeck={false}
         tabsState={{ tabs: [], active: null }}
         onTabsStateChange={onTabsStateChange}
-      />,
+      /></WorkspaceEditLayout>,
     );
 
     for (let i = 0; i < 3; i += 1) {
-      act(() => {
-        openTabLauncher();
-      });
-      act(() => {
-        fireEvent.click(screen.getByRole('button', { name: /New Browser/ }));
-      });
+      if (entryPoint === 'launcher') {
+        await act(async () => openTabLauncher());
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: /New Browser/ })));
+      } else {
+        const add = screen.getByTestId('workspace-add-tab');
+        expect(add.closest('[data-testid="file-workspace"]')).toBeNull();
+        await act(async () => fireEvent.click(add));
+        expect(screen.getByTestId('tab-launcher-menu')).toBeTruthy();
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: /New Browser/ })));
+      }
     }
-
-    const browserTabs = screen
-      .getAllByRole('tab')
-      .filter((tab) => /Browser(?: \d+)?/.test(tabName(tab)));
-    expect(browserTabs).toHaveLength(3);
-    expect(browserTabs.map(tabName)).toEqual(['Browser', 'Browser 2', 'Browser 3']);
-    // Only the one just opened is expanded; the other two are icon-wide.
-    expect(browserTabs.map((tab) => tab.textContent?.trim())).toEqual([
-      '',
-      '',
-      'Browser 3',
-    ]);
-    expect(browserTabs[2]!.getAttribute('aria-selected')).toBe('true');
 
     const browserPanels = screen
       .getAllByTestId('design-browser-panel')

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, Dispatch, SetStateAction } from 'react';
+import type { CSSProperties, Dispatch, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, SetStateAction } from 'react';
 import { Button, VisuallyHidden } from '@open-design/components';
 import type {
   AmrWalletSnapshot,
@@ -1490,6 +1490,34 @@ export function switchApiProtocolConfig(
   );
 }
 
+const SETTINGS_SIDEBAR_WIDTH_STORAGE_KEY = 'od.settings.pageSidebarWidth';
+const SETTINGS_SIDEBAR_WIDTH_DEFAULT = 272;
+const SETTINGS_SIDEBAR_WIDTH_MIN = 220;
+const SETTINGS_SIDEBAR_WIDTH_MAX = 420;
+const SETTINGS_CONTENT_WIDTH_MIN = 360;
+
+function clampSettingsSidebarWidth(width: number, availableWidth: number): number {
+  if (!Number.isFinite(width)) return SETTINGS_SIDEBAR_WIDTH_DEFAULT;
+  const maximum = Math.min(
+    SETTINGS_SIDEBAR_WIDTH_MAX,
+    Math.max(SETTINGS_SIDEBAR_WIDTH_MIN, availableWidth - SETTINGS_CONTENT_WIDTH_MIN),
+  );
+  return Math.min(maximum, Math.max(SETTINGS_SIDEBAR_WIDTH_MIN, Math.round(width)));
+}
+
+function readSettingsSidebarWidth(): number {
+  if (typeof window === 'undefined') return SETTINGS_SIDEBAR_WIDTH_DEFAULT;
+  try {
+    const stored = Number(window.localStorage.getItem(SETTINGS_SIDEBAR_WIDTH_STORAGE_KEY));
+    return clampSettingsSidebarWidth(
+      stored > 0 ? stored : SETTINGS_SIDEBAR_WIDTH_DEFAULT,
+      window.innerWidth,
+    );
+  } catch {
+    return clampSettingsSidebarWidth(SETTINGS_SIDEBAR_WIDTH_DEFAULT, window.innerWidth);
+  }
+}
+
 export function SettingsDialog({
   presentation = 'modal',
   initial,
@@ -1673,6 +1701,89 @@ export function SettingsDialog({
       : workspaceUpgradeUrl(workspaceContext, workspaceBilling, { fallbackProfile: profile });
   const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(false);
   const [settingsFullscreen, setSettingsFullscreen] = useState(true);
+  const [settingsSidebarWidth, setSettingsSidebarWidth] = useState(readSettingsSidebarWidth);
+  const settingsSidebarWidthRef = useRef(settingsSidebarWidth);
+  const settingsSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const settingsSidebarDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+  useEffect(() => {
+    if (presentation !== 'page') return;
+    const onResize = () => {
+      setSettingsSidebarWidth((current) => {
+        const next = clampSettingsSidebarWidth(current, window.innerWidth);
+        settingsSidebarWidthRef.current = next;
+        return next;
+      });
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [presentation]);
+
+  function beginSettingsSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    settingsSidebarDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: settingsSidebarWidthRef.current,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveSettingsSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = settingsSidebarDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = clampSettingsSidebarWidth(
+      drag.startWidth + event.clientX - drag.startX,
+      event.currentTarget.parentElement?.clientWidth ?? window.innerWidth,
+    );
+    settingsSidebarWidthRef.current = next;
+    settingsSurfaceRef.current?.style.setProperty('--settings-sidebar-width', `${next}px`);
+    event.currentTarget.setAttribute('aria-valuenow', String(next));
+  }
+
+  function endSettingsSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = settingsSidebarDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    settingsSidebarDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setSettingsSidebarWidth(settingsSidebarWidthRef.current);
+    try {
+      window.localStorage.setItem(
+        SETTINGS_SIDEBAR_WIDTH_STORAGE_KEY,
+        String(settingsSidebarWidthRef.current),
+      );
+    } catch {
+      // The current drag still applies when storage is unavailable.
+    }
+  }
+
+  function keySettingsSidebarResize(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const delta = event.key === 'ArrowLeft' ? -16 : event.key === 'ArrowRight' ? 16 : 0;
+    if (!delta && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    const requested = event.key === 'Home'
+      ? SETTINGS_SIDEBAR_WIDTH_MIN
+      : event.key === 'End'
+        ? SETTINGS_SIDEBAR_WIDTH_MAX
+        : settingsSidebarWidthRef.current + delta;
+    const next = clampSettingsSidebarWidth(
+      requested,
+      event.currentTarget.parentElement?.clientWidth ?? window.innerWidth,
+    );
+    settingsSidebarWidthRef.current = next;
+    setSettingsSidebarWidth(next);
+    try {
+      window.localStorage.setItem(SETTINGS_SIDEBAR_WIDTH_STORAGE_KEY, String(next));
+    } catch {
+      // Keyboard resizing remains usable without storage.
+    }
+  }
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
   // long section the user had scrolled (e.g. Library) into a short one
@@ -4187,6 +4298,7 @@ export function SettingsDialog({
 
   const surface = (
       <div
+        ref={settingsSurfaceRef}
         className={
           'modal modal-settings' +
           (pageMode ? ' settings-page-surface' : '') +
@@ -4197,6 +4309,7 @@ export function SettingsDialog({
         aria-modal={pageMode ? undefined : true}
         aria-labelledby="settings-dialog-title"
         onClick={pageMode ? undefined : (e) => e.stopPropagation()}
+        style={pageMode ? { ['--settings-sidebar-width' as string]: `${settingsSidebarWidth}px` } : undefined}
       >
         {/* Top-right chrome strip — anchored to the modal corner so the
             autosave indicator and the close button float above the
@@ -4308,18 +4421,6 @@ export function SettingsDialog({
             aria-label="Settings sections"
             aria-hidden={settingsSidebarCollapsed ? true : undefined}
           >
-            {pageMode ? (
-              <div className="settings-page-nav-head">
-                <button
-                  type="button"
-                  className="settings-page-back"
-                  onClick={onClose}
-                >
-                  <Icon name="arrow-left" size={15} />
-                  <span>{t('settings.pageBackToHome')}</span>
-                </button>
-              </div>
-            ) : null}
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'execution' ? ' active' : ''}`}
@@ -4410,6 +4511,25 @@ export function SettingsDialog({
               </span>
             </button>
           </aside>
+          {pageMode && !settingsSidebarCollapsed ? (
+            <div
+              className="settings-page-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('entry.resizeAria')}
+              aria-controls="settings-sidebar"
+              aria-valuemin={SETTINGS_SIDEBAR_WIDTH_MIN}
+              aria-valuemax={SETTINGS_SIDEBAR_WIDTH_MAX}
+              aria-valuenow={settingsSidebarWidth}
+              tabIndex={0}
+              data-testid="settings-page-resizer"
+              onPointerDown={beginSettingsSidebarResize}
+              onPointerMove={moveSettingsSidebarResize}
+              onPointerUp={endSettingsSidebarResize}
+              onPointerCancel={endSettingsSidebarResize}
+              onKeyDown={keySettingsSidebarResize}
+            />
+          ) : null}
           <div className="settings-content" ref={settingsContentRef}>
           {activeSection === 'execution' ? (
             <>

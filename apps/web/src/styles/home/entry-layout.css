@@ -1,8 +1,9 @@
 /* ============================================================
    Entry layout — header-less variant
    - Single-row shell (`entry-shell--no-header`)
-   - Left icon-only nav rail (`entry-nav-rail`)
-   - Center scroll container (`entry-main--scroll`)
+   - Left icon-only destinations (`entry-destinations`)
+   - Middle workspace navigation (`entry-nav-rail`)
+   - Right scroll container (`entry-main--scroll`)
    ============================================================ */
 
 /* Header-less shell variant. The rail's logo replaces the chrome
@@ -11,6 +12,19 @@
 .entry-shell--no-header {
   grid-template-rows: 1fr;
   --entry-rail-width: 236px;
+}
+
+/* Keep the content card at its usable width even when the browser viewport
+   becomes narrower than the two docked columns. The shell can scroll
+   horizontally at that point instead of reflowing the hero and composer. */
+.entry-shell--no-header:has(> .entry) {
+  min-width: 856px; /* 56px destinations + 800px content track */
+}
+.entry-shell--no-header:has(> .entry.entry--rail-open) {
+  min-width: 1056px; /* plus the workspace rail's 200px floor */
+}
+.entry-shell--no-header:has(> .entry.entry--destination) {
+  min-width: 856px;
 }
 
 /* `.entry-shell` is always mounted inside `.workspace-shell__body`, which
@@ -40,12 +54,15 @@
   box-shadow: none;
 }
 
-/* Entry view collapses the rail by default (Manus-style): the grid's first
-   column animates between 0 and the rail width. Collapsed = clean full-width
-   entry for new users; expanded = the rail docks and pushes the main content
-   to the right (it stays docked until the user collapses it again). */
+/* The icon destinations stay visible while the middle workspace column
+   animates between 0 and its saved width. */
 .entry-shell--no-header .entry {
-  grid-template-columns: 0 minmax(0, 1fr);
+  --entry-destinations-width: 56px;
+  /* Reserve an 800px main track: 792px of visible card plus its 8px right inset.
+     The shell's minimum width keeps that track intact in narrow viewports. */
+  --entry-rail-track-width: clamp(200px, calc(100% - var(--entry-destinations-width) - 800px), var(--entry-rail-width, 236px));
+  position: relative;
+  grid-template-columns: var(--entry-destinations-width) 0 minmax(0, 1fr);
   /* Collapse: hold the horizontal squeeze until the rows have cascaded out
      top-to-bottom (see the staggered rail-row fade below), otherwise the
      0-width clip would swallow the lower rows before their turn. */
@@ -57,26 +74,75 @@
 .entry-shell--no-header .entry.entry--rail-open {
   /* Expand is immediate — no hold — so opening stays snappy. */
   transition: grid-template-columns 200ms cubic-bezier(0.23, 1, 0.32, 1) 0ms;
-  grid-template-columns: var(--entry-rail-width, 56px) minmax(0, 1fr);
+  grid-template-columns: var(--entry-destinations-width) var(--entry-rail-track-width) minmax(0, 1fr);
+}
+/* The workspace and recent conversations belong to Home. Other destinations
+   keep the icon strip, and give its former middle track to the content. */
+.entry-shell--no-header .entry.entry--destination {
+  grid-template-columns: var(--entry-destinations-width) 0 minmax(0, 1fr);
+  transition: none;
+}
+.entry--destination .entry-nav-rail__panel {
+  width: 0;
+  margin: 8px 0;
+  padding: 0 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.entry--destination .entry-nav-rail__panel-actions,
+.entry--destination .entry-nav-rail__group > *:not(.entry-nav-rail__account-stack):not([data-testid="entry-settings-button"]):not([data-testid="entry-nav-message-center"]),
+.entry--destination .entry-nav-rail__footer,
+.entry--destination .entry-nav-rail__account-bell,
+.entry--destination .entry-nav-rail__account .entry-nav-rail__team-wrap {
+  display: none;
+}
+.entry--destination .entry-nav-rail__group,
+.entry--destination .entry-nav-rail__account-stack {
+  width: 0;
+}
+.entry--destination .entry-nav-rail__account {
+  min-height: 40px;
+}
+.entry--destination .entry-nav-rail__group > [data-testid="entry-settings-button"],
+.entry--destination .entry-nav-rail__group > [data-testid="entry-nav-message-center"] {
+  position: absolute;
+  left: -48px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+}
+.entry--destination .entry-nav-rail__group > [data-testid="entry-settings-button"] {
+  bottom: 56px;
+}
+.entry--destination .entry-nav-rail__group > [data-testid="entry-nav-message-center"] {
+  bottom: 8px;
+}
+.entry--destination .entry-nav-rail__group > [data-testid] .entry-nav-rail__btn-label {
+  display: none;
 }
 
-/* Left rail — docked column. Lives in the grid's first track; collapsed the
-   track is 0-wide so the rail is clipped away, expanded it occupies the rail
-   width. */
+
+
+/* The workspace column lives in the second grid track. */
 /* ── The rail/content seam ────────────────────────────────────────────────
    A drag handle ON the boundary between the rail and the white content panel
    (per product: hover 到白色的框的左侧边缘的时候可以左右拖拽调整白色的面板的
-   宽度). Absolutely positioned rather than placed in the grid: a third child
-   would claim a third track. It is 9px wide but centred on the seam, so the
+   宽度). Absolutely positioned so it does not compete for a grid track. It is
+   9px wide but centred on the seam, so the
    grab zone straddles it instead of sitting to one side. */
 .entry-rail-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: var(--entry-rail-width, 236px);
+  left: calc(var(--entry-destinations-width, 56px) + var(--entry-rail-track-width));
   width: 9px;
   margin-left: -4px;
-  z-index: 40;
+  z-index: 140;
   cursor: col-resize;
   /* Nothing until the pointer is on it: the seam is already drawn by the two
      surfaces meeting, and a permanent line would add a third edge. */
@@ -122,6 +188,8 @@
 }
 
 .entry-nav-rail {
+  grid-column: 2;
+  grid-row: 1;
   /* The ink EVERY unselected row in the rail shares — destinations, the
      最近浏览过 heading, and the project rows under it (per product: 未选中的
      颜色和「最近浏览过」这一档一样). Only `.entry-nav-rail__btn.is-active`
@@ -181,36 +249,74 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  /* 12px gutters (per product): to the window's left edge, to the bottom, and
-     — through the right margin — to the content card beside it, so every
-     outer gap on this screen is the same number. Top margin 0: the tab bar
-     already contributes a 10px gap below the tabs (its bottom padding), so
-     the single visible gap between the tabs and this column stays 10px
-     instead of adding the rail's own inset on top of it. */
-  margin: 0 12px 12px;
-  /* No padding at all. Bottom: the account row has to land on the same
-     baseline as the content card's bottom edge beside it (per product:
-     账号行要和下边的边框对齐) — both boxes carry the same 12px bottom margin, so
-     the row's own bottom edge is flush with the card's only when nothing pads
-     it further up. Top: the workspace switcher leads the column flush with the
-     panel's top edge (per product) — the 10px that used to sit here was the
-     tab bar's own 10px bottom gap added a second time, exactly what the margin
-     note above says this box does not do. */
-  padding: 0;
+  /* The icon buttons end 8px before their grid track does. Shift this card
+     left so the visible icon-to-card and card-to-content gaps are both 4px. */
+  margin: 8px 4px 8px -4px;
+  padding: 8px 4px;
   position: relative;
-  /* No card of its own (per product): the rail sits flat on the entry ground,
-     and the single base card on this screen is the content column's
-     (`.entry-main--scroll` below). The milky-frost surface, the masked
-     gradient rim, the whisper shadow and the 1px transparent stroke this
-     panel used to carry are all gone with it, along with the
-     reduced-transparency / no-backdrop-filter fallbacks — nothing is painted
-     here any more.
-
-     Nothing being painted is also why this box is now exactly the row column:
-     with no stroke of its own and no padding on the group inside it (below),
-     the panel's border box IS the rows' box, so a row sits at this margin's
-     12px from the window edge — the same gutter the content card keeps on the
-     other side. */
+  --entry-content-surface: rgba(255, 255, 255, 0.85);
+  background: var(--entry-content-surface);
+  -webkit-backdrop-filter: var(--material-thin-backdrop);
+  backdrop-filter: var(--material-thin-backdrop);
+  border-radius: 16px;
+  border: 0.5px solid #F7F7F7;
+  box-shadow: var(--shadow-sm);
+}
+.entry-nav-rail__panel-actions {
+  position: absolute;
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+  top: 5px;
+  /* Follow the animated rail track, keeping the pair at least 72px wide.
+     At zero track width, its left edge aligns with the content card. */
+  left: -4px;
+  right: 12px;
+  min-width: 72px;
+  z-index: 131;
+  min-height: 34px;
+  -webkit-app-region: no-drag;
+}
+/* The macOS traffic-light circles end at x=60px. When collapsed, start
+   the toolbar at x=68px to leave an 8px gap before the search button. */
+.workspace-shell[data-client-type="desktop"][data-host-platform="darwin"]
+  .entry:not(.entry--rail-open) .entry-nav-rail__panel-actions {
+  left: calc(68px - var(--entry-destinations-width));
+}
+.entry-nav-rail__panel-actions .workspace-tabs-rail-actions {
+  width: 100%;
+  margin: 0;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.entry-nav-rail__panel-actions .workspace-tabs-rail-actions .entry-nav-rail__collapse {
+  margin-left: 0;
+}
+.entry-nav-rail__panel-actions .entry-nav-rail__search:hover,
+.entry-nav-rail__panel-actions .entry-nav-rail__search:focus-visible {
+  width: 34px;
+  padding: 0;
+}
+/* The transparent tab strip overlaps this row. Pass pointer input through
+   the strip so the controls above the rail card remain clickable. */
+.workspace-shell:has(.entry-nav-rail__panel-actions > .workspace-tabs-rail-actions)
+  > .workspace-tabs-chrome {
+  pointer-events: none;
+}
+.workspace-shell:has(.entry-nav-rail__panel-actions > .workspace-tabs-rail-actions)
+  > .workspace-tabs-chrome button {
+  pointer-events: auto;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .entry-nav-rail__panel {
+    --entry-content-surface: var(--bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .entry-nav-rail__panel {
+    --entry-content-surface: var(--bg);
+  }
 }
 .entry-nav-rail.is-open {
   pointer-events: auto;
@@ -226,19 +332,22 @@
 }
 .entry--rail-open .entry-nav-rail {
   overflow: visible;
+  /* Keep the card toolbar above the rest of the entry body. */
+  z-index: 130;
 }
 
 /* ── Collapse cascade ──────────────────────────────────────────────────────
    Clicking collapse plays a top-to-bottom sequence: each rail row fades and
-   lifts a few px, staggered by its VISUAL order (workspace switcher → search
-   row → nav items → team items → footer), so the sidebar empties from the
+   lifts a few px, staggered from the content rows down to the footer controls,
+   so the sidebar empties from the
    top down before the track squeezes shut. Expanding is instant (no per-row
    delay) to stay snappy.
 
    Two structural facts drive the selectors, and both have drifted before —
    revisit them when the rail's tree changes again:
-   • the signed-in tree nests 个人项目…设置 inside .entry-nav-rail__team-wrap's
-     sibling .entry-nav-rail__team-section, so those rows fade INDIVIDUALLY
+   • the signed-in tree keeps recent projects and workspace settings inside
+     .entry-nav-rail__team-section, while the workspace switcher lives in the
+     bottom account row, so those rows fade INDIVIDUALLY
      (the wrapper itself must not also fade, or the block would double-fade
      and pop out of order);
    • the search box sits inside .entry-nav-rail__search-row (search +
@@ -256,9 +365,8 @@
   opacity: 0;
   transform: translateY(-4px);
 }
-/* Per-row stagger — applied only while collapsing so the cascade runs
-   top→bottom. Direct group rows first (signed-in: switcher, search row, 首页,
-   社区; signed-out: the full flat button list)… */
+/* Per-row stagger — applied only while collapsing so the workspace rows
+   cascade from top to bottom. */
 .entry:not(.entry--rail-open) .entry-nav-rail__group > *:nth-child(1) { transition-delay: 0ms; }
 .entry:not(.entry--rail-open) .entry-nav-rail__group > *:nth-child(2) { transition-delay: 15ms; }
 .entry:not(.entry--rail-open) .entry-nav-rail__group > *:nth-child(3) { transition-delay: 30ms; }
@@ -267,8 +375,7 @@
 .entry:not(.entry--rail-open) .entry-nav-rail__group > *:nth-child(6) { transition-delay: 75ms; }
 .entry:not(.entry--rail-open) .entry-nav-rail__group > *:nth-child(7) { transition-delay: 90ms; }
 .entry:not(.entry--rail-open) .entry-nav-rail__group > *:nth-child(n + 8) { transition-delay: 105ms; }
-/* …then the team-section rows pick the sequence up where the group left off
-   (the section is group child 5, delay 60ms — its rows continue from 75ms). */
+/* The team-section rows continue after the direct group rows. */
 .entry:not(.entry--rail-open) .entry-nav-rail__team-section > *:nth-child(1) { transition-delay: 75ms; }
 .entry:not(.entry--rail-open) .entry-nav-rail__team-section > *:nth-child(2) { transition-delay: 90ms; }
 .entry:not(.entry--rail-open) .entry-nav-rail__team-section > *:nth-child(3) { transition-delay: 105ms; }
@@ -296,27 +403,10 @@
   .entry-shell--no-header .entry { transition-delay: 0ms; }
 }
 
-/* Narrow window: below the comfortable split width the docked rail
-   auto-collapses instead of squeezing into a broken sliver — the grid track
-   zeroes out and the floating panel is clipped and inert. The open state is
-   preserved, so widening the window restores the rail as it was. */
+/* The narrow layout keeps the same side-by-side tracks; only the resize
+   affordance is hidden when there is no room to drag both cards comfortably. */
 @media (max-width: 1080px) {
-  .entry-shell--no-header .entry.entry--rail-open {
-    grid-template-columns: 0 minmax(0, 1fr);
-  }
-  .entry--rail-open .entry-nav-rail {
-    overflow: hidden;
-    pointer-events: none;
-  }
-  /* …and the content card takes over the left gutter, exactly as it does when
-     the user collapses the rail themselves. It cannot inherit that rule: the
-     auto-collapse deliberately KEEPS `.entry--rail-open` on the element so
-     widening restores the rail as it was, so `.entry:not(.entry--rail-open)
-     .entry-main--scroll` never matches at this width — and the card sat flush
-     against the window edge while the right side kept its 12. */
-  .entry-shell--no-header .entry.entry--rail-open .entry-main--scroll {
-    margin-left: 12px;
-  }
+  .entry-rail-resizer { display: none; }
 }
 /* Topbar panel toggle — the single affordance left visible when the rail
    is collapsed. Sits at the left edge of the sticky topbar and is hidden
@@ -976,25 +1066,20 @@
 .entry-nav-rail__recent {
   display: flex;
   flex-direction: column;
-  /* 16px between 插件 and this heading (per product, down from 24). The group
-     above already puts 2px between its children (`.entry-nav-rail__group`'s
-     gap), so the margin carries the remainder — written as the subtraction so
-     the total stays 16 if that gap ever moves. */
-  margin-top: calc(16px - 2px);
+  /* The panel owns the 8px gap above the heading. */
+  margin-top: 0;
 }
 .entry-nav-rail__recent-head {
   appearance: none;
   width: 100%;
-  /* Same leading inset as a destination row (per product: 左边对齐和首页的
-     选项) — the heading starts on 插件's icon column, not indented under its
-     label. The chevron is no longer in that column either; it moved to the
-     row's trailing edge. */
+  /* Keep the heading aligned with the workspace panel's recent rows. */
   height: auto;
   /* 38 tall, the destinations' own row height (per product: 整个的高度都是 38).
      A min-height rather than a fixed one: the box is a flex row that centres
      its contents, so it grows rather than clipping if the title ever wraps. */
   min-height: 38px;
-  padding: 8px 10px 8px 16px;
+  /* Include the panel's 4px padding and 0.5px border in the 16px inset. */
+  padding: 8px calc(16px - 4px - 0.5px);
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -1323,12 +1408,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.entry-nav-rail__recent-item:hover:not(:disabled) {
-  /* Same fill as the section heading above it and as 首页 when it is the
-     selected destination (per product): the ink at 10%, not --bg-subtle. See
-     `.entry-nav-rail__btn.is-active`. */
+.entry-nav-rail__recent-row:hover .entry-nav-rail__recent-item:not(.is-active):not(:active) {
+  /* Match an unselected destination's hover, including while the pointer is
+     over the trailing more button. */
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.entry-nav-rail__recent-item:is(:active, .is-active) {
+  /* Opening a project gets the same stronger fill and ink as a selected
+     destination. The rail unmounts once project navigation completes. */
   background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  color: #121212;
+  font-weight: 600;
+}
+[data-theme="dark"] .entry-nav-rail__recent-item:is(:active, .is-active) {
   color: var(--text-strong);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .entry-nav-rail__recent-item:is(:active, .is-active) {
+    color: var(--text-strong);
+  }
 }
 /* Selected ink is #121212 (per product), darker than `--selected`'s #353535.
    A literal rather than a token change: `--selected` is the app-wide selected
@@ -1555,15 +1653,15 @@
 }
 .entry-nav-rail__search input::placeholder { color: var(--text-faint); }
 
-/* Team switcher row */
-/* Team block: separated from the personal nav above by a very soft divider. */
+/* Workspace content begins below the card toolbar; the switcher is beside the
+   message bell in the bottom account row. */
 .entry-nav-rail__team-section {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 .entry-nav-rail__team {
   position: relative;
@@ -1697,6 +1795,8 @@
 
 /* Center scroll column */
 .entry-main--scroll {
+  grid-column: 3;
+  grid-row: 1;
   position: relative;
   flex: 1;
   min-width: 0;
@@ -1737,7 +1837,7 @@
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
 }
 /* The cluster overlaps the desktop window's draggable chrome strip
    (.workspace-tabs-chrome). app-region is not inherited, so without an
@@ -1848,23 +1948,9 @@
   backdrop-filter: var(--material-ultrathin-backdrop, none);
 }
 .entry-main--scroll {
-  /* Content card — the main column's own base card, paired with the rail's
-     `.entry-nav-rail__panel`: same milky-frost surface, same 16px corner,
-     same whisper elevation, and the same vertical box (flush top, 12px
-     bottom) so the two columns end on the same line. Right inset 12px
-     mirrors the rail's left one; the left stays 0 because the 12px gutter
-     to the rail is the rail's own right margin (it grows to 12px here when
-     the rail collapses, below).
-
-     This replaces the earlier "no frame around the scroll area, one
-     continuous surface" treatment — per product the content column now reads
-     as a card, like the rail.
-
-     ONE deviation from the rail's recipe: the rail paints its 1px rim with a
-     masked `::after`, but this element is the scroll container, where an
-     absolutely positioned pseudo scrolls away with the content. The rim is an
-     inset box-shadow here instead — painted on the box, so it stays put — and
-     `::before` is already taken by the top scroll-fade band above. */
+  /* The right content card and middle workspace card share their final
+     surface, border, radius, shadow, and 8px outer inset. The final layout
+     overrides for this scroll container are near the end of this file. */
   margin: 0 12px 12px 0;
   --entry-content-surface: rgba(255, 255, 255, 0.85);
   --entry-content-ring: var(--glass-refract-ring-edge);
@@ -1881,8 +1967,7 @@
      topbar's vertical footprint (12px top + 32px chip). */
   --entry-topbar-h: 44px;
 }
-/* Rail collapsed: its track is 0-wide and its card is clipped away, so the
-   left gutter has to come from this card instead. */
+/* When the workspace track is collapsed, this card supplies its left gutter. */
 .entry:not(.entry--rail-open) .entry-main--scroll {
   margin-left: 12px;
 }
@@ -6390,16 +6475,24 @@
   }
 }
 
-/* ---- Account switcher (top of rail) ---- */
-/* Portal host for the account module (owned by `EntryTopRightCluster`).
-   Transparent to layout so the account block below behaves as a direct flex
-   child of `.entry-nav-rail__group`. */
+/* ---- Account and workspace controls at the bottom of the rail ---- */
+/* Settings and account share one bottom anchor. Keep the settings button out
+   of the stack's flow so the avatar stays fixed when its menu opens. */
+.entry-nav-rail__account-stack {
+  order: 99;
+  margin-top: auto;
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+/* Portal host for the account module (owned by `EntryTopRightCluster`). */
 .entry-nav-rail__account-host {
   display: contents;
 }
-/* Bottom dock: the social links stack directly above the identity row, and the
-   pair sinks to the foot of the nav column together. The auto margin lives
-   here, so `.entry-nav-rail__account` inside it gives up its own. */
+/* Project navigation still uses this dock without the entry rail's stack. */
 .entry-nav-rail__account-dock {
   order: 99;
   margin-top: auto;
@@ -6408,28 +6501,20 @@
   align-items: stretch;
   gap: 2px;
 }
+.entry-nav-rail__account-stack .entry-nav-rail__account-dock {
+  order: 0;
+  margin-top: 0;
+}
 .entry-nav-rail__account-dock .entry-nav-rail__account {
   order: 0;
   margin: 0;
   padding-top: 0;
 }
-.entry-nav-rail__account-dock .entry-nav-rail__menu-social {
-  /* Spans exactly what the identity row below it spans (per product: 上边这排
-     的最大宽度和头像那一排一样): no side inset, and the three links spread so
-     Discord starts on the account trigger's left edge and 邮件 ends on the
-     message-centre bell's right edge. `gap` stays the floor if the rail ever
-     gets narrow enough for the labels to meet. */
-  padding: 0;
-  justify-content: space-between;
-}
 .entry-nav-rail__account {
   position: relative;
   display: flex;
-  /* One row: identity, message centre, then the update slot at the outer edge.
-     Only the identity column is elastic — the two after it hold fixed slots, so
-     a long account name truncates instead of pushing them off the rail. (This
-     was a column back when the credits chip stacked above the avatar; that chip
-     now lives in the top-right cluster.) */
+  /* The avatar reaches into the left icon strip; the bell and update slot
+     remain at the bottom of the workspace panel. */
   flex-direction: row;
   align-items: center;
   gap: 8px;
@@ -6437,17 +6522,7 @@
   margin: auto 0 0;
   padding-top: var(--spacing-10);
 }
-.entry-nav-rail__account-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-  font-size: 13px;
-}
-/* Message centre: a fixed square slot beside the identity, matching the rail
-   nav items' quiet icon treatment. */
+/* Message centre stays at the workspace panel's right edge. */
 .entry-nav-rail__account-bell {
   position: relative;
   flex: 0 0 auto;
@@ -6463,6 +6538,18 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+}
+.entry-nav-rail__account .entry-nav-rail__team-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.entry-nav-rail__account .entry-nav-rail__team {
+  margin: 0;
+}
+.entry-nav-rail__account .entry-nav-rail__team-menu {
+  top: auto;
+  bottom: calc(100% + var(--spacing-8));
+  right: calc(-1 * var(--spacing-36));
 }
 .entry-nav-rail__account-bell:hover,
 .entry-nav-rail__account-bell:focus-visible {
@@ -6539,6 +6626,9 @@
   outline: none;
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
+.entry-shell--no-header .entry-nav-rail__account-bell {
+  margin-left: auto;
+}
 .entry-nav-rail__account-avatar {
   position: relative;
   width: 25px;
@@ -6553,15 +6643,6 @@
   font-size: 12px;
   font-weight: 700;
   flex: 0 0 24px;
-}
-.entry-nav-rail__account-name {
-  font-size: 13px;
-  font-weight: 600;
-  flex: 0 1 auto;
-  margin-right: auto;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .entry-nav-rail__account-trigger svg { color: var(--text-soft); }
 /* The membership wordmark reads as a solid black mark, not a muted glyph. */
@@ -7008,15 +7089,6 @@
   min-width: 200px;
   max-width: min(232px, calc(100vw - 44px));
 }
-/* Narrow floating menu: the head name must truncate instead of driving the
-   menu width (the email row below it already does). */
-.entry-nav-rail__account.entry-nav-rail__account--floating .entry-nav-rail__account-head-name {
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* The hover bridge spans the float gap. The rail menu opened UPWARD (bridge
    below, top: 100%); the floating menu opens DOWNWARD, so the 6px gap to
    cover sits ABOVE the menu. */
@@ -7028,6 +7100,7 @@
   left: 0;
   right: 0;
   width: auto;
+  border-radius: var(--radius-xxlarge);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -7060,21 +7133,18 @@
 @media (prefers-reduced-motion: reduce) {
   .entry-nav-rail__account-menu > * { animation: none; }
 }
-/* Same width as the avatar trigger row: span the account container. */
 .entry-nav-rail__account .entry-nav-rail__account-menu {
-  left: 0;
-  right: 0;
-  width: auto;
+  left: 4px;
+  right: auto;
+  bottom: calc(100% + 8px);
+  width: 232px;
+  max-width: calc(100vw - 76px);
   min-width: 0;
+  padding: 8px;
   box-sizing: border-box;
-  /* EntryNavRail measures the room left inside the rail card and sets
-     `max-height` inline (a CSS length cannot name that height). Scroll the
-     overflow rather than letting the menu run past the card's top edge. */
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
-/* Invisible hover bridge over the 4px float gap, so moving the pointer from
+/* Invisible hover bridge over the 8px float gap, so moving the pointer from
    the avatar row up into the menu never leaves the hover region. */
 .entry-nav-rail__account .entry-nav-rail__account-menu::before {
   content: '';
@@ -7158,27 +7228,26 @@
   color: var(--text-strong);
   max-width: 100%;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .entry-nav-rail__account-head-email {
   font-size: 12px;
   color: var(--text-muted);
   max-width: 100%;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .entry-nav-rail__account-menu .entry-nav-rail__menu-item {
-  height: 34px;
+  min-height: 34px;
+  height: auto;
   gap: 9px;
-  padding: 0 8px;
-  /* 13px + nowrap: the longest item (GitHub help) must hold one line at the
-     trigger-row width the menu now matches. */
+  padding: 7px 8px;
   font-size: 13px;
-  white-space: nowrap;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  white-space: normal;
   border-radius: var(--radius-md);
 }
 .entry-nav-rail__menu-meta {
@@ -7202,59 +7271,36 @@
   display: block;
   color: inherit;
 }
-/* Icon-only social row (Discord / X) below the GitHub Star row: the labels
-   are dropped and the two links sit side by side as compact icon buttons.
-   Zero side padding keeps the first icon centered on the same column as the
-   19px icon slot of the full rows above. */
+/* Keep the three outbound links as compact icon buttons. Their accessible
+   names remain on the links in EntryNavRail. */
 .entry-nav-rail__menu-social {
   display: flex;
   align-items: center;
   gap: 6px;
 }
+.entry-nav-rail__account-menu .entry-nav-rail__menu-social {
+  justify-content: space-between;
+  padding: 2px 8px;
+}
 .entry-nav-rail__menu-social-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Icon + its name on one line (per product: 左边图标，右边文本), so the button
-     sizes to that pair instead of the old 34px icon square. */
-  gap: 5px;
+  width: 30px;
   height: 30px;
-  padding: 0 7px;
+  padding: 0;
   border-radius: var(--radius-md);
   color: var(--text-soft);
   text-decoration: none;
-}
-.entry-nav-rail__menu-social-label {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  color: inherit;
 }
 .entry-nav-rail__menu-social-btn:hover {
   background: var(--vibrancy-fill-secondary);
   color: var(--text);
 }
-/* Dragged narrow, the social row keeps the marks and drops the words (per
-   product: 缩到最小的时候只显示 icon). 190 is where 「Discord · X · 邮件」 stops
-   fitting on one line — the rail's floor is 200 and the panel inside it is
-   ~24 narrower, so this only ever engages down at that end of the drag. */
-@container entry-rail-panel (max-width: 190px) {
-  .entry-nav-rail__menu-social-label {
-    display: none;
-  }
-  .entry-nav-rail__menu-social-btn {
-    /* Back to a square target now that there is no label to sit beside. */
-    gap: 0;
-    width: 30px;
-    padding: 0;
-  }
-}
 /* All three marks at 16 (per product), pinned here rather than left to the
    markup: `<Icon>` writes width/height as HTML ATTRIBUTES, which are
    presentational hints and lose to any rule at all — so the size only holds as
-   long as nothing else in the cascade reaches these glyphs. The label beside
-   them stays 12 (`.entry-nav-rail__menu-social-label` above). */
+   long as nothing else in the cascade reaches these glyphs. */
 .entry-nav-rail__menu-social-btn svg,
 .entry-nav-rail__menu-social-btn .od-icon {
   width: 16px;
@@ -7514,22 +7560,7 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
    quantity, not part of the tab's name. */
 .ds-top-scope-chip.is-active .ds-top-scope-count { color: var(--text-muted); }
 
-/* ── Design-systems layout fallback ──────────────────────────────────
-   The DesignSystemsTab styling lives in a CSS Module. Next.js dev Fast
-   Refresh can occasionally desync that module's hashed class names after
-   an HMR cycle, dropping the two-column grid and the row logo size cap
-   (the logo then renders at its full intrinsic size). These rules key off
-   stable data-testid hooks — not hashed class names — so the layout stays
-   sane even when the module briefly fails to apply. They mirror the module
-   defaults, so they are harmless no-ops when the module is healthy. */
-[data-testid="design-systems-tab"] {
-  display: grid;
-  grid-template-columns: 304px minmax(0, 1fr);
-  align-items: start;
-  gap: 20px;
-  width: 100%;
-}
-
+/* Design-system header/detail chrome. Gallery geometry lives in its CSS module. */
 [data-testid="design-systems-page-header"] {
   display: flex;
   align-items: center;
@@ -7635,22 +7666,6 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   padding-inline: 18px;
 }
 
-[data-testid="design-systems-tab"] > aside {
-  position: sticky;
-  top: var(--entry-topbar-h, 44px);
-  display: flex;
-  flex-direction: column;
-  height: calc(100dvh - 184px - var(--spacing-16));
-  max-height: calc(100dvh - 184px - var(--spacing-16));
-  min-height: 0;
-  gap: 12px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
 [data-testid="design-systems-preview"] {
   min-width: 0;
   border: 0;
@@ -7671,83 +7686,6 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   margin-left: 0;
   gap: var(--spacing-12);
   padding: 0 0 48px;
-}
-
-[data-testid^="design-system-card-"] {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-12);
-  width: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-}
-
-[data-testid^="design-system-card-"]:hover,
-[data-testid^="design-system-card-"]:active,
-[data-testid^="design-system-card-"]:focus,
-[data-testid^="design-system-card-"]:focus-visible,
-[data-testid^="design-system-card-"][aria-pressed="true"] {
-  outline: none;
-  background: transparent !important;
-  background-image: none !important;
-  box-shadow: none !important;
-}
-
-[data-testid="design-systems-tab"] > aside div:has(> [data-testid^="design-system-card-"]) {
-  padding: var(--spacing-8) var(--spacing-6);
-  border: var(--stroke-thin) solid transparent;
-  border-radius: var(--radius);
-}
-
-[data-testid="design-systems-tab"] > aside div:has(> [data-testid^="design-system-card-"][aria-pressed="true"]) {
-  border-color: #dbdbdb;
-  background: #ffffff;
-}
-
-[data-testid="design-systems-tab"] > aside div:has(> [data-testid^="design-system-card-"]):hover > [data-testid^="design-system-card-"],
-[data-testid="design-systems-tab"] > aside div:has(> [data-testid^="design-system-card-"][aria-pressed="true"]) > [data-testid^="design-system-card-"] {
-  background: transparent !important;
-  background-image: none !important;
-  box-shadow: none !important;
-}
-
-[data-testid^="design-system-card-"] > span:first-child {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-}
-
-[data-testid^="design-system-card-"] > span:nth-child(2) {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
-}
-
-[data-testid^="design-system-card-"] > span:nth-child(2) span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-[data-testid^="design-system-card-"] > span:last-child[aria-label] {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--green, #3d7a4f);
 }
 
 /* 设计体系 / 插件 are absent on purpose: their titles keep the same 16px to the
@@ -7864,7 +7802,7 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   text-align: left;
 }
 
-[data-testid^="design-kit-view-"][data-variant="panel"] > section {
+[data-testid^="design-kit-view-"][data-variant="panel"] > section:where(:not([data-foundations])) {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -7875,13 +7813,13 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   background: transparent;
 }
 
-[data-testid^="design-system-detail-"] [data-testid^="design-kit-view-"][data-variant="panel"] > section {
+[data-testid^="design-system-detail-"] [data-testid^="design-kit-view-"][data-variant="panel"] > section:where(:not([data-foundations])) {
   border: 0;
   gap: var(--spacing-8);
   padding: var(--spacing-12);
 }
 
-[data-testid^="design-kit-view-"][data-variant="panel"] > section h3 {
+[data-testid^="design-kit-view-"][data-variant="panel"] > section:where(:not([data-foundations])) h3 {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
@@ -8044,22 +7982,7 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   [data-testid="design-systems-header-search"] {
     width: 100%;
   }
-  [data-testid="design-systems-tab"] {
-    grid-template-columns: 1fr;
-  }
-  [data-testid="design-systems-tab"] > aside {
-    position: static;
-    height: auto;
-    max-height: none;
-  }
 }
-/* Cap the sidebar row logos; never touches the preview pane's large logo. */
-[data-testid="design-systems-list"] img {
-  max-width: 40px;
-  max-height: 40px;
-  object-fit: contain;
-}
-
 /* ============================================================
    Invite-colleagues dialog (team space). Opened from the team
    switcher's "邀请同事" item. Demo-only: email + role + share link
@@ -9699,6 +9622,65 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.project-search-item--conversation .project-search-item-meta {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep 4px between the floating controls (top 8px, height 28px) and the
+   aligned entry cards, whose top edge begins at 40px. */
+.workspace-shell:has(.entry-shell--no-header .entry-main--scroll) > .workspace-shell__body {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  overflow-x: auto;
+}
+.workspace-shell:has(.entry-shell--no-header .entry-main--scroll) > .workspace-tabs-chrome {
+  grid-column: 1;
+  position: relative;
+  z-index: 120;
+  background: transparent;
+  box-shadow: none;
+  border-bottom-color: transparent;
+}
+.entry-shell--no-header .entry-nav-rail {
+  margin-top: 0;
+}
+.entry-shell--no-header .entry-nav-rail__panel {
+  margin-top: 40px;
+}
+.entry-shell--no-header .entry-main--scroll {
+  margin-top: 40px;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  border: 0.5px solid #F7F7F7;
+  box-shadow: var(--shadow-sm);
+}
+.entry-shell--no-header .entry:not(.entry--rail-open) .entry-main--scroll {
+  margin-left: -4px;
+}
+.entry-shell--no-header .entry.entry--destination .entry-main--scroll {
+  margin-left: -4px;
+}
+.entry-shell--no-header .entry-main__inner {
+  padding-top: 60px;
+}
+/* Destination pages share a fixed card inset, independent of viewport width.
+   Remove the centered width cap so it cannot add to the horizontal gutter. */
+.entry-shell--no-header .entry--destination .entry-main__inner {
+  max-width: none;
+  padding: var(--spacing-48);
+}
+@media (max-width: 1080px) {
+  .entry-shell--no-header .entry.entry--rail-open .entry-main--scroll {
+    margin-left: 0;
+  }
+}
+body:has(.entry-shell--no-header .entry-main--scroll) > .entry-top-right-cluster {
+  top: 8px;
+  right: 16px;
+}
 
 /* A completed recent project keeps its folder and adds an unread notice. */
 .entry-nav-rail__recent-unread {
@@ -9709,3 +9691,49 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   border-radius: 50%;
   background: #1F68FE;
 }
+
+/* Keep the two workspace actions together beneath the workspace list. */
+.entry-nav-rail__team-menu:has(.entry-nav-rail__workspace-invite) {
+  width: 280px;
+  max-width: calc(100vw - 24px);
+}
+.entry-nav-rail__workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.entry-nav-rail__workspace-row > .entry-nav-rail__menu-item {
+  flex: 1;
+  min-width: 0;
+}
+.entry-nav-rail__workspace-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.entry-nav-rail__workspace-actions-row > .entry-nav-rail__menu-item {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: auto;
+  padding-inline: 16px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.entry-nav-rail__workspace-actions-row > .entry-nav-rail__menu-item:hover {
+  border-radius: var(--radius-xxlarge);
+}
+.entry-nav-rail__workspace-invite {
+  flex: none;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #111;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.entry-nav-rail__workspace-invite:hover { background: #303030; }

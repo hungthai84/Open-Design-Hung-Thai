@@ -1462,8 +1462,24 @@
   min-width: 0;
   /* Let the filename yield to the expanding view tabs in narrow workspaces. */
   max-width: 100%;
+  width: min(360px, 100%);
   height: 100%;
   justify-self: center;
+}
+.workspace .ws-tabs-shell[data-compact-center='true'] {
+  display: flex;
+  flex-wrap: wrap;
+  height: auto;
+  gap: 8px;
+}
+.ws-tabs-shell[data-compact-center='true'] > .ws-tabs-center {
+  order: 3;
+  flex: 1 1 100%;
+  justify-content: center;
+  height: 30px;
+}
+.ws-tabs-shell[data-compact-center='true'] > .ws-tabs-lead {
+  height: 30px;
 }
 /* Portal host for the viewer's viewport switcher (桌面端 / 平板 / 手机) and its
    Reload, which sit immediately before the file tabs. `:empty` collapses it
@@ -1569,6 +1585,10 @@
      dark 分享 button. */
   border-color: transparent;
   background: var(--bg-subtle);
+}
+.app .ws-tabs-actions .chrome-action-icon[data-od-version-entry],
+.app .ws-tabs-actions .chrome-action-icon.chrome-action-unified {
+  border-radius: 50%;
 }
 .app .ws-tabs-actions .chrome-action-icon:hover:not(:disabled) {
   background: var(--bg-muted);
@@ -3010,57 +3030,6 @@
 
 .designs-empty-cta:active {
   transform: scale(0.98);
-}
-
-/* A single current-file selector replaces the accumulating file tab strip. */
-.ws-tabs-bar:has(> .ws-file-selector) {
-  overflow: visible;
-  min-width: 0;
-}
-.ws-file-selector {
-  flex: 0 0 360px;
-  width: 360px;
-  min-width: 0;
-  box-sizing: border-box;
-  max-width: 100%;
-  margin: 0;
-  gap: 4px;
-  padding: 0 6px;
-  border-radius: var(--radius-pill);
-  background: var(--accent-tint);
-}
-.ws-file-selector-trigger {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.ws-file-selector-trigger:hover,
-.ws-file-selector-trigger[aria-expanded='true'] {
-  background: transparent;
-}
-.ws-file-selector-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-.ws-file-selector > .ws-pages-menu {
-  left: 0;
-  right: 0;
-  min-width: min(280px, 100%);
-  max-width: min(420px, 80vw);
 }
 
 /* Keep sharing immediately beside the current file link. */

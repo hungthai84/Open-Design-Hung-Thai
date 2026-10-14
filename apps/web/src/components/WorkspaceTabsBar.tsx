@@ -1,4 +1,4 @@
-import { Dialog, DialogTitle, DialogDescription, DialogFooter } from '@open-design/components';
+import { Button, Dialog, DialogTitle, DialogDescription, DialogFooter } from '@open-design/components';
 import {
   type DragEvent,
   type ReactNode,
@@ -17,23 +17,21 @@ import {
 import { useT } from '../i18n';
 import { buildPath, navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
-import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/contracts';
+import type { WorkspaceCollabContext } from '@open-design/contracts';
+import { getOpenDesignHost } from '@open-design/host';
 import { Icon, type IconName } from './Icon';
-import { exportProjectAsZip } from '../runtime/exports';
+import { requestProjectShare } from '../state/projectShareRequest';
 import { RemixIcon } from './RemixIcon';
 import { MarqueeLabel } from './MarqueeLabel';
-import { hasRunStatusGlyph, ProjectRunStatusIcon } from './ProjectRunStatusIcon';
-import { projectCover, ProjectCoverMedia } from './RecentProjectsStrip';
-import { selectProjectFileCover, type ProjectCoverOverride } from './project-cover';
+import projectMenuStyles from './WorkspaceProjectMenu.module.css';
 import { fetchProjectFiles } from '../providers/registry';
-import { useProjectRunStatuses } from '../hooks/useProjectRunStatuses';
-import { STATUS_LABEL_KEYS } from '../state/projectRunStatus';
 import {
   HOME_APPLY_TEMPLATE_EVENT,
   orderedCreateChips,
   type HomeHeroChip,
 } from './home-hero/chips';
 import {
+  ENTRY_RAIL_ACTIONS_HOST_EVENT,
   ENTRY_RAIL_STATE_EVENT,
   ENTRY_RAIL_TOGGLE_EVENT,
   ENTRY_SEARCH_OPEN_EVENT,
@@ -104,6 +102,8 @@ interface TabDragTarget {
 }
 
 interface Props {
+  showMacWindowControls?: boolean;
+  onDuplicateProject?: (id: string) => Promise<void> | void;
   onRenameProject?: (id: string, name: string) => Promise<unknown>;
   onDeleteProject?: (id: string) => Promise<boolean | void> | boolean | void;
   route: Route;
@@ -133,36 +133,9 @@ interface Props {
    * tab without exposing those tabs in another scope.
    */
   identityScopeKey?: string | null;
-  /**
-   * Workspace headers for the per-project run lookups behind the dropdown's
-   * status glyphs. Optional: without it the requests go unscoped, which is
-   * correct for a local/unbound session and simply returns nothing readable
-   * in a workspace one.
-   */
+  /** Workspace scope for file lookups when sharing the current project. */
   workspaceContext?: WorkspaceCollabContext | null;
 }
-
-/* Dwell before the dock dropdown's hover preview commits to a row. Long
-   enough that running the pointer down the list to reach the bottom entry
-   mounts nothing on the way, short enough that stopping on a row feels
-   immediate. */
-const PREVIEW_HOVER_DELAY_MS = 180;
-
-/* Panel geometry, shared by the placement math here and the rule that paints
-   it (`.workspace-tabs-dropdown__preview`). Kept in JS too because the panel
-   is portaled to <body> and has to decide for itself which side it fits on. */
-const PREVIEW_WIDTH_PX = 240;
-const PREVIEW_GAP_PX = 8;
-
-function dockFlyoutPosition(rect: DOMRect, viewportWidth: number, width = PREVIEW_WIDTH_PX) {
-  const right = rect.right + PREVIEW_GAP_PX;
-  const fits = right + width + PREVIEW_GAP_PX <= viewportWidth;
-  return {
-    top: rect.top,
-    left: fits ? right : Math.max(PREVIEW_GAP_PX, rect.left - PREVIEW_GAP_PX - width),
-  };
-}
-
 
 const STORAGE_KEY = 'open-design:workspace-tabs:v1';
 const OPEN_WORKSPACE_TAB_EVENT = 'open-design:workspace-tabs:open';
@@ -705,6 +678,8 @@ function ChromeHomeGlyph() {
 }
 
 export function WorkspaceTabsBar({
+  showMacWindowControls = false,
+  onDuplicateProject,
   onRenameProject,
   onDeleteProject,
   route,
@@ -740,27 +715,33 @@ export function WorkspaceTabsBar({
   // #5517 corner fan: the "+" button opens a corner-anchored radial menu of
   // template wedges instead of immediately spawning a home tab.
   const [radialMenu, setRadialMenu] = useState<{ x: number; y: number } | null>(null);
-  // Docked-mode white dropdown (project route): open state of its tab list.
+  // The dock exposes actions for the current project directly.
   const [dockMenuOpen, setDockMenuOpen] = useState(false);
-  const [dockActions, setDockActions] = useState<string | null>(null);
   const [dockActionPosition, setDockActionPosition] = useState({ left: 0, top: 0 });
-  const [projectAction, setProjectAction] = useState<{ kind: 'rename' | 'export' | 'delete'; id: string; title: string } | null>(null);
+  const dockTriggerRef = useRef<HTMLButtonElement>(null);
+  const dockMenuRef = useRef<HTMLDivElement>(null);
+  const [projectAction, setProjectAction] = useState<{ kind: 'rename' | 'share' | 'delete'; id: string; title: string } | null>(null);
   const [projectNameDraft, setProjectNameDraft] = useState('');
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [dockActionError, setDockActionError] = useState('');
   useEffect(() => {
-    setDockActions(null);
-    setDockActionError('');
-  }, [dockMenuOpen]);
-  // Most-recently-activated tab ids, newest first — the dropdown lists tabs
-  // in this order (最近打开的在前). Session-local: falls back to strip order
-  // for tabs never activated since launch.
-  const tabMruRef = useRef<string[]>([]);
-  useEffect(() => {
-    const id = state.activeTabId;
-    if (!id) return;
-    tabMruRef.current = [id, ...tabMruRef.current.filter((x) => x !== id)].slice(0, 50);
+    setDockMenuOpen(false);
   }, [state.activeTabId]);
+  useEffect(() => {
+    if (!dockMenuOpen) return;
+    dockMenuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !dockMenuRef.current?.contains(event.target)
+        && !dockTriggerRef.current?.contains(event.target)) setDockMenuOpen(false);
+    };
+    const close = () => setDockMenuOpen(false);
+    document.addEventListener('pointerdown', dismiss);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      window.removeEventListener('resize', close);
+    };
+  }, [dockMenuOpen]);
   const [radialHoverId, setRadialHoverId] = useState<string | null>(null);
   useEffect(() => {
     if (!radialMenu) setRadialHoverId(null);
@@ -894,6 +875,7 @@ export function WorkspaceTabsBar({
   // sibling React tree; the localStorage seed covers the frames before the
   // first broadcast arrives.
   const [entryRailOpen, setEntryRailOpen] = useState<boolean>(readStoredRailOpen);
+  const [entryRailActionsHost, setEntryRailActionsHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const onRailState = (event: Event) => {
       const open = (event as CustomEvent<{ open?: unknown }>).detail?.open;
@@ -902,27 +884,20 @@ export function WorkspaceTabsBar({
     window.addEventListener(ENTRY_RAIL_STATE_EVENT, onRailState);
     return () => window.removeEventListener(ENTRY_RAIL_STATE_EVENT, onRailState);
   }, []);
-
+  useEffect(() => {
+    const initial = document.querySelector('.entry-nav-rail__panel-actions');
+    setEntryRailActionsHost(initial instanceof HTMLElement ? initial : null);
+    const onHost = (event: Event) => {
+      const host = (event as CustomEvent<{ host?: HTMLElement | null }>).detail?.host;
+      setEntryRailActionsHost(host instanceof HTMLElement ? host : null);
+    };
+    window.addEventListener(ENTRY_RAIL_ACTIONS_HOST_EVENT, onHost);
+    return () => window.removeEventListener(ENTRY_RAIL_ACTIONS_HOST_EVENT, onHost);
+  }, []);
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project])),
     [projects],
   );
-
-  // Run status for the dock dropdown's rows. Only fetched while that menu is
-  // open: it costs one request per open project tab, and the glyphs it feeds
-  // are not on screen otherwise.
-  const dropdownProjectIds = useMemo(
-    () =>
-      state.tabs
-        .filter((tab): tab is Extract<WorkspaceChromeTab, { kind: 'project' }> =>
-          tab.kind === 'project')
-        .map((tab) => tab.projectId),
-    [state.tabs],
-  );
-  const runStatusByProjectId = useProjectRunStatuses(dropdownProjectIds, {
-    enabled: dockMenuOpen,
-    workspaceContext,
-  });
 
   // Project-route dock (workspaceTabsDock.ts): when ProjectView registers a
   // dock element at the top of the chat column, the strip portals there and
@@ -938,118 +913,6 @@ export function WorkspaceTabsBar({
     if (!tabsDockEl) setDockMenuOpen(false);
   }, [tabsDockEl]);
 
-  // Hovered row in the dock dropdown — the one the preview panel is showing.
-  // A row only claims it after a short dwell: sweeping the pointer down the
-  // list would otherwise mount (and abandon) one sandboxed cover frame per row
-  // it crossed, which is exactly the flood the thumbnail load gate exists to
-  // prevent. Leaving the menu clears it, so at most one preview is ever live.
-  const [previewTabId, setPreviewTabId] = useState<string | null>(null);
-  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelPreviewTimer = useCallback(() => {
-    if (previewTimerRef.current === null) return;
-    clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = null;
-  }, []);
-  const queuePreview = useCallback((tabId: string) => {
-    cancelPreviewTimer();
-    previewTimerRef.current = setTimeout(() => {
-      previewTimerRef.current = null;
-      setPreviewTabId(tabId);
-    }, PREVIEW_HOVER_DELAY_MS);
-  }, [cancelPreviewTimer]);
-  const clearPreview = useCallback(() => {
-    cancelPreviewTimer();
-    setPreviewTabId(null);
-  }, [cancelPreviewTimer]);
-  // Closing the menu (or unmounting) must not leave a queued preview to fire
-  // into a menu that is gone.
-  useEffect(() => {
-    if (!dockMenuOpen) clearPreview();
-  }, [dockMenuOpen, clearPreview]);
-  useEffect(() => cancelPreviewTimer, [cancelPreviewTimer]);
-
-  // Cover art per project, resolved lazily for whichever row is being
-  // previewed. `Project.metadata.entryFile` is empty for most projects — it is
-  // only stamped by some creation paths — so reading metadata alone previews
-  // almost everything as the fallback letter. The real cover comes from the
-  // project's file list, which is exactly what the project cards do (see
-  // RecentProjectsStrip's cover queue). Those cards need a queue because a
-  // grid resolves a hundred at once; here it is one project, gated behind a
-  // hover dwell, so a single fetch per project is enough.
-  //
-  // Cached per project id for the session: `undefined` = never asked,
-  // `null` = asked and this project has no cover (don't ask again).
-  const [previewCoverByProject, setPreviewCoverByProject] = useState<
-    Record<string, ProjectCoverOverride | null>
-  >({});
-  // The scan effect reads these through refs and keys ONLY on the hovered
-  // project id. `workspaceContext` is a fresh object on most parent renders and
-  // `projectById`/the cache change as results land, so listing any of them as a
-  // dependency re-ran the effect mid-flight — and its cleanup aborted the very
-  // fetch it had just started, forever. (Symptom: every preview stuck on the
-  // fallback letter, with no error anywhere.)
-  const previewCoverRef = useRef(previewCoverByProject);
-  previewCoverRef.current = previewCoverByProject;
-  const projectByIdRef = useRef(projectById);
-  projectByIdRef.current = projectById;
-  const workspaceContextRef = useRef(workspaceContext);
-  workspaceContextRef.current = workspaceContext;
-  // Where the portaled preview parks. The panel CANNOT live inside the
-  // dropdown: the dropdown is in the chat column, and the column's stacking
-  // context sits under the canvas pane beside it — a panel placed to the right
-  // rendered correctly, reported a sane rect, and was painted over by the
-  // canvas. So it portals to <body> and positions itself off the menu's rect.
-  const dockMenuRef = useRef<HTMLDivElement | null>(null);
-  const [previewAnchor, setPreviewAnchor] = useState<{ top: number; left: number } | null>(null);
-  const previewProjectId =
-    previewTabId
-      ? (() => {
-          const tab = state.tabs.find((entry) => entry.id === previewTabId);
-          return tab && tab.kind === 'project' ? tab.projectId : null;
-        })()
-      : null;
-  useEffect(() => {
-    if (previewProjectId === null) return;
-    if (previewProjectId in previewCoverRef.current) return;
-    const project = projectByIdRef.current.get(previewProjectId);
-    if (!project) return;
-    // A project whose metadata already names an entry file needs no scan —
-    // `projectCover` reads it directly, same as the cards do.
-    if (project.metadata?.entryFile) return;
-    const controller = new AbortController();
-    void (async () => {
-      let files;
-      try {
-        files = await fetchProjectFiles(previewProjectId, {
-          signal: controller.signal,
-          workspaceContext: workspaceContextRef.current,
-        });
-      } catch {
-        // Transient (abort / offline): leave it unrecorded so hovering again
-        // retries rather than caching a wrong "no cover".
-        return;
-      }
-      if (controller.signal.aborted) return;
-      const cover = selectProjectFileCover(files);
-      setPreviewCoverByProject((current) =>
-        previewProjectId in current ? current : { ...current, [previewProjectId]: cover },
-      );
-    })();
-    return () => controller.abort();
-  }, [previewProjectId]);
-  useLayoutEffect(() => {
-    if (!dockMenuOpen || previewTabId === null) {
-      setPreviewAnchor(null);
-      return;
-    }
-    const menu = dockMenuRef.current;
-    if (!menu) return;
-    const rect = menu.getBoundingClientRect();
-    // Right of the menu by default; flip to its left when the window has no
-    // room there (narrow window, or the chat column docked on the right).
-    setPreviewAnchor(dockFlyoutPosition(rect, window.innerWidth));
-  }, [dockMenuOpen, previewTabId]);
-
   // Full-page settings borrows CHAT's chrome row: a lone Home logo at the left
   // edge, no search / rail toggle. App swaps EntryShell out for the settings
   // surface on this route, so the rail those two controls drive isn't mounted —
@@ -1057,6 +920,8 @@ export function WorkspaceTabsBar({
   // never hears the event. The strip stays undocked here, so the row is the
   // docked layout minus the dock: same button, same x, nothing else.
   const settingsPageChrome = route.kind === 'home' && route.view === 'settings';
+  const communityPageChrome = route.kind === 'community'
+    || (route.kind === 'home' && route.view === 'community');
 
   // Refresh the fallback cache from whatever this fetch actually returned,
   // before `displayTabFor` below reads it — same render pass, so a tab
@@ -1803,176 +1668,100 @@ export function WorkspaceTabsBar({
   const dockPortal = (node: ReactNode) =>
     tabsDockEl ? createPortal(node, tabsDockEl) : node;
 
-  // Docked (project-route) presentation: one white dropdown spanning the chat
-  // column instead of the pill strip. The strip still renders (hidden by CSS)
-  // so its measurement/drag hooks keep their DOM.
+  // Keep the title in the chat header and expose its project actions in one menu.
   const dockDropdownNode = (() => {
     if (!tabsDockEl) return null;
     const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? state.tabs[0];
     if (!activeTab) return null;
-    const activeDisplay =
-      displayTabById.get(activeTab.id)
-        ?? displayTabFor(activeTab, projectById, t, knownProjectNamesRef.current);
-    // Most recently opened first. The active tab ranks first even before the
-    // MRU effect has run for it; never-activated tabs keep strip order after.
-    const mru = tabMruRef.current;
-    const mruRank = (tab: WorkspaceChromeTab): number => {
-      if (tab.id === state.activeTabId) return -1;
-      const index = mru.indexOf(tab.id);
-      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-    };
-    const projectTabs = state.tabs
-      .filter((tab) => tab.kind !== 'entry')
-      .sort((a, b) => mruRank(a) - mruRank(b));
-    // The hovered row's project, if the ambient list actually carries it. A tab
-    // can name a project this list has not loaded (deep link, other workspace);
-    // that row simply previews nothing rather than showing an empty frame.
-    const previewTab = previewTabId
-      ? projectTabs.find((tab) => tab.id === previewTabId)
-      : undefined;
-    const previewProject =
-      previewTab && previewTab.kind === 'project'
-        ? projectById.get(previewTab.projectId) ?? null
-        : null;
-    const previewCoverArt = previewProject
-      ? projectCover(
-          previewProject,
-          previewCoverByProject[previewProject.id] ?? null,
-          workspaceContext,
-        )
-      : null;
-    const previewTitle = previewTab
-      ? (displayTabById.get(previewTab.id)
-          ?? displayTabFor(previewTab, projectById, t, knownProjectNamesRef.current)).title
-      : '';
+    const activeDisplay = displayTabById.get(activeTab.id)
+      ?? displayTabFor(activeTab, projectById, t, knownProjectNamesRef.current);
     return (
-      <div className="workspace-tabs-dropdown" data-testid="workspace-tabs-dropdown" onKeyDown={(event) => { if (event.key === 'Escape') { setDockActions(null); setDockMenuOpen(false); } }}>
-        <button
-          type="button"
-          className="workspace-tabs-dropdown__trigger"
-          aria-haspopup="listbox"
-          aria-expanded={dockMenuOpen}
-          onClick={() => setDockMenuOpen((v) => !v)}
-          data-testid="workspace-tabs-dropdown-trigger"
-        >
-          <MarqueeLabel
-            className="workspace-tabs-dropdown__label"
-            text={activeDisplay.title}
-          />
-          <Icon name="chevron-down" size={14} />
-        </button>
-        {dockMenuOpen ? (
-          <>
-            <div
-              className="workspace-tabs-dropdown__backdrop"
-              onClick={() => setDockMenuOpen(false)}
-            />
-            <div
-              ref={dockMenuRef}
-              className="workspace-tabs-dropdown__menu"
-              role="listbox"
-              onMouseLeave={clearPreview}
+      <div className="workspace-tabs-dropdown" data-testid="workspace-tabs-dropdown">
+        <div className={projectMenuStyles.header}>
+          <MarqueeLabel className="workspace-tabs-dropdown__label" text={activeDisplay.title} />
+          {activeTab.kind === 'project' ? (
+            <Button
+              ref={dockTriggerRef}
+              variant="ghost"
+              size="icon"
+              className={projectMenuStyles.trigger}
+              aria-label={t('designFiles.rowMenu')}
+              aria-haspopup="menu"
+              aria-expanded={dockMenuOpen}
+              data-testid="workspace-tabs-dropdown-trigger"
+              onClick={() => {
+                const rect = dockTriggerRef.current?.getBoundingClientRect();
+                if (rect) setDockActionPosition({
+                  left: Math.max(8, Math.min(rect.right - 160, window.innerWidth - 168)),
+                  top: rect.bottom + 8,
+                });
+                setDockActionError('');
+                setDockMenuOpen((open) => !open);
+              }}
             >
-              {projectTabs.map((tab) => {
-                const display =
-                  displayTabById.get(tab.id)
-                    ?? displayTabFor(tab, projectById, t, knownProjectNamesRef.current);
-                const active = tab.id === state.activeTabId;
-                return (
-                  <div
-                    key={tab.id}
-                    className={`workspace-tabs-dropdown__row${active ? ' is-active' : ''}`}
-                    onMouseEnter={() => queuePreview(tab.id)}
-                    onFocus={() => setPreviewTabId(tab.id)}
-                  >
-                    <button
-                      type="button"
-                      className="workspace-tabs-dropdown__row-main"
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => {
-                        setDockMenuOpen(false);
-                        openTab(tab);
-                      }}
-                    >
-                      {/* Always up: every row fills the slot now — a run
-                          status when there is one, the folder icon otherwise —
-                          so the column can't half-exist and names stay on one
-                          shared left edge. */}
-                      <span className="workspace-tabs-dropdown__row-lead">
-                        {leadGlyphFor(tab, display, runStatusByProjectId, t)}
-                      </span>
-                      <MarqueeLabel
-                        className="workspace-tabs-dropdown__row-label"
-                        text={display.title}
-                      />
-                    </button>
-                    {tab.kind === 'project' ? (
-                      <button type="button" className="workspace-tabs-dropdown__more"
-                        aria-label={t('designFiles.rowMenu')} aria-haspopup="menu"
-                        aria-expanded={dockActions === tab.id}
-                        onClick={() => { const rect = dockMenuRef.current?.getBoundingClientRect(); if (rect) setDockActionPosition(dockFlyoutPosition(rect, window.innerWidth, 120)); clearPreview(); setDockActions(dockActions === tab.id ? null : tab.id); setDockActionError(''); }}>
-                        <RemixIcon name="more-2-line" size={16} />
-                      </button>
-                    ) : null}
-                    {dockActions === tab.id && tab.kind === 'project' ? createPortal(
-                      <div className="workspace-tabs-dropdown__actions" role="menu" style={{ position: 'fixed', left: dockActionPosition.left, top: dockActionPosition.top, right: 'auto', width: 120, zIndex: 1200 }}>
-                        {(['rename', 'export', 'delete'] as const).map((kind) => (
-                          <button key={kind} type="button" role="menuitem" className={kind === 'delete' ? 'is-danger' : undefined}
-                            onClick={() => { setProjectNameDraft(display.title); setDockActionError(''); setProjectAction({ kind, id: tab.projectId, title: display.title }); setDockMenuOpen(false); }}>
-                            <RemixIcon name={kind === 'rename' ? 'edit-line' : kind === 'export' ? 'download-line' : 'delete-bin-line'} size={14} />
-                            {t(kind === 'rename' ? 'common.rename' : kind === 'export' ? 'preview.exportMenu' : 'designs.menuDelete')}
-                          </button>
-                        ))}
-                      </div>, document.body,
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            {/* Preview of the hovered row, parked beside the menu — the chat
-                column is narrow and everything to its right is canvas, so the
-                panel has room there and never covers the list it describes.
-                Purely informational: it is `aria-hidden` and takes no pointer
-                events, so it can't sit between the pointer and a row. */}
-            {!dockActions && previewProject && previewCoverArt && previewAnchor
-              ? createPortal(
-              <div
-                className="workspace-tabs-dropdown__preview"
-                data-testid="workspace-tabs-dropdown-preview"
-                style={{ top: previewAnchor.top, left: previewAnchor.left }}
-                aria-hidden
+              <RemixIcon name="more-2-line" size={16} />
+            </Button>
+          ) : null}
+        </div>
+        {dockMenuOpen && activeTab.kind === 'project' ? createPortal(
+          <div
+            ref={dockMenuRef}
+            className={projectMenuStyles.menu}
+            role="menu"
+            aria-label={activeDisplay.title}
+            style={dockActionPosition}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                setDockMenuOpen(false);
+                dockTriggerRef.current?.focus();
+              } else if (event.key === 'Tab') {
+                setDockMenuOpen(false);
+                dockTriggerRef.current?.focus();
+              } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault();
+                const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+                const index = items.indexOf(document.activeElement as HTMLButtonElement);
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+                  : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+                items[next]?.focus();
+              }
+            }}
+          >
+            {(['rename', 'duplicate', 'share', 'delete'] as const).map((kind) => (
+              <Button
+                key={kind}
+                role="menuitem"
+                className={kind === 'delete' ? projectMenuStyles.danger : undefined}
+                disabled={projectActionBusy || (kind === 'duplicate' && !onDuplicateProject)}
+                onClick={async () => {
+                  if (kind === 'duplicate') {
+                    setProjectActionBusy(true);
+                    setDockActionError('');
+                    try { await onDuplicateProject?.(activeTab.projectId); setDockMenuOpen(false); }
+                    catch (error) { setDockActionError(String(error)); }
+                    finally { setProjectActionBusy(false); }
+                    return;
+                  }
+                  setProjectNameDraft(activeDisplay.title);
+                  setDockActionError('');
+                  setProjectAction({ kind, id: activeTab.projectId, title: activeDisplay.title });
+                  setDockMenuOpen(false);
+                }}
               >
-                <div
-                  className="workspace-tabs-dropdown__preview-art"
-                  style={previewCoverArt.style}
-                >
-                  <ProjectCoverMedia
-                    /* Keyed by project so switching rows remounts the cover
-                       instead of pointing a live frame at a new document —
-                       an <iframe> that swaps `src` keeps the old page painted
-                       until the next one loads. */
-                    key={previewProject.id}
-                    cover={previewCoverArt}
-                    project={previewProject}
-                    workspaceContext={workspaceContext}
-                    ungated
-                  />
-                </div>
-                <span className="workspace-tabs-dropdown__preview-name">
-                  {previewTitle}
-                </span>
-              </div>,
-              document.body,
-            )
-              : null}
-          </>
+                <RemixIcon name={kind === 'rename' ? 'edit-line' : kind === 'duplicate' ? 'file-copy-line' : kind === 'share' ? 'share-forward-line' : 'delete-bin-line'} size={14} />
+                {t(kind === 'rename' ? 'common.rename' : kind === 'duplicate' ? 'workspace.copyProject' : kind === 'share' ? 'workspace.shareToTeam' : 'designs.menuDelete')}
+              </Button>
+            ))}
+            {dockActionError ? <p role="alert">{dockActionError}</p> : null}
+          </div>, document.body,
         ) : null}
       </div>
     );
   })();
 
-  const homeControl = (tabsDockEl || settingsPageChrome) && state.tabs[0] ? (
+  const homeControl = tabsDockEl && state.tabs[0] ? (
     <button
       type="button"
       className="workspace-tabs-home-chrome od-tooltip"
@@ -1987,12 +1776,52 @@ export function WorkspaceTabsBar({
     </button>
   ) : null;
   const homeDock = tabsDockEl?.dataset.workspaceDock === 'chat' ? tabsDockEl : null;
+  const placeEntryRailActions = (node: ReactNode) =>
+    route.kind === 'home'
+    && route.view !== 'onboarding'
+    && entryRailActionsHost
+      ? createPortal(node, entryRailActionsHost)
+      : node;
 
   return (
     <header
       className={`app-chrome-header workspace-tabs-chrome${tabsDockEl ? ' is-docked' : ''}`}
       aria-label="Workspace tabs"
     >
+      {showMacWindowControls ? (
+        <div className="workspace-mac-window-controls" role="group" aria-label="Window controls">
+          <button
+            type="button"
+            className="workspace-mac-window-control is-close"
+            aria-label="Close window"
+            title="Close window"
+            data-testid="mac-window-close"
+            onClick={() => { void getOpenDesignHost()?.windowControls?.close(); }}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-mac-window-control is-minimize"
+            aria-label="Minimize window"
+            title="Minimize window"
+            data-testid="mac-window-minimize"
+            onClick={() => { void getOpenDesignHost()?.windowControls?.minimize(); }}
+          >
+            <span aria-hidden="true">−</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-mac-window-control is-fullscreen"
+            aria-label="Toggle fullscreen"
+            title="Toggle fullscreen"
+            data-testid="mac-window-fullscreen"
+            onClick={() => { void getOpenDesignHost()?.windowControls?.toggleFullScreen(); }}
+          >
+            <span aria-hidden="true">⤢</span>
+          </button>
+        </div>
+      ) : null}
       <div className="app-chrome-traffic-space workspace-tabs-traffic" aria-hidden />
       {/* Home shares the chat dock with the project switcher. Without that
           dock (settings / focused preview), it remains in the window chrome. */}
@@ -2148,19 +1977,15 @@ export function WorkspaceTabsBar({
             </div>
           );
         })}
-        {/* Search + the rail toggle, moved out of the rail and up into the
-            chrome row (per product). They are this row's only controls now —
-            the Home logo is gone from it (per product: 顶部去掉 home icon,
-            只有 chat 里才显示), so the toggle owns BOTH directions: it stays
-            rendered while the rail is collapsed, where the logo used to be the
-            expand control. Only the undocked (entry) chrome shows them, and
-            only on routes that actually mount EntryShell — in chat the strip
-            lives in the column dock and there is no entry rail to toggle, and
-            full-page settings replaces the rail outright (settingsPageChrome).
-            Both targets live in EntryShell's tree, so the clicks travel as
-            window events (see entryRailBridge). The classes are the rail's own,
-            so the controls keep their look. */}
-        {!tabsDockEl && !settingsPageChrome ? (
+        {/* Keep the controls in one persistent host while the rail animates.
+            CSS moves that host with the grid; reparenting would reset focus
+            and hover state on every toggle.
+            EntryShell owns both actions; the clicks travel as window events
+            (see entryRailBridge). */}
+        {/* Project routes own these controls in ProjectRecentRail, including
+            while ProjectView is unavailable and has no tabs dock to receive
+            this chrome. Do not draw a second pair in that fallback state. */}
+        {!tabsDockEl && route.kind !== 'project' && !settingsPageChrome && !communityPageChrome ? placeEntryRailActions(
           <div className="entry-nav-rail__search-row workspace-tabs-rail-actions">
             <button
               type="button"
@@ -2178,9 +2003,8 @@ export function WorkspaceTabsBar({
               onClick={() => {
                 const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
                 trackEntryNavigationClick(analytics.track, {
-                  // Same event the control fired from inside the rail; only
-                  // `entry_from` is dropped, since neither of its two values
-                  // (sidebar / workspace_switcher) describes the chrome row.
+                  // The same control can render above the rail or in chrome;
+                  // leave `entry_from` unset so the tracking stays consistent.
                   page_name:
                     activeTab?.kind === 'entry' ? entryViewToTracking(activeTab.view) : 'project',
                   area: 'entry_nav',
@@ -2212,12 +2036,7 @@ export function WorkspaceTabsBar({
             </button>
           </div>
         ) : null}
-        {/* #5517 drops the top-right "+"; new tab stays reachable through
-            ⌘/Ctrl+T. That "+" was the ONLY caller of openRadialMenu, so the
-            radial template menu below is now unreachable — its state and
-            markup stay, as the reference keeps them.
-
-            The tab-search button (and its popover) was removed per request
+        {/* The tab-search button (and its popover) was removed per request
             (2026-07-24); a tab scrolled out of view is reached by scrolling
             the strip or cycling with Ctrl+Tab / ⌘1-9. */}
       </div>
@@ -2226,7 +2045,7 @@ export function WorkspaceTabsBar({
       {projectAction ? createPortal(
         <Dialog className="modal-confirm" role={projectAction.kind === 'rename' ? 'dialog' : 'alertdialog'}
           ariaLabelledBy="project-action-title" closeOnEscape onClose={() => { if (!projectActionBusy) setProjectAction(null); }}>
-          <DialogTitle id="project-action-title">{t(projectAction.kind === 'rename' ? 'common.rename' : projectAction.kind === 'export' ? 'preview.exportMenu' : 'designs.menuDelete')}</DialogTitle>
+          <DialogTitle id="project-action-title">{t(projectAction.kind === 'rename' ? 'common.rename' : projectAction.kind === 'share' ? 'workspace.shareToTeam' : 'designs.menuDelete')}</DialogTitle>
           <DialogDescription>{projectAction.kind === 'delete' ? t('designs.deleteConfirm', { name: projectAction.title }) : projectAction.title}</DialogDescription>
           {projectAction.kind === 'rename' ? <input autoFocus aria-label={t('common.rename')} value={projectNameDraft} disabled={projectActionBusy} onChange={(event) => setProjectNameDraft(event.target.value)} /> : null}
           {dockActionError ? <p role="alert">{dockActionError}</p> : null}
@@ -2237,11 +2056,17 @@ export function WorkspaceTabsBar({
               try {
                 if (projectAction.kind === 'rename') await onRenameProject?.(projectAction.id, projectNameDraft.trim());
                 else if (projectAction.kind === 'delete') await onDeleteProject?.(projectAction.id);
-                else await exportProjectAsZip({ projectId: projectAction.id, filePath: '', fallbackHtml: '', fallbackTitle: projectAction.title, workspaceContext });
+                else {
+                  const files = await fetchProjectFiles(projectAction.id, { workspaceContext });
+                  const file = files.find((entry) => /\.html?$/i.test(entry.name));
+                  if (!file) throw new Error(t('workspace.noFilesMatch'));
+                  requestProjectShare(projectAction.id, file.name);
+                  navigate({ kind: 'project', projectId: projectAction.id, conversationId: null, fileName: file.name });
+                }
                 setProjectAction(null);
               } catch (error) { setDockActionError(String(error)); }
               finally { setProjectActionBusy(false); }
-            }}>{t('designs.renameSave')}</button>
+            }}>{t(projectAction.kind === 'share' ? 'workspace.shareToTeam' : 'designs.renameSave')}</button>
           </DialogFooter>
         </Dialog>, document.body,
       ) : null}
@@ -2308,34 +2133,6 @@ export function WorkspaceTabsBar({
         document.body,
       ) : null}
     </header>
-  );
-}
-
-/**
- * The glyph leading one dropdown row.
- *
- * A project row with something to report shows its run status; every other row
- * — nothing running, a status that draws nothing (not_started / canceled), a
- * status that has not arrived yet, or a non-project tab like the plugin
- * marketplace — leads with the row's own icon, the folder (per product: 空的
- *那个位置放文件夹 icon). The slot is therefore never empty, and the column
- * never has to decide whether to exist.
- *
- * Unknown is deliberately treated as "nothing to report" rather than guessed
- * at: a guess would flash the wrong status glyph on every open.
- */
-function leadGlyphFor(
-  tab: WorkspaceChromeTab,
-  display: DisplayTab,
-  runStatusByProjectId: ReadonlyMap<string, ProjectDisplayStatus>,
-  t: ReturnType<typeof useT>,
-): ReactNode {
-  const status = tab.kind === 'project' ? runStatusByProjectId.get(tab.projectId) : undefined;
-  if (!status || !hasRunStatusGlyph(status)) {
-    return <Icon name={display.icon} size={14} />;
-  }
-  return (
-    <ProjectRunStatusIcon status={status} size={14} label={t(STATUS_LABEL_KEYS[status])} />
   );
 }
 

@@ -9,8 +9,8 @@
 // The invariant this locks in: the action row lives OUTSIDE the scrolling
 // region, so no height clamp can ever scroll it out of the card.
 
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BoardComposerPopover } from '../../src/components/BoardComposerPopover';
 import type { PreviewCommentSnapshot } from '../../src/comments';
@@ -31,7 +31,7 @@ const target: PreviewCommentSnapshot = {
   selectionKind: 'element',
 };
 
-function renderPopover() {
+function renderPopover(images: { file: File; url: string }[] = [], onAttachImages: (files: File[]) => void = () => {}) {
   return render(
     <BoardComposerPopover
       target={target}
@@ -45,6 +45,8 @@ function renderPopover() {
       onSaveComment={() => {}}
       onSendBatch={() => {}}
       onRemoveMember={() => {}}
+      images={images}
+      onAttachImages={onAttachImages}
       sending={false}
       t={((key: string) => String(key)) as never}
       // A short stage: the card cannot fit below the anchor, so the host clamps
@@ -59,6 +61,27 @@ describe('BoardComposerPopover action row', () => {
     renderPopover();
     expect(screen.getByTestId('comment-add-send')).toBeTruthy();
     expect(screen.getByTestId('comment-popover-save')).toBeTruthy();
+    expect(screen.queryByTestId('comment-popover-style-summary')).toBeNull();
+    expect(screen.queryByTestId('comment-popover-view-all')).toBeNull();
+    expect(screen.getByTestId('comment-popover-input')).toBeTruthy();
+    expect(screen.getAllByRole('button').map(button => button.getAttribute('data-testid'))).toEqual([
+      null, 'comment-popover-save', 'comment-add-send',
+    ]);
+  });
+
+  it('adds a picker tile after attachments and passes newly selected images to the uploader', () => {
+    const onAttachImages = vi.fn();
+    const image = new File(['image'], 'reference.png', { type: 'image/png' });
+    renderPopover([{ file: image, url: 'blob:reference' }], onAttachImages);
+    const tile = screen.getByTestId('comment-popover-add-attachment');
+    expect(tile.parentElement?.lastElementChild).toBe(tile);
+    const input = screen.getByTestId('comment-popover').querySelector('input[type="file"]') as HTMLInputElement;
+    const click = vi.spyOn(input, 'click');
+    fireEvent.click(tile);
+    expect(click).toHaveBeenCalledOnce();
+    fireEvent.change(input, { target: { files: [image] } });
+    expect(onAttachImages).toHaveBeenCalledWith([image]);
+    click.mockRestore();
   });
 
   it('keeps the action row outside the scrolling body so a height clamp cannot hide it', () => {

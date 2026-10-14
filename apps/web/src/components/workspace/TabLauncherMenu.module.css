@@ -9,14 +9,9 @@
   max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
-  /* Frosted glass restored (dogfood 2026-07-28): the launcher goes back to
-     the glass material — the solid-panel swap from the popover-simplification
-     batch dropped the depth the rest of the floating chrome carries. */
-  background: var(--glass-regular);
-  -webkit-backdrop-filter: var(--glass-backdrop);
-  backdrop-filter: var(--glass-backdrop);
+  background: #fff;
   border: 1px solid var(--material-separator);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xxlarge);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   /* Enter animation per the workspace UI philosophy: ease-out, ~180ms. */
@@ -91,24 +86,21 @@
   border-color: var(--border-strong);
 }
 
-/* Ink pill with a bright-green label. Fixed values, not theme tokens: the
-   chip stays ink-dark in BOTH themes (that is the look, not a light-mode
-   accident), and the theme greens (--green) are tuned for light panels —
-   too dark to read on this ground. */
+/* Keep the selected chip dark with white text in both themes. */
 .chip.chipActive {
   background: #111;
   border-color: #111;
-  color: #87ea5c;
+  color: #fff;
 }
 
 /* Hover must not restyle the active chip: the global `button:hover` primitive
    (primitives.css) otherwise outranks .chipActive and flips the ink fill to
-   light gray under the green label. Pin the same values at higher
+   light gray under the white label. Pin the same values at higher
    specificity so the selected pill reads identically at rest and on hover. */
 .chip.chipActive:hover {
   background: #111;
   border-color: #111;
-  color: #87ea5c;
+  color: #fff;
 }
 
 .sectionHeader {

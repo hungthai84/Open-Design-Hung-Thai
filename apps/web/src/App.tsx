@@ -1,3 +1,4 @@
+import type { RailConversationModel } from './components/entry-nav-rail/RailConversationTree';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
@@ -62,6 +63,8 @@ import {
   WorkspaceTabsBar,
 } from './components/WorkspaceTabsBar';
 import { WorkspaceTopRightAccountCluster } from './components/EntryNavRail';
+import { ProjectRecentRail } from './components/ProjectRecentRail';
+import { PrimaryNavigationRail } from './components/PrimaryNavigationRail';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -855,6 +858,9 @@ export function App() {
 
 function AppInner() {
   const { t } = useI18n();
+  const [railConversations, setRailConversations] = useState<RailConversationModel | null>(null);
+  const [projectAccountHost, setProjectAccountHost] = useState<HTMLDivElement | null>(null);
+  const [projectControlsHost, setProjectControlsHost] = useState<HTMLDivElement | null>(null);
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const clientType = useMemo(() => detectClientType(), []);
   const hostPlatform = useMemo(() => getOpenDesignHost()?.client.platform, []);
@@ -1273,6 +1279,7 @@ function AppInner() {
   // can't overwrite the saved state with `''` before hydration lands.
   const [composioConfigLoading, setComposioConfigLoading] = useState(true);
   const route = useRoute();
+  const isSettingsPage = route.kind === 'home' && route.view === 'settings';
   const routeRef = useRef(route);
   routeRef.current = route;
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | null>(null);
@@ -5086,6 +5093,7 @@ function AppInner() {
     } else if (activeProject) {
       appMain = (
         <ProjectView
+          onRailConversationsChange={setRailConversations}
           key={projectViewAuthorizationLifetimeKey(
             activeProject.id,
             activeProjectWorkspaceContext,
@@ -5265,11 +5273,16 @@ function AppInner() {
   return (
     <>
       <div
-        className={`workspace-shell workspace-shell--${clientType}${route.kind === 'project' ? ' workspace-shell--project' : ''}`}
+        className={`workspace-shell workspace-shell--${clientType}${route.kind === 'project' ? ' workspace-shell--project' : ''}${isSettingsPage ? ' workspace-shell--settings' : ''}`}
         data-client-type={clientType}
         data-host-platform={hostPlatform}
       >
+        {clientType === 'desktop' && route.kind === 'project' ? (
+          <div className="workspace-window-drag-region" aria-hidden="true" />
+        ) : null}
         <WorkspaceTabsBar
+          showMacWindowControls={clientType === 'desktop' && hostPlatform === 'darwin'}
+          onDuplicateProject={handleDuplicateProject}
           onRenameProject={handleRenameProject}
           onDeleteProject={handleDeleteProject}
           route={route}
@@ -5294,23 +5307,52 @@ function AppInner() {
         {/* Project credits portal into the left chrome row. Home and the other
             entry views keep their fixed account cluster through EntryNavRail;
             the routes are mutually exclusive, so exactly one is on screen. */}
-        {route.kind === 'project' ? (
+        {route.kind === 'project' || isSettingsPage ? (
           <WorkspaceTopRightAccountCluster
+            page={isSettingsPage ? 'settings' : 'project'}
+            accountHost={projectAccountHost}
+            controlsHost={route.kind === 'project' ? projectControlsHost : null}
             onOpenSettings={openSettings}
             onSignedOut={handleActiveCloudSignOut}
             workspaceContextOverride={
-              activeProject?.workspaceId
+              route.kind === 'project' && activeProject?.workspaceId
                 ? activeProjectWorkspaceContext
                 : undefined
             }
             workspaceContextLoading={
-              activeProject?.workspaceId
+              route.kind === 'project' && activeProject?.workspaceId
                 ? projectRouteWorkspaceContext.loading
                 : undefined
             }
           />
         ) : null}
+        {route.kind === 'project' || isSettingsPage ? (
+          <PrimaryNavigationRail
+            view={null}
+            placement="overlay"
+            testIdPrefix="project-nav"
+            homeActive={!isSettingsPage}
+            hidePersonalProjects
+            settingsActive={isSettingsPage}
+            onOpenSettings={openSettings}
+            onHome={isSettingsPage ? () => navigate({ kind: 'home', view: 'home' }) : handleBack}
+            onViewChange={(view) => navigate({ kind: 'home', view })}
+            context={workspaceContext}
+            accountHostRef={setProjectAccountHost}
+          />
+        ) : null}
         <div className="workspace-shell__body">
+          {route.kind === 'project' ? (
+            <ProjectRecentRail
+              controlsHostRef={setProjectControlsHost}
+              conversationModel={railConversations?.projectId === route.projectId ? railConversations : null}
+              projects={projects}
+              context={workspaceContext}
+              onOpen={handleOpenProject}
+              onRename={handleRenameProject}
+              onDelete={handleDeleteProject}
+            />
+          ) : null}
           {appMain}
         </div>
       </div>

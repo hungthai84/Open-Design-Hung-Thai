@@ -1559,7 +1559,15 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             {titleParts ? (
               <>
                 {titleParts.lead}
-                <RotatingTitleWord words={titleRotatingWords} pinned={titlePinnedWord} />
+                <RotatingTitleWord
+                  words={titleRotatingWords}
+                  pinned={titlePinnedWord}
+                  colorByWord={{
+                    [homeHeroChipLabel('prototype', t)]: '#028BFD',
+                    [homeHeroChipLabel('deck', t)]: '#FB9942',
+                    [homeHeroChipLabel('document', t)]: '#4AC26B',
+                  }}
+                />
                 {titleParts.tail}
               </>
             ) : (
@@ -2689,23 +2697,13 @@ function PluginPromptPresets({
   // First-run guide: the first card carries the attention sheen.
   pulseFirstPreset?: boolean;
 }) {
-  // The list stays a list (per product, 2026-08-21) — no thumbnail grid — and
-  // the poster rides in the row itself, on the left. The cursor-following
-  // preview card that used to rise on hover is gone (per product: 去掉 hover
-  // 展示的弹窗): every row already shows its own still, and the floating copy
-  // covered the rows either side of the one being read. The eye badge that sat
-  // on the poster is gone the same way (per product: 去掉 hover 的眼睛图标) —
-  // it covered the very image the row exists to show. The poster is still the
-  // way into the full preview; its role, label and tooltip say so.
+  const masonry = chipId === 'image' || chipId === 'document';
   return (
     <div
       className="home-hero__prompt-examples home-hero__plugin-presets-wrap"
       data-testid="home-hero-plugin-presets"
     >
-      {/* Still a list, not a thumbnail grid — but each row leads with the
-          example's own poster, then its title on the first line and the prompt
-          it seeds on the second. */}
-      <div className="home-hero__plugin-presets" role="list">
+      <div className={`home-hero__plugin-presets${masonry ? ' home-hero__plugin-presets--masonry' : ''}`} role="list">
         {plugins.map((record, index) => (
           <PluginPromptPresetRow
             key={record.id}
@@ -2726,10 +2724,6 @@ function PluginPromptPresets({
   );
 }
 
-// One example per row: the template's own name on top — the same label the
-// composer's chip carries once the row is picked — and under it the very text
-// the composer would be seeded with (`examplePresetSeedPrompt`), so the row
-// both names the example and shows the prompt it applies.
 function PluginPromptPresetRow({
   active,
   chipId,
@@ -2758,10 +2752,46 @@ function PluginPromptPresetRow({
   const seedPrompt = examplePresetSeedPrompt(record, locale, () =>
     pluginPresetPromptPreview(record, locale, chipId),
   ).text;
+  const title = localizePluginTitle(locale, record).trim() || seedPrompt;
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [poster]);
+  if (chipId === 'image' || chipId === 'document') return (
+    <div className="home-hero__plugin-preset-card" role="listitem">
+      <button
+        type="button"
+        className={`home-hero__masonry-tile${active ? ' is-active' : ''}${pending ? ' is-pending' : ''}${pulse ? ' home-hero__attention-sheen' : ''}`}
+        data-testid="home-hero-plugin-preset"
+        data-plugin-id={record.id}
+        disabled={disabled}
+        aria-label={title}
+        aria-pressed={active}
+        aria-busy={pending}
+        onClick={() => onPick(record, chipId, seedPrompt)}
+      >
+        <span className="home-hero__masonry-thumb">
+          {poster && !imageFailed ? (
+            <img src={poster} alt="" draggable={false} loading="lazy" decoding="async" onError={() => setImageFailed(true)} />
+          ) : (
+            <span className="home-hero__plugin-preset-placeholder" aria-hidden="true">
+              <Icon name="image" size={24} />
+            </span>
+          )}
+        </span>
+      </button>
+      <button
+        type="button"
+        className="home-hero__plugin-preset-preview-action"
+        aria-label={`${t('common.preview')} ${title}`}
+        disabled={disabled}
+        onClick={onPreview}
+      >
+        <Icon name="external-link" size={16} />
+      </button>
+    </div>
+  );
   // Collapse the seed's own line breaks: the detail is a single line, and a
   // multi-paragraph seed would otherwise leave its tail invisible mid-clip.
   const line = seedPrompt.replace(/\s+/g, ' ').trim();
-  const title = localizePluginTitle(locale, record).trim() || line;
   return (
     <button
       type="button"

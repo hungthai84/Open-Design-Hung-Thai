@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectFile } from '../../src/types';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
 
@@ -164,11 +164,45 @@ function openVersionDownloadMenu(versionDialog: HTMLElement, version = 1) {
 }
 
 describe('FileViewer version download actions', () => {
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(),
+    })));
+  });
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
     isOpenDesignHostAvailableMock.mockReturnValue(false);
     vi.unstubAllGlobals();
+  });
+
+  it('follows the history trigger when the toolbar moves without a window resize', async () => {
+    const { file } = setupVersionFetch();
+    const panel = await renderVersionDialog(file, 'current');
+    const trigger = screen.getByRole('button', { name: 'Versions' });
+    let right = 700;
+    let bottom = 48;
+    const triggerRect = vi.spyOn(trigger, 'getBoundingClientRect').mockImplementation(() =>
+      ({ right, bottom, left: right - 28, top: bottom - 28, width: 28, height: 28 } as DOMRect));
+    const panelRect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 390 } as DOMRect);
+    try {
+      await waitFor(() => {
+        expect(panel.style.left).toBe('310px');
+        expect(panel.style.top).toBe('56px');
+      });
+      right = 500;
+      bottom = 60;
+      await waitFor(() => {
+        expect(panel.style.left).toBe('110px');
+        expect(panel.style.top).toBe('68px');
+      });
+      right = 200;
+      await waitFor(() => expect(panel.style.left).toBe('12px'));
+    } finally {
+      triggerRect.mockRestore();
+      panelRect.mockRestore();
+    }
   });
 
   it('routes current version PDFs through the main download PDF exporter', async () => {

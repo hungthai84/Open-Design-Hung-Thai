@@ -145,6 +145,7 @@ describe('BoardComposerPopover captured-component removal', () => {
     const onSaveComment = vi.fn();
     const { rerender } = render(
       <BoardComposerPopover
+        docked
         target={elementTarget()}
         existing={existingComment('区域放大')}
         draft="区域放大"
@@ -170,6 +171,7 @@ describe('BoardComposerPopover captured-component removal', () => {
 
     rerender(
       <BoardComposerPopover
+        docked
         target={elementTarget()}
         existing={existingComment('区域放大')}
         draft="区域放大一些"

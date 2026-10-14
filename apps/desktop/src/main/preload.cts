@@ -244,6 +244,17 @@ const capture = {
   },
 };
 
+function invokeWindowControl(action: 'close' | 'minimize' | 'toggle-full-screen'): Promise<OpenDesignHostActionResult> {
+  return ipcRenderer.invoke('od:window-control', action)
+    .catch((error: unknown) => actionFailure(reasonFromError(error)));
+}
+
+const windowControls = {
+  close: (): Promise<OpenDesignHostActionResult> => invokeWindowControl('close'),
+  minimize: (): Promise<OpenDesignHostActionResult> => invokeWindowControl('minimize'),
+  toggleFullScreen: (): Promise<OpenDesignHostActionResult> => invokeWindowControl('toggle-full-screen'),
+};
+
 function invokeUpdater(
   action: 'check' | 'clear-cache' | 'download' | 'install' | 'status',
   options?: OpenDesignHostUpdaterActionOptions,
@@ -319,6 +330,7 @@ const hostBridge = {
   shell,
   browser,
   capture,
+  windowControls,
   project,
   pdf: {
     print: async (html: string, nonce?: string, options?: PrintPdfOptions): Promise<OpenDesignHostActionResult> => {

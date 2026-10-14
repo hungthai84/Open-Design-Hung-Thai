@@ -366,6 +366,12 @@ export type OpenDesignHostBridge = {
   appearance?: {
     setTheme(theme: OpenDesignHostAppearanceTheme): void;
   };
+  // The desktop shell owns window operations; web-only clients omit this.
+  windowControls?: {
+    close(): Promise<OpenDesignHostActionResult>;
+    minimize(): Promise<OpenDesignHostActionResult>;
+    toggleFullScreen(): Promise<OpenDesignHostActionResult>;
+  };
   browser: {
     clearData(options?: OpenDesignHostBrowserClearDataOptions): Promise<OpenDesignHostActionResult>;
   };

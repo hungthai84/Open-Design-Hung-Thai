@@ -1,9 +1,18 @@
 import type { ComponentProps } from 'react';
 import { ChatPane as LegacyChatPane } from '../ChatPane';
 import { ChatPane as MainChatPane } from './upstream/ChatPane';
+import type { ConversationPlacement } from './WorkspaceComposerHeader';
 import { toHostMessage } from './upstream/types';
 
-type Props = ComponentProps<typeof LegacyChatPane> & { historyPortalTarget?: HTMLElement | null };
+type Props = ComponentProps<typeof LegacyChatPane> & {
+  historyPortalTarget?: HTMLElement | null;
+  hideProjectHeader?: boolean;
+  workspaceComposerDocked?: boolean;
+  workspaceConversationExpanded?: boolean;
+  onWorkspaceConversationExpandedChange?: (expanded: boolean) => void;
+  onExpandConversation?: () => void;
+  onConversationPlacementChange?: (placement: ConversationPlacement) => void;
+};
 
 /** Latest-main chat UI, adapted to this checkout's existing project controller. */
 export function ChatPane(props: Props) {

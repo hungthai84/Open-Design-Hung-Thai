@@ -12,7 +12,7 @@ import {
   ProjectSearchModal,
 } from '../../src/components/ProjectSearchModal';
 import { I18nProvider } from '../../src/i18n';
-import type { Project } from '../../src/types';
+import type { Conversation, Project } from '../../src/types';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 
 afterEach(() => cleanup());
@@ -84,6 +84,29 @@ describe('ProjectSearchModal keyboard navigation', () => {
     });
 
     expect(screen.getByTestId('project-search-item-personal-white-shoes')).toBeTruthy();
+  });
+
+  it('finds a current-project conversation and opens it from the search palette', () => {
+    const onOpenConversation = vi.fn();
+    const onClose = vi.fn();
+    const conversation = { id: 'conversation-1', title: 'Planning notes', createdAt: 1_000 } as Conversation;
+    render(
+      <I18nProvider>
+        <ProjectSearchModal
+          projects={[project('project-1', 'Current project', 1_000)]}
+          conversations={[conversation]}
+          currentConversationProjectId="project-1"
+          onOpenConversation={onOpenConversation}
+          onOpenProject={vi.fn()}
+          onClose={onClose}
+        />
+      </I18nProvider>,
+    );
+    const input = screen.getByTestId('project-search-input');
+    fireEvent.change(input, { target: { value: 'Planning' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onOpenConversation).toHaveBeenCalledWith('conversation-1');
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('uses the shared catalog card when the same project appears twice', () => {

@@ -16,13 +16,8 @@ import styles from './RotatingTitleWord.module.css';
  * behind the word, the ink is a gradient, a bar cursor blinks beside it, and
  * the hue advances one step per word once the outgoing one has left.
  *
- * ONE deviation from the port (per product): the six-hue rotation is gone. The
- * word takes the headline's own ink like the words either side of it, and the
- * only colour left is #00FF08 — the plate fades out from it and the caret is
- * it. With the ink no longer a gradient and every hue collapsed to that one
- * value, the palette array and the hue-advance step it fed had nothing left to
- * vary, so both were removed rather than left rotating between six copies of
- * the same colour.
+ * The reveal plate and caret use the corresponding composer type's colour.
+ * The word itself inherits the headline's text colour.
  */
 const ACCENT = '#00FF08';
 /* Its own knob even though it currently resolves to the accent: the plate has
@@ -38,8 +33,10 @@ const INTERVAL_MS = 10000;
 export function RotatingTitleWord({
   words,
   pinned,
+  colorByWord,
 }: {
   words: string[];
+  colorByWord?: Record<string, string>;
   /**
    * The type the composer is currently set to, localized (「文档」/「幻灯片」/…).
    * When present the headline stops rotating and names THAT type instead: the
@@ -68,8 +65,8 @@ export function RotatingTitleWord({
   // the same wipe a rotation uses rather than snapping the headline.
   const word = pinned || words[index] || words[0] || '';
   const hueStyle = {
-    '--rotating-title-plate': PLATE,
-    '--rotating-title-cursor': ACCENT,
+    '--rotating-title-plate': colorByWord?.[word] ?? PLATE,
+    '--rotating-title-cursor': colorByWord?.[word] ?? ACCENT,
   } as CSSProperties;
 
   return (

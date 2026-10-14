@@ -10,12 +10,20 @@
 }
 
 .anchor .presentationGroup {
+  --canvas-dock-gap: 0px;
+  --canvas-dock-control: transparent;
+  --canvas-dock-control-hover: transparent;
   gap: var(--canvas-dock-gap);
+  margin-inline-start: 8px;
 }
 
 .anchor .presentationGroup > :global(.viewer-tab) {
-  width: 32px;
-  min-width: 32px;
+  background: transparent;
+  box-shadow: none;
+  width: 24px;
+  min-width: 24px;
+  height: 32px;
+  border-radius: 50%;
   padding-inline: 0;
 }
 
@@ -40,10 +48,10 @@
   flex-direction: column;
   align-items: stretch;
   width: max-content;
-  gap: var(--spacing-8, 8px);
+  gap: 0;
   padding: 6px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg, 16px);
+  border-radius: 16px;
   background: var(--bg-elevated);
   color: var(--text-strong);
   box-shadow: var(--shadow-md);
@@ -75,7 +83,7 @@
   gap: var(--spacing-8, 8px);
   width: 100%;
   padding: 0 12px;
-  border-radius: var(--radius-sm);
+  border-radius: 12px;
   white-space: nowrap;
   color: var(--text-strong);
   background: transparent;

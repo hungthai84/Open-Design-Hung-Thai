@@ -163,8 +163,9 @@ describe('BoardComposerPopover keyboard submit', () => {
     expect(Number.parseInt(popover.style.maxHeight, 10)).toBeLessThanOrEqual(252);
   });
 
-  it('drags the composer and clamps it inside the preview bounds', () => {
+  it('drags the pod composer and clamps it inside the preview bounds', () => {
     renderPopover({
+      selectionKind: 'pod',
       targetOverride: {
         hoverPoint: { x: 120, y: 120 },
         position: { x: 110, y: 110, width: 80, height: 40 },

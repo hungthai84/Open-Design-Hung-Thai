@@ -38,11 +38,8 @@
   opacity: 0.5;
 }
 
-/* The word reads in the headline's own colour (per product: 和前边的「我们来设计
-   点」一致), so `inherit` rather than a fill of its own — the plate behind it is
-   what carries the accent. The gradient clipped to the glyphs this started as
-   is long gone. The trailing padding stays: it keeps the last glyph's overhang
-   clear of the reveal's `overflow: hidden` edge. */
+/* The word inherits the title ink; the plate carries the type colour.
+   Padding keeps the final glyph clear of the animated clipping edge. */
 .ink {
   position: relative;
   display: inline-block;

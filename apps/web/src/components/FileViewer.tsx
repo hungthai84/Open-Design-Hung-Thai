@@ -1,4 +1,5 @@
 import { ExportFilenameField } from './ExportFilenameField';
+import { CanvasDockIndicator } from './CanvasDockIndicator';
 import { WorkspaceAccountDock } from './workspace/WorkspaceAccountDock';
 import presentationToolsStyles from './FileViewerPresentationTools.module.css';
 import commentsStyles from './FileViewerComments.module.css';
@@ -3306,6 +3307,7 @@ function FileVersionManagerModal({
   file,
   currentSource,
   entryFrom,
+  anchorRef,
   onExportPdf,
   onOpenImageExport,
   onExportZip,
@@ -3321,6 +3323,7 @@ function FileVersionManagerModal({
   file: ProjectFile;
   currentSource: string | null;
   entryFrom: 'toolbar' | 'more_menu';
+  anchorRef: { current: HTMLElement | null };
   onExportPdf?: (context: HtmlVersionExportContext) => void;
   onOpenImageExport?: (context: HtmlVersionExportContext) => Promise<void> | void;
   onExportZip?: (context: HtmlVersionExportContext) => void;
@@ -3336,6 +3339,35 @@ function FileVersionManagerModal({
   const analytics = useAnalytics();
   const { workspaceContext } = useProjectCollabContext();
   const tRef = useRef(t);
+  const panelRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    let frame = 0;
+    let lastPosition = '';
+    // The toolbar can move without a window resize (editor/chat sidebar or
+    // split-pane dragging). Measure while open so the portal follows it too.
+    const positionPanel = () => {
+      const anchor = anchorRef.current;
+      const panel = panelRef.current;
+      if (anchor && panel) {
+        const rect = anchor.getBoundingClientRect();
+        const width = panel.getBoundingClientRect().width;
+        const top = Math.min(rect.bottom + 8, window.innerHeight - 24);
+        const left = Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
+        const availableHeight = Math.max(0, window.innerHeight - top - 12);
+        const position = `${top},${left},${availableHeight}`;
+        if (position !== lastPosition) {
+          lastPosition = position;
+          panel.style.top = `${top}px`;
+          panel.style.left = `${left}px`;
+          panel.style.right = 'auto';
+          panel.style.maxHeight = `min(76vh, 720px, ${availableHeight}px)`;
+        }
+      }
+      frame = requestAnimationFrame(positionPanel);
+    };
+    positionPanel();
+    return () => cancelAnimationFrame(frame);
+  }, [anchorRef]);
   const [versions, setVersions] = useState<ProjectFileVersion[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedContent, setSelectedContent] = useState<string | null>(currentSource);
@@ -3888,6 +3920,7 @@ function FileVersionManagerModal({
   return createPortal(
     <>
       <aside
+        ref={panelRef}
         className="artifact-version-panel"
         role="dialog"
         aria-label={t('fileViewer.versions.title')}
@@ -4465,10 +4498,10 @@ export function CommentSidePanel({
   const canCreateComment = Boolean(onCreateComment) && newCommentDraft.trim().length > 0 && !sending;
   const canReorder = Boolean(onReorder && sorted.length > 1);
   const collapsedRailRef = useRef<HTMLButtonElement | null>(null);
-  const expandedToggleRef = useRef<HTMLButtonElement | null>(null);
+  const expandedPanelRef = useRef<HTMLElement | null>(null);
   const pendingToggleFocusRef = useRef<'collapsed' | 'expanded' | null>(null);
   const panelId = useId();
-  const handleDragStart = (event: ReactDragEvent<HTMLButtonElement>, comment: PreviewComment) => {
+  const handleDragStart = (event: ReactDragEvent<HTMLDivElement>, comment: PreviewComment) => {
     if (!canReorder) return;
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData(COMMENT_SIDE_DRAG_MIME, comment.id);
@@ -4527,7 +4560,7 @@ export function CommentSidePanel({
       pendingToggleFocusRef.current === 'collapsed'
         ? collapsedRailRef.current
         : pendingToggleFocusRef.current === 'expanded'
-          ? expandedToggleRef.current
+          ? expandedPanelRef.current
           : null;
     if (!target) return;
     pendingToggleFocusRef.current = null;
@@ -4564,6 +4597,8 @@ export function CommentSidePanel({
   return (
     <aside
       id={panelId}
+      ref={expandedPanelRef}
+      tabIndex={-1}
       className="comment-side-panel"
       data-testid="comment-side-panel"
       aria-label={commentsLabel}
@@ -4574,34 +4609,6 @@ export function CommentSidePanel({
         onDismiss();
       }}
     >
-      <div className="comment-side-header">
-        <div className="comment-side-title">
-          <RemixIcon name="message-3-line" size={15} />
-          <span>{commentsLabel}</span>
-        </div>
-        <div className="comment-side-header-actions">
-          {/* The header's right slot owns collapse; select all moved below
-              the divider. */}
-          <button
-            ref={expandedToggleRef}
-            type="button"
-            className="comment-side-collapse"
-            aria-label={t('preview.hideSidebar', { label: commentsLabel })}
-            aria-controls={panelId}
-            aria-expanded={true}
-            title={t('preview.hideSidebar', { label: commentsLabel })}
-            onClick={() => {
-              if (onDismiss) {
-                onDismiss();
-                return;
-              }
-              handleCollapsedChange(true, 'collapsed');
-            }}
-          >
-            <Icon name="chevron-right" size={14} />
-          </button>
-        </div>
-      </div>
       {sendableCount > 0 ? (
         <div className="comment-side-toolbar">
           <button
@@ -4610,7 +4617,7 @@ export function CommentSidePanel({
             disabled={allSelected}
             onClick={onSelectAll}
           >
-            {t('chat.comments.selectAll')}
+            {t('chat.comments.selectAll')} ({comments.length})
           </button>
         </div>
       ) : null}
@@ -4655,20 +4662,13 @@ export function CommentSidePanel({
                 onReply(comment);
               }}
             >
-              <div className="comment-side-item-head">
-                <button
-                  type="button"
-                  className="comment-side-drag-handle"
-                  title={t('chat.queuedReorder')}
-                  aria-label={t('chat.queuedReorder')}
-                  draggable={canReorder}
-                  disabled={!canReorder}
-                  onClick={(event) => event.stopPropagation()}
-                  onDragStart={(event) => handleDragStart(event, comment)}
-                  onDragEnd={() => setDragState(null)}
-                >
-                  <Icon name="grip-vertical" size={13} />
-                </button>
+              <div
+                className="comment-side-item-head"
+                draggable={canReorder}
+                aria-label={canReorder ? t('chat.queuedReorder') : undefined}
+                onDragStart={(event) => handleDragStart(event, comment)}
+                onDragEnd={() => setDragState(null)}
+              >
                 <span className="comment-side-author">
                   {author ? (
                     <span
@@ -5762,6 +5762,13 @@ function CommentPreviewOverlays({
             anchorState: PreviewCommentAnchorState;
           } => Boolean(item.snapshot),
         )
+        .map((item) => {
+          const offset = item.comment.position.pinOffset;
+          return offset ? { ...item, snapshot: { ...item.snapshot, hoverPoint: {
+            x: item.snapshot.position.x + offset.x,
+            y: item.snapshot.position.y + offset.y,
+          } } } : item;
+        })
         .filter(({ comment }) => commentVisibleOnDeckSlide(comment, activeSlideIndex)),
     [comments, liveTargets, activeSlideIndex, driftLadder, currentVersion],
   );
@@ -5818,6 +5825,10 @@ function CommentPreviewOverlays({
             <button
               type="button"
               className="comment-saved-pin"
+              style={snapshot.hoverPoint ? {
+                left: (snapshot.hoverPoint.x - snapshot.position.x) * scale,
+                top: (snapshot.hoverPoint.y - snapshot.position.y) * scale,
+              } : undefined}
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenCommentRef.current(comment, snapshot);
@@ -6921,15 +6932,11 @@ function ReactComponentViewer({
                             menuitem — see the HtmlViewer copy for why. */}
                         <div className="share-menu-section-label share-menu-section-label--help" role="presentation">
                           <span>{t('fileViewer.shareMenuPublishViaOd')}</span>
-                          <button
-                            type="button"
-                            className="share-menu-help od-tooltip"
-                            data-testid="publish-help"
+                          <button type="button" className="share-menu-help od-tooltip"
                             aria-label={t('fileViewer.publishSingleFileDescription')}
                             data-tooltip={t('fileViewer.publishSingleFileDescription')}
                             data-tooltip-placement="bottom"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                            onClick={(event) => event.stopPropagation()}>
                             <RemixIcon name="question-line" size={14} />
                           </button>
                         </div>
@@ -7792,6 +7799,7 @@ function HtmlViewer({
   const toolbarMoreRef = useRef<HTMLDivElement | null>(null);
   const toolbarMoreTriggerRef = useRef<HTMLButtonElement | null>(null);
   useDismissOnOutsideInteraction(toolbarMoreOpen, toolbarMoreRef, () => setToolbarMoreOpen(false));
+  const versionTriggerRef = useRef<HTMLButtonElement>(null);
   const [versionModalOpen, setVersionModalOpen] = useState<false | 'toolbar' | 'more_menu'>(false);
   const [exportReadyNudge, setExportReadyNudge] = useState(false);
   const exportReadyNudgeSeenRef = useRef<Set<string>>(new Set());
@@ -11817,7 +11825,10 @@ function HtmlViewer({
 
   async function selectManualEditTarget(target: ManualEditTarget) {
     if (selectedManualEditTarget?.id === target.id) return;
-    if (!(await saveManualEditPanelDraft(false))) return;
+    // The first selection has no outgoing draft. Select it synchronously so
+    // its following inline-text session cannot be mistaken for an old edit.
+    if ((selectedManualEditTarget || manualEditContentDraftRef.current || manualEditPendingStyleRef.current)
+      && !(await saveManualEditPanelDraft(false))) return;
     setManualEditPageStylesOpen(false);
     const base = sourceRef.current ?? '';
     const nextDraft = manualEditDraftForTarget(target, base);
@@ -14554,11 +14565,11 @@ function HtmlViewer({
       }}
       onSaveDraft={() => {
         void (async () => {
-          if (!(await saveManualEditPanelDraft(false))) return;
+          if (!(await saveManualEditPanelDraft(manualEditDocked))) return;
           setManualEditHistory([]);
           setManualEditUndone([]);
           setManualEditDraftDirty(false);
-          if (selectedManualEditTarget) {
+          if (!manualEditDocked && selectedManualEditTarget) {
             manualEditSelectionDraftRef.current = {
               id: selectedManualEditTarget.id,
               draft: manualEditDraftForTarget(selectedManualEditTarget, sourceRef.current ?? ''),
@@ -14908,7 +14919,7 @@ function HtmlViewer({
       sendDisabled={commentSendDisabled || viewerOnly}
       sendDisabledReason={viewerOnly ? viewerOnlyDisabledTitle : undefined}
       allowSendToChat={!viewerOnly}
-      renderCreateForm={!commentPortalHost}
+      renderCreateForm={false}
       t={t}
       composer={null}
     />
@@ -15313,6 +15324,7 @@ function HtmlViewer({
           {versioningAvailable && (rawCanShare || rawCanDownload) ? (
             <button
               type="button"
+              ref={versionTriggerRef}
               data-od-version-entry="true"
               className={`chrome-action chrome-action-secondary chrome-action-icon od-tooltip${versionModalOpen ? ' is-active' : ''}`}
               // Same disabled contract as the Share button directly below:
@@ -15390,7 +15402,7 @@ function HtmlViewer({
                     title={viewerOnly ? viewerOnlyDisabledTitle : shareMenuLabel}
                     onClick={openShareMenu}
                   >
-                    <RemixIcon name="share-forward-line" size={14} />
+                    <RemixIcon name="share-line" size={14} />
                   </button>
                 ) : null}
                 {deployMenuOpen && (rawCanShare || rawCanDownload) ? ((menu: ReactNode) =>
@@ -15495,15 +15507,11 @@ function HtmlViewer({
                           structure as the workspace-access help above. */}
                       <div className="share-menu-section-label share-menu-section-label--help" role="presentation">
                         <span>{t('fileViewer.shareMenuPublishViaOd')}</span>
-                        <button
-                          type="button"
-                          className="share-menu-help od-tooltip"
-                          data-testid="publish-help"
+                        <button type="button" className="share-menu-help od-tooltip"
                           aria-label={t('fileViewer.publishSingleFileDescription')}
                           data-tooltip={t('fileViewer.publishSingleFileDescription')}
                           data-tooltip-placement="bottom"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                          onClick={(event) => event.stopPropagation()}>
                           <RemixIcon name="question-line" size={14} />
                         </button>
                       </div>
@@ -15661,9 +15669,6 @@ function HtmlViewer({
                         </div>
                       ) : null}
                       <div className="share-menu-divider" />
-                      <div className="share-menu-section-label" role="presentation">
-                        {t('fileViewer.shareMenuSave')}
-                      </div>
                       <button
                         type="button"
                         className="share-menu-item"
@@ -15762,7 +15767,6 @@ function HtmlViewer({
                         <span>{t('fileViewer.exportHtml')}</span>
                       </button>
                       <div className="share-menu-divider" />
-                      <div className="share-menu-section-label" role="presentation">{t('fileViewer.shareMenuSave')}</div>
                       <button type="button" className="share-menu-item" role="menuitem" disabled={savingTemplate}
                         onClick={() => openSaveAsTemplateModal()}>
                         <span className="share-menu-icon"><RemixIcon name="file-copy-line" size={15} /></span>
@@ -15811,6 +15815,12 @@ function HtmlViewer({
         <div className="canvas-dock" data-testid="canvas-dock" ref={canvasDockRef}>
           <div className={presentationToolsStyles.anchor}>
           <div className="canvas-dock-inner">
+            <CanvasDockIndicator target={presentMenuOpen ? 'canvas-dock-present-toggle'
+              : zoomMenuOpen ? 'canvas-dock-zoom-toggle'
+              : manualEditMode ? 'manual-edit-mode-toggle'
+              : drawOverlayOpen ? 'draw-overlay-toggle'
+              : boardMode && commentCreateMode ? 'comment-panel-toggle'
+              : boardMode && boardTool === 'inspect' ? 'board-mode-toggle' : null} />
             <div className="canvas-dock-tools">
               {/* Keep the tools visible while presentation options open.
                   The zoom popover stays outside the clipping track. */}
@@ -15822,6 +15832,7 @@ function HtmlViewer({
                   <button
                     type="button"
                     className="viewer-action viewer-action-icon zoom-trigger od-tooltip"
+                    data-testid="canvas-dock-zoom-toggle"
                     aria-label={previewZoomText}
                     aria-haspopup="menu"
                     aria-expanded={zoomMenuOpen}
@@ -15833,7 +15844,7 @@ function HtmlViewer({
                       setZoomMenuOpen((v) => !v);
                     }}
                   >
-                    <RemixIcon name="fullscreen-line" size={15} />
+                    <RemixIcon name="fullscreen-line" size={18} />
                   </button>
                   {zoomMenuOpen ? (
                     <div className="zoom-menu-popover" role="menu">
@@ -15874,7 +15885,7 @@ function HtmlViewer({
                   disabled={viewerOnly}
                   onClick={() => void handleScreenshotToChat()}
                 >
-                  <RemixIcon name="camera-line" size={15} />
+                  <RemixIcon name="camera-line" size={18} />
                 </button>
               ) : null}
               <div className="artifact-tool-menu-anchor">
@@ -15889,7 +15900,7 @@ function HtmlViewer({
                   aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
                   onClick={activateCommentTool}
                 >
-                  <RemixIcon name="chat-new-line" size={15} />
+                  <RemixIcon name="chat-new-line" size={18} />
                 </button>
               </div>
               <button
@@ -15904,7 +15915,7 @@ function HtmlViewer({
                 aria-pressed={drawOverlayOpen}
                 onClick={activateDrawTool}
               >
-                <RemixIcon name="mark-pen-line" size={15} />
+                <RemixIcon name="mark-pen-line" size={18} />
               </button>
               <span className="viewer-toolbar-tool-divider" aria-hidden />
               <button
@@ -15919,7 +15930,7 @@ function HtmlViewer({
                 aria-pressed={boardMode && commentCreateMode}
                 onClick={(event) => activateCommentCreateTool(event.currentTarget)}
               >
-                <RemixIcon name="message-3-line" size={15} />
+                <RemixIcon name="message-3-line" size={18} />
                 <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
               </button>
                 </div>
@@ -15978,7 +15989,7 @@ function HtmlViewer({
                 disabled={canvasDockSwitchPending}
                 onClick={() => { void toggleCanvasPresentationTools(); }}
               >
-                <RemixIcon name="arrow-drop-down-line" size={24} />
+                <RemixIcon name="arrow-drop-down-line" size={18} />
               </Button>
             </div>
           </div>
@@ -16599,6 +16610,7 @@ function HtmlViewer({
           file={file}
           currentSource={source}
           entryFrom={versionModalOpen}
+          anchorRef={versionModalOpen === 'toolbar' ? versionTriggerRef : toolbarMoreTriggerRef}
           onExportPdf={triggerPdfExport}
           onOpenImageExport={openImageExportModal}
           onExportZip={triggerZipExport}

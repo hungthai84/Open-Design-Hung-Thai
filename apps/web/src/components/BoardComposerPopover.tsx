@@ -8,6 +8,7 @@ import type { PreviewComment, PreviewCommentMember } from '../types';
 import { isImeComposing } from '../utils/imeComposing';
 
 import { Icon } from './Icon';
+import css from './BoardComposerPopover.module.css';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -500,6 +501,27 @@ export function BoardComposerPopover({
   docked?: boolean;
   commenting?: boolean;
 }) {
+  const simpleComposer = !docked && allowSendToChat && target.selectionKind !== 'pod';
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => {
+    const input = composerInputRef.current;
+    if (!simpleComposer || !commenting || !input) return;
+    const fitContent = () => {
+      input.style.height = 'auto';
+      input.style.height = `${input.scrollHeight}px`;
+    };
+    fitContent();
+    if (typeof ResizeObserver === 'undefined') return;
+    let width = input.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      fitContent();
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [draft, simpleComposer, commenting]);
+
   const pendingCount = notes.length + (draft.trim() ? 1 : 0);
   const podMembers = target.podMembers ?? [];
   const composingRef = useRef(false);
@@ -644,10 +666,31 @@ export function BoardComposerPopover({
     e.preventDefault();
     onAttachImages?.(imgs);
   }
+  const attachmentControl = onAttachImages && canEditComment ? (
+    <>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: 'none' }}
+        onChange={onImageInputChange}
+      />
+      <button
+        type="button"
+        className="comment-popover-close"
+        onClick={() => imageInputRef.current?.click()}
+        title={t('chat.annotationAttachImage')}
+        aria-label={t('chat.annotationAttachImage')}
+      >
+        <Icon name="attach" size={14} />
+      </button>
+    </>
+  ) : null;
   return (
     <div
       ref={popoverRef}
-      className={`comment-popover comment-popover-composer${docked ? ' comment-popover-docked' : ''}${dragging ? ' comment-popover-dragging' : ''}`}
+      className={`comment-popover comment-popover-composer${simpleComposer ? ` ${css.compact}` : ''}${docked ? ' comment-popover-docked' : ''}${dragging ? ' comment-popover-dragging' : ''}`}
       data-testid="comment-popover"
       role="dialog"
       aria-modal="false"
@@ -660,7 +703,7 @@ export function BoardComposerPopover({
         }
       }}
     >
-      {!docked ? (
+      {!docked && !simpleComposer ? (
         <div className="comment-popover-titlebar">
           <button
             type="button"
@@ -691,9 +734,11 @@ export function BoardComposerPopover({
           outside this box (see below) so a height-clamped card can never push
           the buttons out of view. */}
       <div className="comment-popover-body">
-        <section className="comment-popover-section comment-popover-section-params">
-          <AnnotationStyleSummary target={target} testId="comment-popover-style-summary" />
-        </section>
+        {!simpleComposer ? (
+          <section className="comment-popover-section comment-popover-section-params">
+            <AnnotationStyleSummary target={target} testId="comment-popover-style-summary" />
+          </section>
+        ) : null}
         {podMembers.length > 0 ? (
           <div className="board-pod-summary">
             <strong>{t('chat.comments.capturedItems', { n: target.memberCount || podMembers.length })}</strong>
@@ -730,7 +775,7 @@ export function BoardComposerPopover({
         ) : null}
         {commenting ? (
           <section className="comment-popover-section comment-popover-section-compose">
-            {notes.length > 0 ? (
+            {!simpleComposer && notes.length > 0 ? (
               <div className="board-note-list">
                 {notes.map((note, index) => (
                   <div key={`${target.elementId}-${index}`} className="board-note-item">
@@ -780,72 +825,70 @@ export function BoardComposerPopover({
                     </button>
                   </div>
                 ))}
+                {onAttachImages && canEditComment ? (
+                  <Button
+                    variant="ghost"
+                    className={css.addAttachment}
+                    data-testid="comment-popover-add-attachment"
+                    aria-label={t('chat.annotationAttachImage')}
+                    title={t('chat.annotationAttachImage')}
+                    onClick={() => imageInputRef.current?.click()}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+                      <path d="M11 11V5H13V11H19V13H13V19H11V13H5V11H11Z" />
+                    </svg>
+                  </Button>
+                ) : null}
               </div>
             ) : null}
-            <Textarea
-              data-testid="comment-popover-input"
-              className={!canEditComment ? 'composer-note--readonly' : undefined}
-              value={draft}
-              autoFocus={canEditComment}
-              readOnly={!canEditComment}
-              aria-label={t('chat.comments.placeholder')}
-              placeholder={t('chat.comments.placeholder')}
-              onChange={(event) => onDraft(event.target.value)}
-              onPaste={onComposerPaste}
-              onCompositionStart={() => {
-                composingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                composingRef.current = false;
-              }}
-              onKeyDown={(event) => {
-                if (isImeComposing(event, composingRef.current)) return;
-                if (
-                  event.key === 'Enter' &&
-                  !event.shiftKey &&
-                  !event.altKey
-                ) {
-                  event.preventDefault();
-                  // Enter triggers the primary CTA: comment (save) for element
-                  // selections, send-to-chat for pod selections. Respect the same
-                  // permission gates as the visible buttons so Enter can't perform
-                  // an action whose button is hidden.
-                  if (isPodSelection) {
-                    if (canSendToAgent && !sendBlocked) void onSendBatch();
-                  } else if (canEditComment && !saveDisabled) {
-                    void onSaveComment();
+            <div className={simpleComposer ? css.inputShell : undefined}>
+            {simpleComposer ? attachmentControl : null}
+              <Textarea
+                ref={composerInputRef}
+                data-testid="comment-popover-input"
+                className={!canEditComment ? 'composer-note--readonly' : undefined}
+                value={draft}
+                autoFocus={canEditComment}
+                readOnly={!canEditComment}
+                aria-label={t('chat.comments.placeholder')}
+                placeholder={t('chat.comments.placeholder')}
+                onChange={(event) => onDraft(event.target.value)}
+                onPaste={onComposerPaste}
+                onCompositionStart={() => {
+                  composingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  composingRef.current = false;
+                }}
+                onKeyDown={(event) => {
+                  if (isImeComposing(event, composingRef.current)) return;
+                  if (
+                    event.key === 'Enter' &&
+                    !event.shiftKey &&
+                    !event.altKey
+                  ) {
+                    event.preventDefault();
+                    // Enter follows the visible primary CTA: save an element comment
+                    // or send a pod selection. Respect the same
+                    // permission gates as the visible buttons so Enter can't perform
+                    // an action whose button is hidden.
+                    if (isPodSelection) {
+                      if (canSendToAgent && allowSendToChat && !sendBlocked) void onSendBatch();
+                    } else if (canEditComment && !saveDisabled) {
+                      void onSaveComment();
+                    }
                   }
-                }
-              }}
-            />
+                }}
+              />
+            </div>
           </section>
         ) : null}
       </div>
       {commenting ? (
         <div className="comment-popover-actions">
           <div className="comment-popover-actions-start">
-            {onAttachImages && canEditComment ? (
-              <>
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={onImageInputChange}
-                />
-                <button
-                  type="button"
-                  className="comment-popover-close"
-                  onClick={() => imageInputRef.current?.click()}
-                  title={t('chat.annotationAttachImage')}
-                  aria-label={t('chat.annotationAttachImage')}
-                >
-                  <Icon name="attach" size={14} />
-                </button>
-              </>
-            ) : null}
-            {existing && onDeleteComment && canDeleteComment ? (
+            {!simpleComposer ? attachmentControl : null}
+            {!simpleComposer && (existing && onDeleteComment && canDeleteComment ? (
               <button
                 type="button"
                 className="comment-popover-close comment-popover-delete"
@@ -865,7 +908,7 @@ export function BoardComposerPopover({
               >
                 <Icon name="close" size={14} />
               </button>
-            )}
+            ))}
           </div>
           <div className="comment-popover-actions-end">
             {isPodSelection ? (
@@ -900,6 +943,16 @@ export function BoardComposerPopover({
                 {/* Element: comment (save) is the primary CTA (also Enter);
                     send-to-chat is secondary. Save (edit) is gated by
                     canEditComment; send-to-chat by canSendToAgent. */}
+                {canEditComment ? (
+                  <Button
+                    variant="primary"
+                    data-testid="comment-popover-save"
+                    disabled={saveDisabled}
+                    onClick={() => void onSaveComment()}
+                  >
+                    {t('chat.comments.comment')}
+                  </Button>
+                ) : null}
                 {canSendToAgent && allowSendToChat ? (
                   <Button
                     variant="ghost"
@@ -909,16 +962,6 @@ export function BoardComposerPopover({
                     onClick={() => void onSendBatch()}
                   >
                     {primaryLabel}
-                  </Button>
-                ) : null}
-                {canEditComment ? (
-                  <Button
-                    variant="primary"
-                    data-testid="comment-popover-save"
-                    disabled={saveDisabled}
-                    onClick={() => void onSaveComment()}
-                  >
-                    {t('chat.comments.comment')}
                   </Button>
                 ) : null}
               </>

@@ -15,6 +15,11 @@ interface EditDock {
 }
 
 const EditDockContext = createContext<EditDock | null>(null);
+const TabChromeContext = createContext<HTMLDivElement | null>(null);
+
+export function useWorkspaceTabChromeDock() {
+  return useContext(TabChromeContext);
+}
 
 /** Only the visible viewer can occupy the shared comment/edit inspector;
  * retained viewers keep their state without leaving a panel in another file's workspace. */
@@ -35,6 +40,7 @@ export function WorkspaceEditLayout({ children }: { children: ReactNode }) {
   const t = useT();
   const rootRef = useRef<HTMLDivElement>(null);
   const [target, setTarget] = useState<HTMLDivElement | null>(null);
+  const [tabChrome, setTabChrome] = useState<HTMLDivElement | null>(null);
   const [owner, setOwner] = useState<string | null>(null);
   const [preferredWidth, setPreferredWidth] = useState(DEFAULT_WIDTH);
   const [availableWidth, setAvailableWidth] = useState<number | null>(null);
@@ -83,7 +89,8 @@ export function WorkspaceEditLayout({ children }: { children: ReactNode }) {
         data-resizing={dragging || undefined}
         style={{ gridTemplateColumns: `minmax(0, 1fr) ${active ? DIVIDER_WIDTH : 0}px ${active ? width : 0}px` }}
       >
-        {children}
+        <div ref={setTabChrome} className={styles.tabChrome} data-testid="workspace-tab-chrome" />
+        <TabChromeContext.Provider value={tabChrome}>{children}</TabChromeContext.Provider>
         <div
           className={styles.divider}
           role="separator"

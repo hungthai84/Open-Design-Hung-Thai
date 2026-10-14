@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+
+import { syncNativeWindowButtons } from "../../src/main/runtime.js";
 
 const runtimeSource = readFileSync(new URL("../../src/main/runtime.ts", import.meta.url), "utf8");
 
@@ -29,21 +31,14 @@ describe("desktop BrowserWindow chrome options", () => {
     expect(mainAppWindowOptions()).toContain("autoHideMenuBar: true");
   });
 
-  test("keeps macOS traffic-light controls clear of the web tab strip", () => {
-    // Windowed: home pill 4px after the lights (12px inset + 52px span).
+  test("reserves left chrome space for horizontal macOS window controls", () => {
+    // Only windowed mode needs space for the renderer's controls.
     expect(runtimeSource).toContain("--app-chrome-traffic-space: 64px !important;");
     expect(runtimeSource).toContain("--app-chrome-traffic-margin: 4px !important;");
-    // Fullscreen: lights hidden; the pill left-aligns with the nav-rail card.
-    expect(runtimeSource).toContain("html.is-window-fullscreen .app-chrome-header");
-    expect(runtimeSource).toContain("--app-chrome-traffic-space: 10px !important;");
     expect(runtimeSource).toContain("flex: 0 0 var(--app-chrome-traffic-space) !important;");
     expect(runtimeSource).toContain("width: var(--app-chrome-traffic-space) !important;");
-    // ...and the tab strip's own 10px inset is the alignment, so the strip's
-    // header takes NO spacer in fullscreen: with one, the Home pill lands 10px
-    // right of the nav rail's 首页 icon instead of on its axis.
-    expect(runtimeSource).toContain(
-      "html.is-window-fullscreen .workspace-tabs-chrome.app-chrome-header {\n    --app-chrome-traffic-space: 0px !important;\n  }",
-    );
+    expect(runtimeSource).toContain("html.is-window-fullscreen .workspace-mac-window-controls {");
+    expect(runtimeSource).toContain("--app-chrome-traffic-space: 0px !important;");
   });
 
   test("mirrors macOS fullscreen state onto the renderer for chrome CSS", () => {
@@ -67,5 +62,38 @@ describe("desktop BrowserWindow chrome options", () => {
     expect(runtimeSource).toContain("options.updater?.snapshot() ?? unavailableUpdaterStatus()");
     expect(runtimeSource).toContain("options.updater?.status() ?? unavailableUpdaterStatus()");
     expect(runtimeSource).toContain("sendUpdaterStatus()");
+  });
+});
+
+describe("native macOS fullscreen controls", () => {
+  test("uses system controls in fullscreen and restores renderer controls on exit", () => {
+    let fullscreen = false;
+    const setWindowButtonVisibility = vi.fn();
+    const window = {
+      isDestroyed: () => false,
+      isFullScreen: () => fullscreen,
+      setWindowButtonVisibility,
+      webContents: { getURL: () => "http://localhost:61163" },
+    };
+    syncNativeWindowButtons(window, "darwin");
+    fullscreen = true;
+    syncNativeWindowButtons(window, "darwin");
+    fullscreen = false;
+    syncNativeWindowButtons(window, "darwin");
+    expect(setWindowButtonVisibility.mock.calls).toEqual([[false], [true], [false]]);
+  });
+
+  test("retains native recovery controls and ignores other platforms or destroyed windows", () => {
+    const setWindowButtonVisibility = vi.fn();
+    const window = {
+      isDestroyed: () => false,
+      isFullScreen: () => false,
+      setWindowButtonVisibility,
+      webContents: { getURL: () => "data:text/html;charset=utf-8,recovery" },
+    };
+    syncNativeWindowButtons(window, "darwin");
+    syncNativeWindowButtons(window, "win32");
+    syncNativeWindowButtons({ ...window, isDestroyed: () => true }, "darwin");
+    expect(setWindowButtonVisibility.mock.calls).toEqual([[true]]);
   });
 });

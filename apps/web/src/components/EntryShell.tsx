@@ -562,6 +562,8 @@ const RAIL_WIDTH_DEFAULT = 236;
  *  the content and starts competing with it. */
 const RAIL_WIDTH_MIN = 200;
 const RAIL_WIDTH_MAX = 420;
+const ENTRY_DESTINATIONS_WIDTH = 56;
+const ENTRY_MAIN_MIN_TRACK_WIDTH = 800;
 
 function clampRailWidth(width: number): number {
   if (!Number.isFinite(width)) return RAIL_WIDTH_DEFAULT;
@@ -1224,7 +1226,10 @@ export function EntryShell({
   function beginRailResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
-    railDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: railWidth };
+    const visibleRail = event.currentTarget.parentElement?.querySelector('.entry-nav-rail');
+    const startWidth = visibleRail?.getBoundingClientRect().width ?? railWidth;
+    railDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth };
+    railWidthRef.current = startWidth;
     event.currentTarget.setPointerCapture(event.pointerId);
     setRailResizing(true);
   }
@@ -1232,7 +1237,12 @@ export function EntryShell({
   function moveRailResize(event: ReactPointerEvent<HTMLDivElement>) {
     const drag = railDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const next = clampRailWidth(drag.startWidth + (event.clientX - drag.startX));
+    const entryWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? window.innerWidth;
+    const maxForMain = Math.max(
+      RAIL_WIDTH_MIN,
+      Math.floor(entryWidth - ENTRY_DESTINATIONS_WIDTH - ENTRY_MAIN_MIN_TRACK_WIDTH),
+    );
+    const next = Math.min(maxForMain, clampRailWidth(drag.startWidth + (event.clientX - drag.startX)));
     railWidthRef.current = next;
     setRailWidth(next);
   }
@@ -1782,10 +1792,9 @@ export function EntryShell({
   return (
     <div className="entry-shell entry-shell--no-header">
       <div
-        className={`entry${railOpen ? ' entry--rail-open' : ''}${railResizing ? ' entry--rail-resizing' : ''}`}
-        // The team/local shell is a labeled Manus-style rail, so the track is
-        // wider than the base 56px icon-rail (which clips the labels + team
-        // affordances) — and draggable from the seam below.
+        className={`entry${view !== 'home' ? ' entry--destination entry--rail-open' : railOpen ? ' entry--rail-open' : ''}${railResizing ? ' entry--rail-resizing' : ''}`}
+        // The labeled workspace column sits beside the fixed 56px icon rail;
+        // only this middle column changes width when the seam is dragged.
         style={{
           ['--entry-rail-width' as string]: `${railWidth}px`,
           /* Inline, not a class: the grid track carries a 200ms transition for
@@ -1809,7 +1818,7 @@ export function EntryShell({
             openNewProject();
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
-          open={railOpen}
+          open={view !== 'home' || railOpen}
           // Leading slot = the cluster's left end, so the badge sits just left
           // of the GitHub chip (per product). It briefly lived above the hero
           // headline instead; the cluster is where it belongs.
@@ -1843,6 +1852,10 @@ export function EntryShell({
           /* Same catalog and same opener the 全部项目 grid uses below, so the
              rail's 最近浏览过 list and that view's 最近浏览过 tab are two views of
              ONE list rather than two sorts of two lists. */
+          onOpenConversation={async (projectId, conversationId) => {
+            if (await handleOpenAllProjects(projectId)) navigate({ kind: 'project', projectId, conversationId, fileName: null });
+          }}
+          personalProjects={draftProjectsList}
           recentProjects={projectSearchProjects}
           onOpenRecentProject={handleOpenAllProjects}
           /* Same handlers the projects grid drives its own row menu with, so a
@@ -1860,11 +1873,9 @@ export function EntryShell({
             onClose={() => setProjectSearchOpen(false)}
           />
         ) : null}
-        {/* The seam. Absolutely positioned ON the boundary rather than placed in
-            the grid: a third child would claim a third track and push the
-            content column over. Only while the rail is docked open — there is
-            no seam to grab when the rail is a 0-width track. */}
-        {railOpen ? (
+        {/* The seam is positioned on the boundary between the workspace card
+            and the content card, so it does not occupy a grid track. */}
+        {view === 'home' && railOpen ? (
           <div
             className="entry-rail-resizer"
             role="separator"

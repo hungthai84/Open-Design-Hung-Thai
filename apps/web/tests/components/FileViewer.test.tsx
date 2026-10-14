@@ -6,9 +6,14 @@ import { useLayoutEffect, useRef, useState, type ReactElement } from 'react';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { installMockOpenDesignHost } from '@open-design/host/testing';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ANNOTATION_EVENT } from '../../src/components/PreviewDrawOverlay';
 import { WorkspaceEditLayout } from '../../src/components/workspace/WorkspaceEditLayout';
+
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+});
 
 const { saveTemplateMock } = vi.hoisted(() => ({
   saveTemplateMock: vi.fn(),
@@ -901,7 +906,7 @@ describe('FileViewer preview scale', () => {
 
   it('keeps the preview viewport trigger flat, and down to its glyph', () => {
     const css = readExpandedIndexCss();
-    const rules = Array.from(css.matchAll(/\.viewer-viewport-trigger\s*\{[^}]+\}/g), (match) => match[0]);
+    const rules = Array.from(css.matchAll(/\.viewer-viewport-trigger(?:\s*,\s*\.viewer-share-trigger)?\s*\{[^}]+\}/g), (match) => match[0]);
 
     // Flat = no chip. Transparent fill + transparent border + no shadow; the
     // resting state must not read as a raised control sitting on the bar.
@@ -8622,13 +8627,14 @@ describe('FileViewer tweaks toolbar', () => {
     const trigger = screen.getByTestId('comment-panel-toggle');
     fireEvent.click(trigger);
 
-    const firstDismiss = await screen.findByRole('button', { name: /hide comments/i });
+    const firstDismiss = await screen.findByTestId('comment-side-panel');
+    expect(firstDismiss.querySelector('.comment-side-header')).toBeNull();
     if (placement === 'workspace') {
       expect(screen.getByTestId('workspace-edit-dock').contains(firstDismiss)).toBe(true);
       expect(screen.getByTestId('comment-float-host').childElementCount).toBe(0);
     }
-    firstDismiss.focus();
-    fireEvent.click(firstDismiss);
+    trigger.focus();
+    fireEvent.click(trigger);
 
     await waitFor(() => {
       expect(screen.queryByTestId('comment-side-panel')).toBeNull();
@@ -8640,7 +8646,7 @@ describe('FileViewer tweaks toolbar', () => {
     // The close path must also clear create/board mode: one click reopens the
     // panel instead of being consumed by a stale pressed state.
     fireEvent.click(trigger);
-    const secondDismiss = await screen.findByRole('button', { name: /hide comments/i });
+    const secondDismiss = await screen.findByTestId('comment-side-panel');
     secondDismiss.focus();
     fireEvent.keyDown(secondDismiss, { key: 'Escape' });
 
@@ -8650,7 +8656,7 @@ describe('FileViewer tweaks toolbar', () => {
     });
   });
 
-  it('keeps the comment popover open and restores focus when View all comments closes', async () => {
+  it('keeps the floating composer focused without a View all comments header', async () => {
     const portalId = 'project-comments-view-all';
     render(
       <>
@@ -8681,19 +8687,10 @@ describe('FileViewer tweaks toolbar', () => {
       },
     }));
 
-    const viewAll = await screen.findByTestId('comment-popover-view-all');
-    fireEvent.click(viewAll);
-
-    const panel = await screen.findByTestId('comment-side-panel');
-    const dismiss = within(panel).getByRole('button', { name: /hide comments/i });
-    dismiss.focus();
-    fireEvent.click(dismiss);
-
-    await waitFor(() => {
-      expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-      expect(screen.getByTestId('comment-popover')).toBeTruthy();
-      expect(document.activeElement).toBe(viewAll);
-    });
+    const input = await screen.findByTestId('comment-popover-input');
+    expect(screen.queryByTestId('comment-popover-view-all')).toBeNull();
+    expect(screen.queryByTestId('comment-popover-style-summary')).toBeNull();
+    expect(document.activeElement).toBe(input);
   });
 
   it('shows the open comment count beside the comments icon', () => {
@@ -8802,10 +8799,10 @@ describe('FileViewer tweaks toolbar', () => {
     expect(canvas.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
     expect(dock.contains(screen.getByTestId('artifact-preview-frame'))).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /hide comments/i }));
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-    expect(screen.getByTestId('comment-side-collapsed-rail')).toBeTruthy();
+    expect(screen.queryByTestId('comment-side-collapsed-rail')).toBeNull();
     expect(canvas.contains(screen.getByTestId('artifact-preview-frame'))).toBe(true);
     expect(dock.contains(screen.getByTestId('artifact-preview-frame'))).toBe(false);
   });
@@ -9999,6 +9996,7 @@ describe('FileViewer tweaks toolbar', () => {
       const [comments, setComments] = useState<PreviewComment[]>([]);
       return (
         <FileViewer
+          viewerOnly
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile()}
@@ -10100,6 +10098,7 @@ describe('FileViewer tweaks toolbar', () => {
       const [comments, setComments] = useState<PreviewComment[]>([olderComment, newerComment]);
       return (
         <FileViewer
+          viewerOnly
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile()}
@@ -10319,11 +10318,8 @@ describe('FileViewer tweaks toolbar', () => {
       data: { ...target, type: 'od:comment-target' },
     }));
 
-    const summary = await screen.findByTestId('comment-popover-style-summary');
-    expect(summary.textContent).toContain('Color');
-    expect(summary.textContent).toContain('#1A1916');
-    expect(summary.textContent).toContain('13.5px');
     expect(await screen.findByTestId('comment-popover-input')).toBeTruthy();
+    expect(screen.queryByTestId('comment-popover-style-summary')).toBeNull();
     expect(screen.getByTestId('comment-target-overlay')).toBeTruthy();
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByTestId('board-mode-toggle').getAttribute('aria-pressed')).toBe('true');
@@ -10551,6 +10547,7 @@ describe('FileViewer tweaks toolbar', () => {
 
     render(
       <FileViewer
+        viewerOnly
         projectId="project-1"
         projectKind="prototype"
         file={htmlPreviewFile()}
@@ -10744,13 +10741,13 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByTestId('comment-side-selectbar').textContent).toContain('1 selected');
   });
 
-  it('moves focus between comment side panel toggles when collapsing and expanding without a pre-focused click target', async () => {
+  it('focuses the expanded comment side panel and shows the total beside Select all', async () => {
     const onCollapseChange = vi.fn();
     const onSelectAll = vi.fn();
     const onReply = vi.fn();
 
     function Harness() {
-      const [collapsed, setCollapsed] = useState(false);
+      const [collapsed, setCollapsed] = useState(true);
       return (
         <CommentSidePanel
           comments={[
@@ -10791,34 +10788,21 @@ describe('FileViewer tweaks toolbar', () => {
 
     render(<Harness />);
 
-    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('comment-side-collapsed-rail'));
+    expect(onCollapseChange).toHaveBeenLastCalledWith(false);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('comment-side-panel')));
+    expect(screen.getByTestId('comment-side-panel').querySelector('.comment-side-header')).toBeNull();
     expect(screen.getByText('不要github，换成微信')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Select all' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Select all (1)' }).hasAttribute('disabled')).toBe(true);
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     fireEvent.click(screen.getByText('不要github，换成微信').closest('[data-testid="comment-side-item"]')!);
     expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'comment-1' }));
 
-    const hideComments = screen.getByRole('button', { name: /hide comments/i });
-
-    fireEvent.click(hideComments);
-
-    expect(onCollapseChange).toHaveBeenLastCalledWith(true);
-    expect(screen.queryByText('不要github，换成微信')).toBeNull();
-    expect(screen.queryByTestId('comment-side-selectbar')).toBeNull();
-    const showComments = screen.getByTestId('comment-side-collapsed-rail');
-    await waitFor(() => expect(document.activeElement).toBe(showComments));
-
-    fireEvent.click(showComments);
-
-    expect(onCollapseChange).toHaveBeenLastCalledWith(false);
-    await waitFor(() => {
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: /hide comments/i }));
-    });
   });
 
   it('announces comment side dock disclosure state without pointing at an unmounted panel', () => {
     function Harness() {
-      const [collapsed, setCollapsed] = useState(false);
+      const [collapsed, setCollapsed] = useState(true);
       return (
         <CommentSidePanel
           comments={[]}
@@ -10839,19 +10823,8 @@ describe('FileViewer tweaks toolbar', () => {
 
     render(<Harness />);
 
-    const panel = screen.getByTestId('comment-side-panel');
-    const hideComments = screen.getByRole('button', { name: /hide comments/i });
-    const panelId = panel.id;
-
-    expect(panelId).toBeTruthy();
-    expect(hideComments.getAttribute('aria-controls')).toBe(panelId);
-    expect(hideComments.getAttribute('aria-expanded')).toBe('true');
-
-    fireEvent.click(hideComments);
-
     const showComments = screen.getByTestId('comment-side-collapsed-rail');
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-    expect(document.getElementById(panelId)).toBeNull();
     expect(showComments.getAttribute('aria-controls')).toBeNull();
     expect(showComments.getAttribute('aria-expanded')).toBe('false');
   });
@@ -10976,7 +10949,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(rule).toContain('width: min(296px, calc(100% - 28px));');
   });
 
-  it('reorders saved comments with the drag handle for send sequence', () => {
+  it('reorders saved comments by dragging the card header for send sequence', () => {
     const onReorder = vi.fn();
     const comments: PreviewComment[] = [
       {
@@ -11873,7 +11846,7 @@ describe('LiveArtifactViewer', () => {
 
   it('keeps the legacy presentation exit affordance hidden for deck presentation', () => {
     const css = readExpandedIndexCss();
-    const rule = css.match(/\.present-exit\s*\{[^}]+\}/)?.[0] ?? '';
+    const rule = css.match(/\.present-exit(?::where\([^\n{]+\))?\s*\{[^}]+\}/)?.[0] ?? '';
 
     expect(rule).toContain('display: none;');
     expect(rule).toContain('top: calc(env(safe-area-inset-top, 0px) + 20px);');
@@ -11900,7 +11873,7 @@ describe('LiveArtifactViewer', () => {
 
   it('lets in-tab presentation overlays cover the full window', () => {
     const css = readExpandedIndexCss();
-    const overlayRule = css.match(/\.present-overlay\s*\{[^}]+\}/)?.[0] ?? '';
+    const overlayRule = css.match(/\.present-overlay(?::where\([^\n{]+\))?\s*\{[^}]+\}/)?.[0] ?? '';
 
     expect(overlayRule).toContain('position: fixed;');
     expect(overlayRule).toContain('top: 0;');

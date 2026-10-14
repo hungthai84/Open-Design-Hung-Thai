@@ -109,7 +109,7 @@
   --chat-status-card-icon-plate: #353535;
   --chat-status-card-detail-ink: #bdbdbd;
   /* 思考流的正文色 —— 比正文浅一档,产品指定的色号(设计稿 21:02 版新增) */
-  --chat-stream-ink: #a3a3a3;
+  --chat-stream-ink: #494949;
   /* **独立**工具行 / 重连行那一整行的字色。稿子写的是字面
      `#A3A3A3`(`729fa43ce7:components.css:2157` 的 `.tool`,全稿这枚字面出现 14 次),
      而且**不跟主题翻** —— 稿子没有任何 `[data-theme="dark"]` 覆盖它,所以两个作用域同值。
@@ -298,7 +298,7 @@
   --chat-status-card-icon-plate: #353535;
   --chat-status-card-detail-ink: #bdbdbd;
   /* 设计稿没给暗色值,按接缝约定同值 */
-  --chat-stream-ink: #a3a3a3;
+  --chat-stream-ink: #494949;
   /* 同上:稿子的 `.tool` 字面 `#A3A3A3` 没有暗色覆盖,两个作用域同值 */
   --chat-tool-ink: #a3a3a3;
   --chat-select-ink: var(--select-ink);

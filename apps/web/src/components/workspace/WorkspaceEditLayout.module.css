@@ -1,10 +1,26 @@
 .layout {
+  position: relative;
   grid-column: 3;
   display: grid;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: transparent;
+}
+
+/* The preview module owns its top row, including when chat or the inspector
+   changes width. Keep it above the native window-drag region. */
+.tabChrome {
+  position: absolute;
+  inset: 0 16px auto 0;
+  height: 40px;
+  z-index: 120;
+  min-width: 0;
+  pointer-events: none;
+}
+
+:global(.split-focus) .tabChrome {
+  left: 8px;
 }
 
 .layout > :global(.workspace) {

@@ -36,6 +36,7 @@ export type IconName =
   | 'file-text'
   | 'folder'
   | 'folder-2'
+  | 'folder-3'
   | 'folder-5'
   | 'folder-transfer'
   | 'folder-filled'
@@ -87,6 +88,7 @@ export type IconName =
   | 'palette-filled'
   | 'pencil'
   | 'plus'
+  | 'plus-circle'
   | 'plus-filled'
   | 'puzzle'
   | 'slides'
@@ -169,6 +171,7 @@ const REMIX_ICON: Partial<Record<IconName, string>> = {
   'file-text': 'file-text-line',
   folder: 'folder-line',
   'folder-2': 'folder-2-line',
+  'folder-3': 'folder-3-line',
   'folder-5': 'folder-5-line',
   'folder-transfer': 'folder-transfer-line',
   'folder-filled': 'folder-fill',
@@ -215,6 +218,7 @@ const REMIX_ICON: Partial<Record<IconName, string>> = {
   pencil: 'pencil-line',
   play: 'play-line',
   plus: 'add-line',
+  'plus-circle': 'add-circle-line',
   'plus-filled': 'add-fill',
   // 幻灯片 reads as the keynote lectern, not the screen-with-bullets glyph
   // (product pick). Every `present` site means "slide deck" — the Home deck

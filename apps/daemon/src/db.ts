@@ -3727,6 +3727,9 @@ function compactWhitespace(value: string): string {
 function normalizePosition(input: unknown) {
   const value: DbRow = input && typeof input === 'object' ? input as DbRow : {};
   return {
+    ...(value.pinOffset && typeof value.pinOffset === 'object'
+      && Number.isFinite(value.pinOffset.x) && Number.isFinite(value.pinOffset.y)
+      ? { pinOffset: { x: finiteNumber(value.pinOffset.x), y: finiteNumber(value.pinOffset.y) } } : {}),
     x: finiteNumber(value.x),
     y: finiteNumber(value.y),
     width: finiteNumber(value.width),

@@ -1,0 +1,115 @@
+/* App-shell navigation must load with the persistent shell on every route. */
+/* Home stays available when the workspace column is collapsed. */
+.rail {
+  box-sizing: border-box;
+  width: 56px;
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  /* Align Home with the heading: 40px card top + 0.5px border + 8px inset. */
+  padding: 48.5px 8px 15.5px;
+  --rail-ink-quiet: #5c5c5c;
+}
+.rail :global(.entry-nav-rail__btn) {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+}
+.rail :global(.entry-nav-rail__btn-label) {
+  display: none;
+}
+.modules {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 0;
+}
+:global([data-theme="dark"]) .rail {
+  --rail-ink-quiet: color-mix(in srgb, var(--text) 52%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :global(html:not([data-theme])) .rail {
+    --rail-ink-quiet: color-mix(in srgb, var(--text) 52%, transparent);
+  }
+}
+/* Only placement changes when the page owns the full content track. */
+.overlay {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 121;
+  grid-column: auto;
+  grid-row: auto;
+  /* Home: 8px panel margin + 0.5px border + 8px padding, with the
+     40px avatar centered on the 38px workspace row (1px overhang). */
+  padding-bottom: 15.5px;
+}
+
+/* The complete bottom stack belongs to the rail in every placement. */
+.footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 40px;
+  -webkit-app-region: no-drag;
+}
+.accountHost { width: 40px; }
+.accountHost:empty { display: none; }
+.rail .accountHost :global(.entry-nav-rail__account-dock),
+.rail .accountHost :global(.entry-nav-rail__account) {
+  width: 40px;
+  margin: 0;
+  padding: 0;
+}
+.rail .accountHost :global(.entry-nav-rail__account-trigger) {
+  position: relative;
+  left: auto;
+  top: auto;
+  transform: none;
+  flex: none;
+  justify-content: center;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+.rail .accountHost :global(.entry-nav-rail__account-menu) { left: 52px; }
+/* Shared navigation buttons do not inherit page-specific row geometry. */
+.rail :global(.entry-nav-rail__btn) {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  flex: 0 0 40px;
+  min-width: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--rail-ink-quiet);
+  cursor: pointer;
+}
+.rail :global(.entry-nav-rail__btn):hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.rail :global(.entry-nav-rail__btn)[aria-current='page'] {
+  background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  color: var(--selected);
+}
+.rail :global(.entry-nav-rail__btn):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.rail :global(.entry-nav-rail__btn-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  color: inherit;
+}
+.rail :global(.entry-nav-rail__btn-icon) > svg { width: 18px; height: 18px; }

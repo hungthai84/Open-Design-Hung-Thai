@@ -43,6 +43,7 @@ export function ManualEditPanel({
   canRedo,
   onUndo,
   onRedo,
+  onCancelDraft,
   onSaveDraft,
   onResetDraft,
   onExit,
@@ -328,6 +329,10 @@ export function ManualEditPanel({
             </div>
             <div className="manual-edit-footer-right">
               <button type="button" className="manual-edit-footer-btn subtle"
+                disabled={busy} onClick={onCancelDraft}>
+                {t('common.cancel')}
+              </button>
+              <button type="button" className="manual-edit-footer-btn subtle"
                 disabled={busy || !resetAvailable} onClick={onResetDraft}>
                 {t('ds.reset')}
               </button>
@@ -574,7 +579,7 @@ const FONT_OPTS = [
   { label: 'Georgia', value: 'Georgia, serif' },
   { label: 'monospace', value: 'SFMono-Regular, Consolas, "Liberation Mono", monospace' },
 ] as const;
-const WEIGHT_OPTS = ['', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+const WEIGHT_OPTS = ['100', '200', '300', '400', '500', '600', '700', '800', '900'];
 const ALIGN_OPTS = ['', 'left', 'center', 'right', 'justify', 'start', 'end'];
 const DIRECTION_OPTS = ['', 'row', 'column', 'row-reverse', 'column-reverse'];
 const JUSTIFY_OPTS = ['', 'flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'];
@@ -792,7 +797,7 @@ function StyleInspector({
         <FontRow label={t('manualEdit.fontFamily')} value={styles.fontFamily} placeholder={summary?.fontFamily} onChange={(v) => u('fontFamily', v)} onFocus={() => activate('fontFamily', t('manualEdit.fontFamily'))} />
         <PairRow>
           <UnitRow label={t('manualEdit.fontSize')} precision={0} value={styles.fontSize} placeholder={summary?.fontSize} onChange={(v) => u('fontSize', v)} unit="px" autoUnit onFocus={() => activate('fontSize', t('manualEdit.fontSize'))} />
-          <DropdownRow label={t('manualEdit.weight')} value={styles.fontWeight} onChange={(v) => u('fontWeight', v)} options={WEIGHT_OPTS} placeholder={summary?.fontWeight} onFocus={() => activate('fontWeight', t('manualEdit.weight'))} />
+          <DropdownRow label={t('manualEdit.weight')} value={styles.fontWeight || summary?.fontWeight || '400'} onChange={(v) => u('fontWeight', v)} options={WEIGHT_OPTS} onFocus={() => activate('fontWeight', t('manualEdit.weight'))} />
         </PairRow>
         {/* Line height + tracking stay in the parameters list: text-heavy
             artifacts need them, and the Style tab's raw JSON is a poor
@@ -803,13 +808,15 @@ function StyleInspector({
         </PairRow>
         <UnitRow label={t('manualEdit.radius')} value={styles.borderRadius} placeholder={summary?.borderRadius} onChange={(v) => u('borderRadius', v)} unit="px" autoUnit onFocus={() => activate('borderRadius', t('manualEdit.radius'))} />
         <ColorRow label={t('manualEdit.borderColor')} value={styles.borderColor} placeholder={summary?.borderColor} onChange={(v) => u('borderColor', v)} onFocus={() => activate('borderColor', t('manualEdit.borderColor'))} />
-        <UnitRow label={t('manualEdit.borderWidth')} precision={1} stepSize={1} value={styles.borderTopWidth} onChange={(v) => onApply({
-          borderTopWidth: v,
-          borderRightWidth: v,
-          borderBottomWidth: v,
-          borderLeftWidth: v,
-        })} unit="px" autoUnit onFocus={() => activate('borderTopWidth', t('manualEdit.borderWidth'))} />
-        <DropdownRow label={t('manualEdit.borderStyle')} value={styles.borderStyle} onChange={(v) => u('borderStyle', v)} options={borderStyleOptions(t)} />
+        <PairRow>
+          <UnitRow label={t('manualEdit.borderWidth')} precision={1} stepSize={1} value={styles.borderTopWidth} onChange={(v) => onApply({
+            borderTopWidth: v,
+            borderRightWidth: v,
+            borderBottomWidth: v,
+            borderLeftWidth: v,
+          })} unit="px" autoUnit onFocus={() => activate('borderTopWidth', t('manualEdit.borderWidth'))} />
+          <DropdownRow label={t('manualEdit.borderStyle')} value={styles.borderStyle} onChange={(v) => u('borderStyle', v)} options={borderStyleOptions(t)} />
+        </PairRow>
         <PairRow>
           <UnitRow label={t('manualEdit.width')} value={styles.width} placeholder={widthPlaceholder} onChange={(v) => u('width', v)} unit="px" autoUnit onFocus={() => activate('width', t('manualEdit.width'))} />
           <UnitRow label={t('manualEdit.height')} value={styles.height} placeholder={heightPlaceholder} onChange={(v) => u('height', v)} unit="px" autoUnit onFocus={() => activate('height', t('manualEdit.height'))} />

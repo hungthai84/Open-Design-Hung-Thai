@@ -315,8 +315,7 @@ describe('HomeHero intent rail', () => {
 
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
     expect(presets).toHaveLength(1);
-    // The preset card is now a thumbnail + name only; the prompt blurb was
-    // dropped from the card face but is still passed through on click below.
+    // Non-image/document types retain their original text list.
     expect(presets[0]?.textContent).toContain('Investor deck');
 
     // The whole card is the single click-to-use affordance (2026-07 removed
@@ -330,6 +329,17 @@ describe('HomeHero intent rail', () => {
       'Create with a focused brief using Investor deck',
     );
     expect(onOpenPluginDetails).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /^Preview$/ }));
+    expect(onOpenPluginDetails).toHaveBeenCalledWith(deckPlugin);
+  });
+
+  it.each(['image', 'document'])('shows %s presets without visible text', (mode) => {
+    const plugin = makePlugin('example-visual', mode, 'Visual preset');
+    renderHero({ activeChipId: mode, pluginOptions: [plugin] });
+    const card = screen.getByTestId('home-hero-plugin-preset');
+    expect(card.textContent).toBe('');
+    expect(card.getAttribute('aria-label')).toBe('Visual preset');
+    expect(card.closest('.home-hero__plugin-presets--masonry')).toBeTruthy();
   });
 
   it('maps powered WebGL presets to the WebGL chip without exposing a Worker chip', () => {
@@ -413,7 +423,7 @@ describe('HomeHero intent rail', () => {
     });
 
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
-    expect(presets.map((preset) => preset.textContent)).toEqual([
+    expect(presets.map((preset) => preset.getAttribute('aria-label'))).toEqual([
       expect.stringContaining('Image Poster'),
       expect.stringContaining('Stone Infographic'),
       expect.stringContaining('Hatch Pet'),
@@ -459,7 +469,7 @@ describe('HomeHero intent rail', () => {
 
     let presets = screen.getAllByTestId('home-hero-plugin-preset');
     expect(presets).toHaveLength(1);
-    expect(presets[0]?.textContent).toContain('Image Poster');
+    expect(presets[0]?.getAttribute('aria-label')).toContain('Image Poster');
 
     cleanup();
     renderHero({

@@ -539,3 +539,23 @@ describe('MessageCenter', () => {
     expect(document.activeElement).toBe(trigger);
   });
 });
+
+it('opens rail messages at the sidebar top, stays inside the viewport, and returns focus to the bell', async () => {
+  const rail = document.createElement('div');
+  rail.className = 'entry-nav-rail__panel';
+  const bell = document.createElement('button');
+  rail.append(bell);
+  document.body.append(rail);
+  const rect = vi.spyOn(rail, 'getBoundingClientRect').mockReturnValue({ left: 56, top: 48, width: 236, height: 700 } as DOMRect);
+  try {
+    render(<I18nProvider initial="en"><MessageCenter placement="rail" hideTrigger returnFocusRef={{ current: bell }} open /></I18nProvider>);
+    const dialog = screen.getByTestId('message-center-dialog');
+    expect(dialog.style.left).toBe('64px');
+    expect(dialog.style.top).toBe('56px');
+    rect.mockReturnValue({ left: 1000, top: 48, width: 236, height: 700 } as DOMRect);
+    fireEvent(window, new Event('resize'));
+    expect(Number.parseFloat(dialog.style.left) + Number.parseFloat(dialog.style.width)).toBeLessThanOrEqual(window.innerWidth - 12);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.activeElement).toBe(bell);
+  } finally { rail.remove(); }
+});

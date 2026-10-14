@@ -12,10 +12,14 @@ export const RAIL_OPEN_STORAGE_KEY = 'od.entry.railOpen';
 // tab's sidebar toggle in WorkspaceTabsBar) to expand/collapse the entry rail.
 export const ENTRY_RAIL_TOGGLE_EVENT = 'od:entry-rail-toggle';
 
-// Window event dispatched by chrome outside the entry tree (the search button
-// that now sits in the chrome row beside the Home logo) to open the ⌘K project
-// search palette, which EntryShell owns.
+// Window event dispatched by the tabs bar's search button in the persistent
+// entry toolbar (or the chrome fallback before that host mounts).
+// EntryShell owns the ⌘K project search palette.
 export const ENTRY_SEARCH_OPEN_EVENT = 'od:entry-search-open';
+
+// EntryNavRail announces a stable toolbar mount point outside the collapsible
+// rail, so search/collapse controls stay mounted while its grid track animates.
+export const ENTRY_RAIL_ACTIONS_HOST_EVENT = 'od:entry-rail-actions-host';
 
 // Window event dispatched by EntryShell whenever the rail open state changes,
 // with `detail: { open: boolean }`, so outside chrome can mirror the state

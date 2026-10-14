@@ -5,11 +5,20 @@ import { AnalyticsProvider } from '../src/analytics/provider';
 import '@excalidraw/excalidraw/index.css';
 import '../src/index.css';
 import '../src/styles/home/index.css';
+import '../src/components/DesignSystemsTab.module.css';
+import '../src/components/DesignSystemDetailTabs.module.css';
+import '../src/components/DesignSystemTheme.module.css';
+import '../src/components/DesignSystemFoundations.module.css';
 // Keep project pane geometry in the initial stylesheet. App is loaded with
 // ssr:false; its async CSS chunk can remain a preload during a dev refresh.
 // Without these rules the workspace collapses to its toolbar's height.
 import '../src/components/workspace/WorkspaceEditLayout.module.css';
 import '../src/components/ManualEditPanel.module.css';
+// Persistent sidebar controls must also survive a direct project-page load.
+import '../src/components/ProjectRecentRail.module.css';
+import '../src/components/entry-nav-rail/RailRecentSection.module.css';
+import '../src/components/entry-nav-rail/RailConversationTree.module.css';
+import '../src/components/MessageCenter.module.css';
 import '../src/components/ManualEditColorPopover.module.css';
 import '../src/components/AnimatedNumberInput.module.css';
 import '../src/components/AnimateDigits.module.css';

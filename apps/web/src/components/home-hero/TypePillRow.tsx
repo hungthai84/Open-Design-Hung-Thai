@@ -12,6 +12,13 @@ import type { HomeHeroChip } from './chips';
 import { HOME_TYPE_ROW_IDS, HOME_TYPE_ROW_MORE_IDS } from './chips';
 import { Icon } from '../Icon';
 import { useT } from '../../i18n';
+import styles from './TypePillRow.module.css';
+
+function chipIcon(chip: HomeHeroChip) {
+  const icon = <Icon name={chip.icon} size={16} />;
+  if (!['prototype', 'deck', 'document'].includes(chip.id)) return icon;
+  return <span className={styles.iconBadge} data-type={chip.id}>{icon}</span>;
+}
 
 // Must match .home-hero__type-pills-wrap's CSS gap.
 const PILL_GAP = 8;
@@ -123,7 +130,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
           if (chip.id !== activeChipId) onPick(chip);
         }}
       >
-        <Icon name={chip.icon} size={14} />
+        {chipIcon(chip)}
         <span>{labelFor(chip.id)}</span>
       </button>
     );
@@ -131,7 +138,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
 
   return (
     <div
-      className="home-hero__type-pills-wrap"
+      className={`home-hero__type-pills-wrap ${styles.row}`}
       ref={wrapRef}
       role="listbox"
       aria-label="type"
@@ -154,7 +161,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
             onClick={() => setMoreOpen((v) => !v)}
           >
             <span>{t('homeHero.subTypeMore')}</span>
-            <Icon name="chevron-down" size={14} />
+            <Icon name="chevron-down" size={16} />
           </button>
           {moreOpen ? (
             <div
@@ -173,7 +180,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
       <div className="home-hero__type-pills-probe" ref={probeRef} aria-hidden>
         {flowing.map((chip) => (
           <span key={chip.id} className="home-hero__type-pill">
-            <Icon name={chip.icon} size={14} />
+            {chipIcon(chip)}
             <span>{labelFor(chip.id)}</span>
           </span>
         ))}

@@ -39,6 +39,19 @@ function commentAttachment(
 }
 
 describe('preview comment attachment helpers', () => {
+  it('preserves the clicked point as an offset without replacing element bounds', () => {
+    const target = targetFromSnapshot({
+      filePath: 'index.html', elementId: 'paragraph', selector: 'p',
+      label: 'p', text: 'Example', htmlHint: '<p>Example</p>',
+      position: { x: 100, y: 200, width: 500, height: 120 },
+      hoverPoint: { x: 340, y: 275 },
+    });
+    const saved = JSON.parse(JSON.stringify(target));
+    expect(saved.position).toEqual({
+      x: 100, y: 200, width: 500, height: 120, pinOffset: { x: 240, y: 75 },
+    });
+  });
+
   it('builds compact target context from an iframe snapshot', () => {
     const target = targetFromSnapshot({
       filePath: 'index.html',
