@@ -35,6 +35,7 @@ export interface BundlePlan {
   /** Unmodified generator files the bundle no longer produces. */
   stale: string[];
   manifest: Record<string, string>;
+  manifestName: string;
 }
 
 // Same digest as the design-system generator uses for its text files.
@@ -96,10 +97,13 @@ export async function planBundleMirror(opts: {
   prunable?: string[];
   /** Target state to use instead of what is on disk, by path. */
   overrides?: Record<string, BundleTargetState>;
+  /** A mirror that shares `dir` with another one keeps its own manifest. */
+  manifestName?: string;
 }): Promise<BundlePlan> {
-  const plan: BundlePlan = { dir: opts.dir, writes: [], kept: [], stale: [], manifest: {} };
+  const manifestName = opts.manifestName ?? GENERATED_MANIFEST_FILENAME;
+  const plan: BundlePlan = { dir: opts.dir, writes: [], kept: [], stale: [], manifest: {}, manifestName };
   const recorded: Record<string, string> = {};
-  for (const [rel, hash] of Object.entries(await readGeneratedManifest(opts.dir))) {
+  for (const [rel, hash] of Object.entries(await readGeneratedManifest(opts.dir, manifestName))) {
     if (opts.isManaged(rel)) recorded[rel] = hash;
     else plan.manifest[rel] = hash;
   }
@@ -156,9 +160,9 @@ export async function applyBundleMirror(
     }
   } finally {
     // Also on failure, so files that already landed stay refreshable.
-    if (readBundleTarget(plan.dir, GENERATED_MANIFEST_FILENAME) !== null) {
+    if (readBundleTarget(plan.dir, plan.manifestName) !== null) {
       fs.writeFileSync(
-        path.join(plan.dir, GENERATED_MANIFEST_FILENAME),
+        path.join(plan.dir, plan.manifestName),
         serializeGeneratedManifest(plan.manifest),
         'utf8',
       );

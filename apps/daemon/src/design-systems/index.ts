@@ -2292,8 +2292,11 @@ export function serializeGeneratedManifest(manifest: Record<string, string>): st
 // same-named file all degrade to "no manifest" (an empty record). That routes the
 // caller into the conservative legacy path (write-if-missing) instead of ever
 // trusting an untrusted file as a source of overwrite decisions.
-export async function readGeneratedManifest(dir: string): Promise<Record<string, string>> {
-  const raw = await readFileOptional(path.join(dir, GENERATED_MANIFEST_FILENAME));
+export async function readGeneratedManifest(
+  dir: string,
+  fileName: string = GENERATED_MANIFEST_FILENAME,
+): Promise<Record<string, string>> {
+  const raw = await readFileOptional(path.join(dir, fileName));
   if (raw === undefined) return {};
   let parsed: unknown;
   try {
