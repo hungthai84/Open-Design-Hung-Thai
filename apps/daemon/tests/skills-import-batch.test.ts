@@ -145,6 +145,33 @@ describe('POST /api/skills/import-batch', () => {
     expect(readFileSync(path.join(dir, 'scripts', 'run.sh'), 'utf8')).toBe('#!/bin/sh\necho ok\n');
   });
 
+  it('binds the slug id a nameless-frontmatter import will report', async () => {
+    const suffix = Date.now();
+    const fallbackName = `Beta Skill ${suffix}`;
+    const slug = `beta-skill-${suffix}`;
+    const response = await batchBody([
+      {
+        fallbackName,
+        // Nameless frontmatter: the id must be the slug the folder and
+        // listSkills() report, not the raw folder name (mrcfps PR #8754
+        // review).
+        skillMd: `# ${fallbackName}\n\nNo frontmatter name here.\n`,
+      },
+      {
+        // Slugifies to an empty string: the item must fail, not import.
+        fallbackName: '!!!',
+        skillMd: `# no slug\n\nAlso nameless.\n`,
+      },
+    ]);
+    expect(response.status).toBe(200);
+    const { results } = (await response.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(results[0]).toMatchObject({ name: slug, status: 'imported', id: slug });
+    expect(existsSync(path.join(process.env.OD_DATA_DIR!, 'skills', slug, 'SKILL.md'))).toBe(true);
+    expect(results[1]).toMatchObject({ name: '!!!', status: 'failed', code: 'BAD_REQUEST' });
+  });
+
   it('fails items whose side files escape the folder or carry dotfiles, leaving nothing behind', async () => {
     const suffix = Date.now();
     const first = `batch-escape-${suffix}`;

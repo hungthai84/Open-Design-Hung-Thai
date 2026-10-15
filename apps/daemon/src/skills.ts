@@ -1003,9 +1003,11 @@ export interface SkillFolderImportInput {
 }
 
 // Derives the skill id for a folder import the same way listSkills() does:
-// frontmatter `name` when present, else the folder name. Needed before the
-// import so the route can run the workspace-identity conflict check; the
-// id must match what a later listSkills() reports for the same folder.
+// frontmatter `name` when present, else the slugified folder name — with no
+// frontmatter name, listSkills() falls back to the directory basename, which
+// is slugifySkillName(folderName). Needed before the import so the route can
+// run the workspace-identity conflict check; the id must match what a later
+// listSkills() reports for the same folder.
 export function resolveSkillFolderImportName(input: SkillFolderImportInput): string {
   const skillMd = typeof input?.skillMd === "string" ? input.skillMd : "";
   if (!skillMd.trim()) {
@@ -1013,9 +1015,17 @@ export function resolveSkillFolderImportName(input: SkillFolderImportInput): str
   }
   const { data } = parseFrontmatter(skillMd);
   const name = asSkillFrontmatter(data).name;
+  if (typeof name === "string" && name) return name;
   const fallbackName =
     typeof input?.fallbackName === "string" ? input.fallbackName.trim() : "";
-  return typeof name === "string" && name ? name : fallbackName;
+  const slug = slugifySkillName(fallbackName);
+  if (!slug) {
+    throw new SkillImportError(
+      "BAD_REQUEST",
+      "skill name must produce a valid slug (a-z, 0-9, dash)",
+    );
+  }
+  return slug;
 }
 
 // Validates one companion-file path and records it in `seen`. Companion
