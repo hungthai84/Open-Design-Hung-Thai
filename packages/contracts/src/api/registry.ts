@@ -278,6 +278,32 @@ export interface SkillImportResponse {
   skill: SkillSummary;
 }
 
+// Body shape for POST /api/skills/import-batch. Each item is a plain
+// SkillImportRequest; the daemon imports them independently and never lets
+// one malformed or conflicting item abort the rest (partial success).
+export interface SkillBatchImportRequest {
+  skills: SkillImportRequest[];
+}
+
+export type SkillBatchImportItemStatus = 'imported' | 'skipped' | 'failed';
+
+// Per-skill outcome for a batch import. `skipped` covers duplicate/conflict
+// cases (including a name repeated within the batch itself); `failed` covers
+// malformed items (missing name/body) and internal errors. `code`/`error`
+// carry the daemon error code and message for anything not imported.
+export interface SkillBatchImportItemResult {
+  name: string;
+  status: SkillBatchImportItemStatus;
+  id?: string;
+  slug?: string;
+  code?: string;
+  error?: string;
+}
+
+export interface SkillBatchImportResponse {
+  results: SkillBatchImportItemResult[];
+}
+
 // Body for PUT /api/skills/:id — update an existing skill's SKILL.md.
 // The route param resolves to the canonical skill id; the daemon refuses
 // updates whose body `name` differs from that id (rename = delete +

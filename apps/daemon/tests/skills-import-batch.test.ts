@@ -1,0 +1,147 @@
+import type http from 'node:http';
+import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { getWorkspaceResourceByResourceId, openDatabase } from '../src/db.js';
+import { startServer } from '../src/server.js';
+
+let server: http.Server;
+let baseUrl: string;
+let shutdown: (() => Promise<void> | void) | undefined;
+
+beforeAll(async () => {
+  const started = (await startServer({ port: 0, returnServer: true })) as {
+    url: string;
+    server: http.Server;
+    shutdown?: () => Promise<void> | void;
+  };
+  baseUrl = started.url;
+  server = started.server;
+  shutdown = started.shutdown;
+});
+
+afterAll(async () => {
+  await Promise.resolve(shutdown?.());
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+function batchBody(
+  items: Array<Record<string, unknown>>,
+  headers: Record<string, string> = {},
+) {
+  return fetch(`${baseUrl}/api/skills/import-batch`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({ skills: items }),
+  });
+}
+
+function skillItem(name: string, body = `# ${name}\n\nDo the thing.`) {
+  return { name, description: `${name} fixture`, body };
+}
+
+describe('POST /api/skills/import-batch', () => {
+  it('imports independent items and reports per-skill outcomes (partial success)', async () => {
+    const suffix = Date.now();
+    // Pre-existing user skill: the duplicate item must not abort the batch.
+    const seeded = await fetch(`${baseUrl}/api/skills/import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(skillItem(`batch-seeded-${suffix}`)),
+    });
+    expect(seeded.status).toBe(201);
+    await seeded.json();
+
+    const response = await batchBody([
+      skillItem(`batch-good-${suffix}`),
+      skillItem(`batch-seeded-${suffix}`),
+      { name: `batch-empty-body-${suffix}`, body: '   ' },
+      { body: '# nameless' },
+    ]);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    const results = payload.results;
+    expect(results).toHaveLength(4);
+
+    expect(results[0]).toMatchObject({
+      name: `batch-good-${suffix}`,
+      status: 'imported',
+      id: `batch-good-${suffix}`,
+    });
+    expect(existsSync(
+      path.join(process.env.OD_DATA_DIR!, 'skills', `batch-good-${suffix}`, 'SKILL.md'),
+    )).toBe(true);
+
+    expect(results[1]).toMatchObject({
+      name: `batch-seeded-${suffix}`,
+      status: 'skipped',
+    });
+    expect(String(results[1]!.code)).toBeTruthy();
+
+    expect(results[2]).toMatchObject({
+      name: `batch-empty-body-${suffix}`,
+      status: 'failed',
+      code: 'BAD_REQUEST',
+    });
+
+    expect(results[3]).toMatchObject({ name: '', status: 'failed', code: 'BAD_REQUEST' });
+  });
+
+  it('reports a within-batch duplicate as skipped without blocking the first import', async () => {
+    const name = `batch-twice-${Date.now()}`;
+    const response = await batchBody([skillItem(name), skillItem(name)]);
+    expect(response.status).toBe(200);
+    const { results } = (await response.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(results[0]).toMatchObject({ name, status: 'imported' });
+    expect(results[1]).toMatchObject({ name, status: 'skipped', code: 'CONFLICT' });
+  });
+
+  it('rejects a malformed batch body before touching the filesystem', async () => {
+    for (const body of [{}, { skills: [] }, { skills: 'nope' }]) {
+      const response = await fetch(`${baseUrl}/api/skills/import-batch`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+      await response.text();
+    }
+  });
+
+  it('binds imported items to the acting workspace and skips ids owned by another member', async () => {
+    const name = `batch-ws-${Date.now()}`;
+    const first = await batchBody(
+      [skillItem(name)],
+      { 'x-od-workspace-id': 'ws-batch-a', 'x-od-workspace-member-id': 'member-batch-a' },
+    );
+    expect(first.status).toBe(200);
+    const { results } = (await first.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    const db = openDatabase(process.cwd(), { dataDir: process.env.OD_DATA_DIR! });
+    expect(results[0]).toMatchObject({ name, status: 'imported' });
+    const binding = getWorkspaceResourceByResourceId(db, 'skill', name);
+    expect(binding?.workspaceId).toBe('ws-batch-a');
+    expect(binding?.visibility).toBe('personal');
+
+    const second = await batchBody(
+      [skillItem(name)],
+      { 'x-od-workspace-id': 'ws-batch-b', 'x-od-workspace-member-id': 'member-batch-b' },
+    );
+    expect(second.status).toBe(200);
+    const secondPayload = (await second.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(secondPayload.results[0]).toMatchObject({
+      name,
+      status: 'skipped',
+      code: 'WORKSPACE_RESOURCE_ID_CONFLICT',
+    });
+  });
+});

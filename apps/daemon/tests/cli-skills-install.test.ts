@@ -1,7 +1,9 @@
 import http from 'node:http';
 import { execFile } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve as pathResolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join as joinPath, resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -52,6 +54,16 @@ describe('od skill CLI', () => {
             res.statusCode = 404;
             res.end(JSON.stringify({ error: 'skill not found' }));
           }
+          return;
+        }
+        if (req.url === '/api/skills/import-batch') {
+          const skills = JSON.parse(body)?.skills ?? [];
+          res.end(JSON.stringify({
+            results: skills.map((skill: { name: string }) => ({
+              name: skill.name,
+              status: 'imported',
+            })),
+          }));
           return;
         }
         res.end(JSON.stringify({
@@ -230,5 +242,46 @@ describe('od skill CLI', () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('--workspace-member');
     expect(requests).toHaveLength(0);
+  });
+
+  it('skill import batch-posts every skill folder under the picked directory', async () => {
+    const parent = mkdtempSync(joinPath(tmpdir(), 'od-skill-import-'));
+    try {
+      mkdirSync(joinPath(parent, 'alpha'));
+      writeFileSync(
+        joinPath(parent, 'alpha', 'SKILL.md'),
+        '---\nname: alpha-skill\ndescription: Alpha fixture\n---\n\n# Alpha\n',
+      );
+      mkdirSync(joinPath(parent, 'beta'));
+      writeFileSync(joinPath(parent, 'beta', 'SKILL.md'), '# Beta has no frontmatter\n');
+      mkdirSync(joinPath(parent, 'not-a-skill'));
+
+      const result = await runCli([
+        'skill',
+        'import',
+        parent,
+        '--daemon-url',
+        baseUrl,
+        '--json',
+      ]);
+
+      expect(result.code).toBe(0);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ method: 'POST', url: '/api/skills/import-batch' });
+      const sent = JSON.parse(requests[0]!.body);
+      expect(sent.skills).toHaveLength(2);
+      expect(sent.skills[0]).toMatchObject({
+        name: 'alpha-skill',
+        description: 'Alpha fixture',
+      });
+      expect(sent.skills[1]).toMatchObject({ name: 'beta' });
+      const printed = JSON.parse(result.stdout);
+      expect(printed.results).toEqual([
+        { name: 'alpha-skill', status: 'imported' },
+        { name: 'beta', status: 'imported' },
+      ]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });

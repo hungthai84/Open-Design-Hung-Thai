@@ -104,4 +104,48 @@ describe('ExtensionsMarketplace create dialog layout (#110)', () => {
     // The row itself sits in the card's content column.
     expect(row!.closest('article')).not.toBeNull();
   });
+
+  it('imports a parent folder of skills through the batch endpoint and lists per-skill outcomes (#8753)', async () => {
+    const innerFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/skills/import-batch') {
+        return jsonResponse({
+          results: [
+            { name: 'alpha-skill', status: 'imported', id: 'alpha-skill' },
+            { name: 'dupeskill', status: 'skipped', code: 'CONFLICT', error: 'already exists' },
+          ],
+        });
+      }
+      return innerFetch(input, init);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { container } = await openCreateDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Skill' }));
+
+    const skillFile = (relativePath: string, content: string) => {
+      const file = new File([content], 'SKILL.md', { type: 'text/markdown' });
+      Object.defineProperty(file, 'webkitRelativePath', { value: relativePath });
+      return file;
+    };
+    const files = [
+      skillFile('my-skills/alpha/SKILL.md', '---\nname: alpha-skill\n---\n\n# Alpha\n'),
+      skillFile('my-skills/beta/SKILL.md', '---\nname: dupeskill\n---\n\n# Beta\n'),
+    ];
+    const folderInput = container.querySelector('input[webkitdirectory]');
+    expect(folderInput).not.toBeNull();
+    fireEvent.change(folderInput!, { target: { files } });
+    fireEvent.click(screen.getByTestId('plugin-create-upload-folder'));
+
+    const results = await screen.findByTestId('skill-batch-results');
+    expect(results.textContent).toContain('alpha-skill');
+    expect(results.textContent).toContain('Imported');
+    expect(results.textContent).toContain('dupeskill');
+    expect(results.textContent).toContain('Skipped');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/skills/import-batch',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
 });
