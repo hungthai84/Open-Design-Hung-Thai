@@ -687,6 +687,28 @@ describe('POST /api/provider/models', () => {
 });
 
 describe('POST /api/test/connection provider mode', () => {
+  it('tests Databricks Anthropic with bearer authentication', async () => {
+    const fetchMock = passThroughOrUpstream((url, init) => {
+      expect(url).toBe('https://acme.cloud.databricks.com/ai-gateway/anthropic/v1/messages');
+      expect(init?.headers).toMatchObject({ authorization: 'Bearer workspace-secret' });
+      expect(init?.headers).not.toHaveProperty('x-api-key');
+      return jsonResponse({ content: [{ type: 'text', text: 'ok' }] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await realFetch(`${baseUrl}/api/test/connection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'provider',
+        protocol: 'anthropic',
+        baseUrl: 'https://acme.cloud.databricks.com/ai-gateway/anthropic/v1',
+        apiKey: 'workspace-secret',
+        model: 'system.ai.claude-sonnet-4-5',
+      }),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ ok: true, kind: 'success' });
+  });
   it('reports success and returns the model sample for an Anthropic 200', async () => {
     vi.stubGlobal(
       'fetch',
