@@ -1,5 +1,5 @@
 import type { ByokChatProviderConfig } from '@open-design/contracts';
-import { isDatabricksAnthropicGateway } from '../integrations/databricks-gateway.js';
+import { isDatabricksAnthropicGateway, isDatabricksOpenAIGateway } from '../integrations/databricks-gateway.js';
 
 export const BYOK_OPENCODE_AGENT_ID = 'byok-opencode';
 export const BYOK_OPENCODE_PROVIDER_ID = 'open-design-byok';
@@ -172,17 +172,6 @@ function isRealOpenAIHost(baseUrl: string): boolean {
     return new URL(baseUrl).hostname === 'api.openai.com';
   } catch {
     return true;
-  }
-}
-
-function isDatabricksOpenAIGateway(baseUrl: string): boolean {
-  try {
-    const url = new URL(baseUrl);
-    return url.protocol === 'https:'
-      && /\.(?:cloud\.databricks\.com|azuredatabricks\.net|gcp\.databricks\.com)$/.test(url.hostname)
-      && url.pathname.replace(/\/+$/, '') === '/ai-gateway/mlflow/v1';
-  } catch {
-    return false;
   }
 }
 

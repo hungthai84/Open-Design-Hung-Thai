@@ -62,6 +62,12 @@ chat-completions adapter. The real `api.openai.com` host and HTTPS Databricks
 workspace hosts (`*.cloud.databricks.com`, `*.azuredatabricks.net`, or
 `*.gcp.databricks.com`) with the `/ai-gateway/mlflow/v1` path use the OpenAI
 Responses adapter, which supports reasoning together with function tools during generation.
+
+For `protocol: "anthropic"`, the HTTPS Databricks workspace hosts listed above
+with the `/ai-gateway/anthropic/v1` path use bearer authentication. Other
+Anthropic endpoints keep the standard `x-api-key` authentication, including
+custom hosts that use the same gateway path.
+
 For local model servers in Docker, remember that `localhost` refers to the
 container, not the host.
 

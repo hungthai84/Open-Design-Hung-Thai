@@ -10,11 +10,15 @@ import {
 import { byokOpenCodeAgentDef } from '../../src/runtimes/defs/byok-opencode.js';
 
 describe('byok-opencode runtime config', () => {
-  it('uses the Databricks Anthropic gateway and bearer auth without embedding the token', () => {
+  it.each([
+    'https://acme.cloud.databricks.com/ai-gateway/anthropic/v1',
+    'https://adb-1234567890123456.7.azuredatabricks.net/ai-gateway/anthropic/v1',
+    'https://1234567890123456.7.gcp.databricks.com/ai-gateway/anthropic/v1',
+  ])('uses the Databricks Anthropic gateway at %s with bearer auth without embedding the token', (baseUrl) => {
     const anthropic = buildOpenCodeByokProviderConfig({
       protocol: 'anthropic',
       apiKey: 'workspace-secret',
-      baseUrl: 'https://acme.cloud.databricks.com/ai-gateway/anthropic/v1',
+      baseUrl,
     }, 'system.ai.claude-sonnet-4-5');
     expect(anthropic?.env).toEqual({ [BYOK_OPENCODE_API_KEY_ENV]: 'workspace-secret' });
     expect(JSON.stringify(anthropic?.config)).not.toContain('workspace-secret');
@@ -22,7 +26,7 @@ describe('byok-opencode runtime config', () => {
       [BYOK_OPENCODE_PROVIDER_ID]: {
         npm: '@ai-sdk/anthropic',
         options: {
-          baseURL: 'https://acme.cloud.databricks.com/ai-gateway/anthropic/v1',
+          baseURL: baseUrl,
           apiKey: 'unused',
           headers: {
             authorization: `Bearer {env:${BYOK_OPENCODE_API_KEY_ENV}}`,
@@ -31,6 +35,24 @@ describe('byok-opencode runtime config', () => {
         },
       },
     } });
+  });
+
+  it.each([
+    'https://gateway.example/ai-gateway/anthropic/v1',
+    'https://acme.cloud.databricks.com.gateway.example/ai-gateway/anthropic/v1',
+  ])('keeps Anthropic API-key auth for a non-Databricks matching-path endpoint: %s', (baseUrl) => {
+    const out = buildOpenCodeByokProviderConfig({
+      protocol: 'anthropic',
+      apiKey: 'custom-secret',
+      baseUrl,
+    }, 'custom-model');
+    expect(out?.config).toMatchObject({ provider: {
+      [BYOK_OPENCODE_PROVIDER_ID]: {
+        npm: '@ai-sdk/anthropic',
+        options: { apiKey: `{env:${BYOK_OPENCODE_API_KEY_ENV}}` },
+      },
+    } });
+    expect(out?.config).not.toHaveProperty(`provider.${BYOK_OPENCODE_PROVIDER_ID}.options.headers`);
   });
 
   it.each([
