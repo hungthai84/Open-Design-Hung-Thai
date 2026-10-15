@@ -4262,7 +4262,7 @@ function OnboardingByokSetupPanel({
       </label>
       <div className="onboarding-view__compact-fields">
         <label className="onboarding-view__inline-field">
-          <span>{databricksPreset ? 'Workspace URL' : t('settings.baseUrl')}</span>
+          <span>{databricksPreset ? t('settings.databricksWorkspaceUrl') : t('settings.baseUrl')}</span>
           <input
             type="url"
             inputMode="url"
@@ -4287,7 +4287,7 @@ function OnboardingByokSetupPanel({
         ) : (
           <label className="onboarding-view__inline-field">
             <span>
-              {databricksPreset ? 'Model service name' : useDeploymentInput
+              {databricksPreset ? t('settings.databricksModelServiceName') : useDeploymentInput
                 ? t('settings.azureDeploymentModel')
                 : t('settings.model')}
             </span>

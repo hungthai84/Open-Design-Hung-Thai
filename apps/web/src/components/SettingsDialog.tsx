@@ -5677,7 +5677,7 @@ export function SettingsDialog({
                   baseUrlPlaceholder={baseUrlPlaceholder}
                   baseUrlReadOnly={baseUrlReadOnly}
                   labels={{
-                    baseUrl: isDatabricksPreset(cfg.apiProviderBaseUrl) ? 'Workspace URL' : t('settings.baseUrl'),
+                    baseUrl: isDatabricksPreset(cfg.apiProviderBaseUrl) ? t('settings.databricksWorkspaceUrl') : t('settings.baseUrl'),
                     required: t('settings.required'),
                     customize: t('settings.baseUrlCustomize'),
                     invalid: t('settings.baseUrlInvalid'),
@@ -5734,7 +5734,7 @@ export function SettingsDialog({
                 labels={{
                   customModel: t('settings.modelCustom'),
                   customModelLabel: isDatabricksPreset(cfg.apiProviderBaseUrl)
-                    ? 'Model service name'
+                    ? t('settings.databricksModelServiceName')
                     : apiProtocol === 'azure'
                     ? t('settings.azureCustomDeploymentName')
                     : t('settings.modelCustomLabel'),
@@ -5745,7 +5745,7 @@ export function SettingsDialog({
                     : t('settings.modelCustomPlaceholder'),
                   fetchModelsUnsupported: t('settings.fetchModelsUnsupported'),
                   model: isDatabricksPreset(cfg.apiProviderBaseUrl)
-                    ? 'Model service name'
+                    ? t('settings.databricksModelServiceName')
                     : apiProtocol === 'azure'
                     ? t('settings.azureDeploymentModel')
                     : t('settings.model'),
