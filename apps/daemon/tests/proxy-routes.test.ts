@@ -94,6 +94,8 @@ describe('API proxy routes', () => {
     expect(upstream?.[0]).toBe('https://acme.cloud.databricks.com/ai-gateway/anthropic/v1/messages');
     expect(upstream?.[1]?.headers).toMatchObject({ authorization: 'Bearer workspace-secret' });
     expect(upstream?.[1]?.headers).not.toHaveProperty('x-api-key');
+    expect(new Headers(upstream?.[1]?.headers).has('Databricks-Model-Provider-Service')).toBe(false);
+    expect(JSON.parse(String(upstream?.[1]?.body))).toMatchObject({ model: 'system.ai.claude-sonnet-4-5' });
   });
 
   it.each([

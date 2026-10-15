@@ -692,6 +692,8 @@ describe('POST /api/test/connection provider mode', () => {
       expect(url).toBe('https://acme.cloud.databricks.com/ai-gateway/anthropic/v1/messages');
       expect(init?.headers).toMatchObject({ authorization: 'Bearer workspace-secret' });
       expect(init?.headers).not.toHaveProperty('x-api-key');
+      expect(new Headers(init?.headers).has('Databricks-Model-Provider-Service')).toBe(false);
+      expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'system.ai.claude-sonnet-4-5' });
       return jsonResponse({ content: [{ type: 'text', text: 'ok' }] });
     });
     vi.stubGlobal('fetch', fetchMock);
