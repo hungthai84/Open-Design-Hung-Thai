@@ -33,19 +33,41 @@ describe('byok-opencode runtime config', () => {
     } });
   });
 
-  it('uses the Responses transport for Databricks model services with reasoning and tools', () => {
+  it.each([
+    'https://acme.cloud.databricks.com/ai-gateway/mlflow/v1',
+    'https://adb-1234567890123456.7.azuredatabricks.net/ai-gateway/mlflow/v1',
+    'https://1234567890123456.7.gcp.databricks.com/ai-gateway/mlflow/v1',
+  ])('uses the Responses transport for Databricks model services at %s', (baseUrl) => {
     const openai = buildOpenCodeByokProviderConfig({
       protocol: 'openai',
       apiKey: 'other-secret',
-      baseUrl: 'https://acme.cloud.databricks.com/ai-gateway/mlflow/v1',
+      baseUrl,
     }, 'system.ai.gpt-6-luna');
     expect(openai?.config).toMatchObject({ provider: {
       [BYOK_OPENCODE_PROVIDER_ID]: {
         npm: '@ai-sdk/openai',
-        options: { baseURL: 'https://acme.cloud.databricks.com/ai-gateway/mlflow/v1' },
+        options: { baseURL: baseUrl },
       },
     } });
   });
+
+  it.each([
+    'https://gateway.example/ai-gateway/mlflow/v1',
+    'https://acme.cloud.databricks.com.gateway.example/ai-gateway/mlflow/v1',
+    'https://fakeazuredatabricks.net/ai-gateway/mlflow/v1',
+    'http://acme.cloud.databricks.com/ai-gateway/mlflow/v1',
+    'https://acme.cloud.databricks.com/v1',
+  ])('keeps Chat Completions for non-Databricks gateway URLs: %s', (baseUrl) => {
+    const out = buildOpenCodeByokProviderConfig({
+      protocol: 'openai',
+      apiKey: 'test-key',
+      baseUrl,
+    }, 'custom-model');
+    expect(out?.config).toMatchObject({ provider: {
+      [BYOK_OPENCODE_PROVIDER_ID]: { npm: '@ai-sdk/openai-compatible' },
+    } });
+  });
+
   it('gates non-interactive permission bypass on the installed OpenCode capability', () => {
     agentCapabilities.delete('byok-opencode');
     expect(byokOpenCodeAgentDef.helpArgs).toEqual(['run', '--help']);

@@ -175,6 +175,17 @@ function isRealOpenAIHost(baseUrl: string): boolean {
   }
 }
 
+function isDatabricksOpenAIGateway(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === 'https:'
+      && /\.(?:cloud\.databricks\.com|azuredatabricks\.net|gcp\.databricks\.com)$/.test(url.hostname)
+      && url.pathname.replace(/\/+$/, '') === '/ai-gateway/mlflow/v1';
+  } catch {
+    return false;
+  }
+}
+
 function buildProviderEntry(
   protocol: ByokChatProviderConfig['protocol'],
   baseUrl: string,
@@ -238,9 +249,7 @@ function buildProviderEntry(
     case 'openai':
       // OpenAI and Databricks' unified gateway support Responses, including
       // reasoning with tools. Other compatible hosts use Chat Completions.
-      if (isRealOpenAIHost(baseUrl) || (
-        baseUrl.startsWith('https://') && safeUrlPathname(baseUrl) === '/ai-gateway/mlflow/v1'
-      )) {
+      if (isRealOpenAIHost(baseUrl) || isDatabricksOpenAIGateway(baseUrl)) {
         return {
           npm: '@ai-sdk/openai',
           options: {

@@ -58,9 +58,10 @@ with the **top-level** `model`.
 | `clientRequestId` | Optional stable ID for one logical submission; reuse it when retrying the same request after a transport failure. Use a new ID for a new prompt. |
 
 For `protocol: "openai"`, a custom host uses the OpenAI-compatible
-chat-completions adapter. The real `api.openai.com` host and Databricks Unity
-Gateway's `/ai-gateway/mlflow/v1` path use the OpenAI Responses adapter, which
-supports reasoning together with function tools during generation.
+chat-completions adapter. The real `api.openai.com` host and HTTPS Databricks
+workspace hosts (`*.cloud.databricks.com`, `*.azuredatabricks.net`, or
+`*.gcp.databricks.com`) with the `/ai-gateway/mlflow/v1` path use the OpenAI
+Responses adapter, which supports reasoning together with function tools during generation.
 For local model servers in Docker, remember that `localhost` refers to the
 container, not the host.
 
