@@ -62,7 +62,35 @@ chat-completions adapter. The real `api.openai.com` host uses the OpenAI adapter
 For local model servers in Docker, remember that `localhost` refers to the
 container, not the host.
 
-## Submit a run
+## Submit through the CLI
+
+With a daemon reachable through your existing `od` CLI setup, `od run start`
+accepts the same `ByokChatProviderConfig` JSON object through
+`--byok-provider-file <path|->`. Use `--agent byok-opencode` and an explicit
+`--model`. Provider fields are validated by the daemon, just as for REST.
+
+For Databricks Unity Gateway, use `anthropic` with a base URL ending in
+`/ai-gateway/anthropic/v1`, or `openai` with `/ai-gateway/mlflow/v1`.
+`BYOK_MODEL` is the model service name, such as `system.ai.claude-sonnet-4-5`.
+These are inputs to the example, not new daemon environment variables.
+
+```bash
+jq -n '{
+  protocol: "anthropic",
+  apiKey: env.BYOK_API_KEY,
+  baseUrl: env.BYOK_BASE_URL,
+  model: env.BYOK_MODEL
+}' | od run start --daemon-url "$OD_URL" --project "$PROJECT_ID" \
+  --agent byok-opencode --model "$BYOK_MODEL" \
+  --byok-provider-file - --prompt-file prompt.txt --json
+```
+
+Keep the token in a secret environment variable or a protected JSON file;
+the option takes a file path, not inline credentials. Only one of
+`--byok-provider-file` and `--prompt-file` can read stdin. For a daemon that
+requires an explicit bearer header, use the authenticated REST example below.
+
+## Submit a run through REST
 
 These environment variables are inputs to the example script, not new daemon
 configuration options. Export `OD_API_TOKEN` and `BYOK_API_KEY` through your
