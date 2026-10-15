@@ -5,7 +5,12 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   composeSystemPrompt as composeContractsSystemPrompt,
+  composeOdNextStrategyBundleHeadV2,
+  odNextStrategyRecipeIdentityV2,
+  parseOdNextPromptBundleV2,
+  serializeOdNextPromptBundleV2,
   type AppliedPluginSnapshot,
+  type ExecutionProfile,
   type InstalledPluginRecord,
   type OdNextStrategyRequestRecipeV2,
   type PluginPipeline,
@@ -58,12 +63,13 @@ async function resolveRecipe(input: {
   bundledPluginsDir?: string;
   enabled?: boolean;
   loadAtomBodies?: typeof loadBundledAtomBodiesStrict;
+  executionProfile?: ExecutionProfile;
 } = {}): Promise<OdNextStrategyRequestRecipeV2 | null> {
   const loader = input.loadAtomBodies ?? loadBundledAtomBodiesStrict;
   return resolveOdNextStrategyRequestRecipeV2({
     bundledPluginsDir: input.bundledPluginsDir ?? BUNDLED_ROOT,
     snapshot: input.activeSnapshot ?? snapshot,
-    executionProfile: 'filesystem',
+    executionProfile: input.executionProfile ?? 'filesystem',
     atomPromptsEnabled: input.enabled ?? true,
     loadAtomBodies: (ids) => loader(db, ids),
   });
@@ -100,6 +106,55 @@ afterAll(() => {
 });
 
 describe('OD Next V2 request recipe wiring', () => {
+  it.each(
+    (['prototype', 'ppt', 'marketing', 'hyperframes'] as const).flatMap((taskType) =>
+      (['filesystem', 'text_artifact'] as const).map((executionProfile) => ({ taskType, executionProfile })),
+    ),
+  )('loads user-facing communication into the $taskType $executionProfile bundle', async ({ taskType, executionProfile }) => {
+    const binding = createBundledStrategyBindingV2({ plugin, taskType });
+    const applied = applyPlugin({ plugin, inputs: {}, registry: EMPTY_REGISTRY, internalStrategyBinding: binding }).result.appliedPlugin;
+    const recipe = await resolveRecipe({
+      activeSnapshot: { ...applied, snapshotId: `communication-${taskType}-${executionProfile}` },
+      executionProfile,
+    });
+    if (!recipe) throw new Error('expected real OD Next recipe');
+
+    const head = composeOdNextStrategyBundleHeadV2(recipe);
+    const bundle = parseOdNextPromptBundleV2(serializeOdNextPromptBundleV2({
+      ...head,
+      taskMetadata: { taskType },
+      context: { recipeIdentity: odNextStrategyRecipeIdentityV2(recipe) },
+      userFirstPrompt: '做一个卡牌图鉴；保留 2:3 卡面和问号卡剪影。',
+    }));
+    // This proves the real asset reaches both composers and the serialized
+    // runtime tree; model adherence needs separate observed-output evidence.
+    const core = bundle.coreSystemPrompt.coreStrategy;
+    expect(core).toContain('Freeze the relevant decisions in the Task Profile Design Spec before Build');
+    expect(core).toContain('All Build Packages share that same version');
+    expect(core).not.toContain('Resolve routine implementation\nparameters while building');
+    expect(core).toContain('all user-visible prose: plans, progress updates, and final replies');
+    expect(core).toContain('Never assume\nan unknown connection is real or simulated');
+    expect(core).toContain('When the user asks about sources, design specifications, implementation,');
+    expect(core).toContain('Preserve necessary attribution');
+    expect(core).toContain('Preserve both the scope and certainty of facts');
+    expect(core).toContain('completeness means retaining every known value, not filling gaps with new design');
+    expect(core).toContain('Do not prepend a kickoff or replay earlier progress');
+    expect(core).toContain('Keep stock-library and supplier names in source records by default');
+    expect(core).toContain('required attribution or licensing');
+    expect(bundle.coreSystemPrompt.outputContract).toContain('Follow the Core communication guidance');
+    expect(bundle.coreSystemPrompt.outputContract).not.toContain('design direction, implementation steps');
+    expect(bundle.sessionSkills.taskTypeSkill.body).toContain('They are work specifications, not');
+    expect(bundle.sessionSkills.taskTypeSkill.body).toContain('Never silently omit a missing field');
+    expect(bundle.sessionSkills.generalOrchestrationSkill.body)
+      .toContain('Follow the Core communication guidance');
+    expect(bundle.coreSystemPrompt.nativeExecution.profile).toBe(executionProfile);
+    expect(bundle.userFirstPrompt).toBe('做一个卡牌图鉴；保留 2:3 卡面和问号卡剪影。');
+    const daemonPrompt = composeSystemPrompt({ odNextStrategyRecipe: recipe });
+    expect(daemonPrompt).toBe(composeContractsSystemPrompt({ odNextStrategyRecipe: recipe }));
+    expect(daemonPrompt).toContain(core);
+    expect(recipe.activeStages.map((stage) => stage.name)).toEqual(['discovery', 'plan', 'generate']);
+  });
+
   it('composes the canonical motion skill with Core and orchestration for the motion route', async () => {
     const binding = createBundledStrategyBindingV2({ plugin, taskType: 'motion-design' });
     const motionSnapshot = applyPlugin({
@@ -333,7 +388,7 @@ describe('OD Next V2 request recipe wiring', () => {
     expect(prompt).not.toContain('open-design.plan-contract/v2');
     expect(prompt).not.toContain('open-design.strategy-state/v2');
     expect(prompt).not.toContain('capabilitySnapshotHash');
-    expect(prompt).toContain('concise, actionable plan');
+    expect(prompt).toContain('focused design proposal');
     expect(prompt.split('\n').filter((line) => (
       line.startsWith('## Active stage:') || line.startsWith('### ')
     ))).toEqual(expect.arrayContaining([

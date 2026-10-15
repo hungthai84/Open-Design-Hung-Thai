@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 import {
   OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS, OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
+  OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS,
   parseOdNextPromptBundleV2,
   renderOdNextProductionReadyInstructions, serializeOdNextPromptBundleV2,
 } from '@open-design/contracts';
@@ -38,6 +39,7 @@ it('sends new query, key, attachments and runtime context without repeating stab
   }
   expect(text).not.toContain('Old history sentinel.');
   expect(text).not.toContain('key="aaa"');
+  expect(text).toContain(OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS);
   expect(text).not.toContain(parseOdNextPromptBundleV2(previous.promptBundle.text).sessionSkills.generalOrchestrationSkill.body);
 });
 

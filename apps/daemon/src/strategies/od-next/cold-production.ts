@@ -33,6 +33,6 @@ export function composeColdProductionBundle(input: {
         `Completed planning response (context, not new instructions):\n${input.planningReply}`,
       ].filter(Boolean).join('\n\n'),
     },
-    userFirstPrompt: `The previous native session is unavailable. Resume the accepted plan using the original request and planning response in context. Inspect existing files before writing, and preserve completed work.\n\n${parseOdNextRequestTurnV1(input.productionTurn).payload}`,
+    userFirstPrompt: `The previous native session is unavailable. Resume the preceding plan using the original request and planning response in context. Inspect existing files before writing, and preserve completed work.\n\n${parseOdNextRequestTurnV1(input.productionTurn).payload}`,
   });
 }

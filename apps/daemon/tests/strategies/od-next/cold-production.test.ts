@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   composeOdNextMarkerProductionTurn,
+  OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS,
   parseOdNextPromptBundleV2,
+  renderChatTurnHostProtocolInstructions,
   renderOdNextProductionReadyInstructions,
   serializeOdNextPromptBundleV2,
 } from '@open-design/contracts';
 import { composeColdProductionBundle } from '../../../src/strategies/od-next/cold-production.js';
 import { TEST_PROMPT_BUNDLE } from '../strategy-task-test-fixtures.js';
 
-it('freezes original context and complete plan while retiring only the request gate', () => {
+it.each(['frozen gate', 'current host instructions'] as const)('freezes context and retires only the %s', hostInstructions => {
   const bundle = parseOdNextPromptBundleV2(TEST_PROMPT_BUNDLE);
-  bundle.context.clientSystemPrompt = `${renderOdNextProductionReadyInstructions('abc123')}\n\n---\n\nOnly generate a standalone image.`;
+  const gate = hostInstructions === 'frozen gate'
+    ? renderOdNextProductionReadyInstructions('abc123')
+    : renderChatTurnHostProtocolInstructions('abc123', 'od_next_request').text;
+  bundle.context.clientSystemPrompt = `${gate}\n\n---\n\nOnly generate a standalone image.`;
   bundle.context.priorTranscript = 'user: Keep the dog blue.';
   bundle.context.formOverride = 'Answered discovery.';
   bundle.taskMetadata.attachments = '/frozen-input/dog reference.png';
@@ -25,11 +30,16 @@ it('freezes original context and complete plan while retiring only the request g
   expect(cold.sessionSkills).toEqual(bundle.sessionSkills);
   expect(cold.context.recipeIdentity).toEqual(bundle.context.recipeIdentity);
   expect(cold.taskMetadata.attachments).toBe(bundle.taskMetadata.attachments);
-  expect(cold.context.clientSystemPrompt).toBe('Only generate a standalone image.');
+  const retainedInstructions = hostInstructions === 'frozen gate'
+    ? '' : `${OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS}\n\n---\n\n`;
+  expect(cold.context.clientSystemPrompt).toBe(`${retainedInstructions}Only generate a standalone image.`);
   expect(cold.context.priorTranscript).toContain(bundle.userFirstPrompt);
   expect(cold.context.priorTranscript).toContain('Keep the dog blue.');
   expect(cold.context.priorTranscript).toContain('Plan: a blue dog image, no HTML. 中文 & <literal> preserved.');
   expect(cold.userFirstPrompt).toContain('This is the production turn');
+  expect(cold.userFirstPrompt).not.toContain('accepted plan');
+  expect(cold.userFirstPrompt).toContain('does not mean the user approved the plan');
+  expect(cold.userFirstPrompt).toContain(OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS);
   expect(cold.context.formOverride).toBeUndefined();
   expect(cold.taskMetadata.titleDirective).toBeUndefined();
 });

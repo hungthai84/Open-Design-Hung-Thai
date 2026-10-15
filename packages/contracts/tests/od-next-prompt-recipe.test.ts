@@ -386,6 +386,32 @@ describe('OD Next V2 prompt recipe', () => {
     expect(prompt).not.toContain('<open-design-plan-contract>');
     expect(prompt).not.toContain('<open-design-runtime-state>');
   });
+
+  it('keeps the host output contract aligned with user-facing plans', () => {
+    const bundle = composeOdNextStrategyBundleHeadV2(recipe);
+    expect(bundle.coreSystemPrompt.outputContract).toContain('Follow the Core communication guidance');
+    expect(bundle.coreSystemPrompt.outputContract).toContain('key user experiences');
+    expect(bundle.coreSystemPrompt.outputContract).not.toContain('design direction, implementation steps');
+  });
+
+  it('does not let an English host continuation change the reply language or audience', () => {
+    const production = composeOdNextMarkerProductionTurn({
+      taskExecutionId: 'task-communication', taskRunIndex: 1,
+    });
+    expect(production).toContain('not a new user request or a change of audience');
+    expect(production).toContain('current user request for all user-facing progress and final replies');
+    expect(production).toContain('Follow the Core communication guidance');
+  });
+
+  it('keeps automatic production distinct from user approval and completed delivery', () => {
+    const production = composeOdNextMarkerProductionTurn({
+      taskExecutionId: 'task-current-state', taskRunIndex: 1,
+    });
+    expect(production).not.toContain('accepted plan');
+    expect(production).toContain('does not mean the user approved the plan');
+    expect(production).toContain('Do not prepend a kickoff or replay earlier progress');
+    expect(production).toContain('Preserve both the scope and certainty of facts');
+  });
   it('keeps post-Build quality semantics out of the recipe structure and text', () => {
     const prompt = composeOdNextStrategyRequestPromptV2(recipe);
     expect(prompt).not.toMatch(/\bverification\b/i);

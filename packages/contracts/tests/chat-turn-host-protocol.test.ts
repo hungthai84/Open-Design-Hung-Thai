@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { renderChatTurnHostProtocolInstructions } from '../src/prompts/chat-turn-host-protocol.js';
+import { OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS, renderOdNextProductionReadyInstructions } from '../src/prompts/od-next-production-marker.js';
 
 const KEY = '0123456789abcdef';
 
@@ -22,6 +23,8 @@ describe('chat turn host protocol', () => {
     expect(result.doneMarker).toBe('');
     expect(result.nextSteps).toBe('');
     expect(result.artifactFocus).toBe('');
+    expect(result.text).toBe(`${renderOdNextProductionReadyInstructions(KEY)}\n\n---\n\n${OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS}`);
+    expect(result.text).toContain('including brief text before or between tool calls');
   });
   it('gates production markers on completed Production and emits nothing without a key', () => {
     const result = renderChatTurnHostProtocolInstructions(KEY, 'od_next_production');

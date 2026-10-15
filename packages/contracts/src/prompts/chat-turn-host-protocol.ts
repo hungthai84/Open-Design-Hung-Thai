@@ -1,6 +1,6 @@
 import { renderArtifactFocusInstruction } from '../api/artifact-focus-marker.js';
 import { renderDoneMarker } from '../api/done-marker.js';
-import { renderOdNextProductionReadyInstructions } from './od-next-production-marker.js';
+import { OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS, renderOdNextProductionReadyInstructions } from './od-next-production-marker.js';
 import { renderNextStepMarkerExample } from '../api/next-step-marker.js';
 import {
   PROMPT_LOCALE_EXEMPT_TERMS_SENTENCE,
@@ -89,7 +89,13 @@ export function renderChatTurnHostProtocolInstructions(
   locale?: string | undefined,
 ): ChatTurnHostProtocolInstructions {
   if (policy === 'od_next_request') {
-    return { doneMarker: '', nextSteps: '', artifactFocus: '', text: renderOdNextProductionReadyInstructions(key) };
+    const gate = renderOdNextProductionReadyInstructions(key);
+    return {
+      doneMarker: '', nextSteps: '', artifactFocus: '',
+      // Keep the gate byte-for-byte compatible with frozen tasks; the reply
+      // guidance is separate so recovery can still retire just that prefix.
+      text: gate ? `${gate}\n\n---\n\n${OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS}` : '',
+    };
   }
   if (!key) {
     return { doneMarker: '', nextSteps: '', artifactFocus: '', text: '' };

@@ -1,5 +1,6 @@
 import {
   OD_NEXT_PRODUCTION_MARKER_PROTOCOL,
+  OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS,
   parseOdNextPromptBundleV2,
   renderOdNextProductionReadyInstructions,
   type OdNextPromptBundleV2,
@@ -48,6 +49,7 @@ export function composeResumedRequest(task: Pick<StrategyTaskExecutionRecord, 'p
   const parts = [
     'Follow the current user request. For a new design deliverable, finish an actionable plan before production; do not build in the planning turn. For an existing actionable plan, continue directly when requested.',
     gate,
+    OD_NEXT_USER_FACING_REPLY_INSTRUCTIONS,
     contextDelta('Runtime capabilities', runtimeCapabilities(context.runtimeFacts), runtimeCapabilities(prior.context.runtimeFacts)),
     contextDelta('Runtime tool environment', context.runtimeToolEnvironment, prior.context.runtimeToolEnvironment),
     contextDelta('Workspace input references', context.requestInputFacts, prior.context.requestInputFacts),

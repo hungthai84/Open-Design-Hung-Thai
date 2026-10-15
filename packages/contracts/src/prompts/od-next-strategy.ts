@@ -413,7 +413,7 @@ This execution profile has no project-file tools. Produce only the complete decl
 const DISCOVERY_AND_PLANNING_SECTION = `## Discovery, planning, and Build surface
 
 You decide from the actual request whether to answer, directly edit, or plan before producing.
-A new design deliverable needs a separate planning turn. Write an actionable plan in prose,
+A new design deliverable needs a separate planning turn. Write a focused design proposal in prose,
 then the current keyed production-ready marker, and stop. Open Design starts production
 in the same session after the planning turn succeeds. Do not create or dispatch deliverables
 in the planning turn. A bounded direct edit may finish within the current turn without a marker.
