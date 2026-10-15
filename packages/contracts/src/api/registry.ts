@@ -278,11 +278,33 @@ export interface SkillImportResponse {
   skill: SkillSummary;
 }
 
-// Body shape for POST /api/skills/import-batch. Each item is a plain
-// SkillImportRequest; the daemon imports them independently and never lets
-// one malformed or conflicting item abort the rest (partial success).
+// One companion file inside a batch-imported skill folder. `path` is relative
+// to the skill folder (forward slashes, no dotfiles, no `..`); the daemon
+// materializes the bytes verbatim so references/, scripts/, assets/ and every
+// other side file survive the import instead of being dropped.
+export interface SkillBatchImportFile {
+  path: string;
+  contentBase64: string;
+}
+
+// One item of POST /api/skills/import-batch. Carries the ORIGINAL SKILL.md
+// text — the daemon materializes it verbatim and never rebuilds it from
+// parsed fields (a rebuild loses block-scalar descriptions, triggers, and
+// unknown frontmatter, and cannot carry companion files at all).
+export interface SkillBatchImportSkill {
+  // Original SKILL.md contents.
+  skillMd: string;
+  // Folder name used when the frontmatter carries no usable `name`.
+  fallbackName?: string;
+  // Companion files materialized alongside SKILL.md.
+  files?: SkillBatchImportFile[];
+}
+
+// Body shape for POST /api/skills/import-batch. The daemon imports items
+// independently and never lets one malformed or conflicting item abort the
+// rest (partial success).
 export interface SkillBatchImportRequest {
-  skills: SkillImportRequest[];
+  skills: SkillBatchImportSkill[];
 }
 
 export type SkillBatchImportItemStatus = 'imported' | 'skipped' | 'failed';

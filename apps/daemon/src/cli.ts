@@ -9860,6 +9860,9 @@ async function runSkillImport(rest) {
 
 // Collects /api/skills/import-batch items from a local folder: the folder
 // itself when it holds SKILL.md, otherwise every direct subfolder that does.
+// Each item carries the ORIGINAL SKILL.md plus companion files so the daemon
+// materializes the folder verbatim instead of rebuilding it from parsed
+// fields (which dropped side files and mangled block-scalar descriptions).
 function readSkillImportItemsFromDir(dir) {
   let entries;
   try {
@@ -9878,44 +9881,53 @@ function readSkillImportItemsFromDir(dir) {
       .map((entry) => joinPath(dir, entry.name))
       .filter((skillDir) =>
         readdirSync(skillDir).some((name) => name.toUpperCase() === 'SKILL.MD'));
-  const items = [];
-  for (const skillDir of skillDirs.sort()) {
-    const skillFile = joinPath(skillDir, 'SKILL.md');
-    let content;
-    try {
-      content = readFileSync(skillFile, 'utf8');
-    } catch (err) {
-      items.push({ name: basename(skillDir), description: '', body: '' });
-      continue;
-    }
-    const parsed = parseSkillImportMarkdown(content, basename(skillDir));
-    items.push({
-      name: parsed.name,
-      description: parsed.description,
-      body: parsed.body,
-      triggers: [],
-    });
-  }
-  return items;
+  return skillDirs.sort().map((skillDir) => readSkillImportItemFromDir(skillDir));
 }
 
-// Best-effort frontmatter split matching the daemon's import parsing: name
-// and description come from YAML frontmatter when present, the body is
-// everything after the opening block. A missing name falls back to the
-// folder name; the daemon remains the authority and reports bad items.
-function parseSkillImportMarkdown(content, fallbackName) {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (!match) return { name: fallbackName, description: '', body: content.trim() };
-  const block = match[1] ?? '';
-  const body = content.slice(match[0].length).trim();
-  const readString = (key) => {
-    const line = block
-      .split(/\r?\n/)
-      .find((candidate) => candidate.startsWith(`${key}:`));
-    if (!line) return '';
-    return (line.slice(key.length + 1).trim().replace(/^["']|["']$/g, '') || '').trim();
-  };
-  return { name: readString('name') || fallbackName, description: readString('description'), body };
+function readSkillImportItemFromDir(skillDir) {
+  let skillMd = '';
+  try {
+    skillMd = readFileSync(joinPath(skillDir, 'SKILL.md'), 'utf8');
+  } catch {
+    // Empty skillMd; the daemon reports this item as failed and the rest
+    // of the batch keeps going.
+  }
+  const files = [];
+  if (skillMd) collectSkillImportFiles(skillDir, '', 1, files);
+  return { fallbackName: basename(skillDir), skillMd, files };
+}
+
+function collectSkillImportFiles(absDir, relPrefix, depth, out) {
+  // Bounds mirror the daemon's side-file validation; the walk also refuses
+  // symlinks (same refusal as skill install) and dotfiles so a stray
+  // .DS_Store or link never fails or leaks into an import. Locals because
+  // the CLI dispatches at module-evaluation time, before module-level
+  // consts later in this file would initialize.
+  const MAX_FILES = 500;
+  const MAX_DEPTH = 6;
+  if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
+  let entries;
+  try {
+    entries = readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (out.length >= MAX_FILES) return;
+    if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
+    const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    if (rel.toUpperCase() === 'SKILL.MD') continue;
+    const abs = joinPath(absDir, entry.name);
+    if (entry.isDirectory()) {
+      collectSkillImportFiles(abs, rel, depth + 1, out);
+    } else if (entry.isFile()) {
+      try {
+        out.push({ path: rel, contentBase64: readFileSync(abs).toString('base64') });
+      } catch {
+        // Unreadable file: skip rather than fail the whole folder.
+      }
+    }
+  }
 }
 
 async function runSkillUninstall(rest) {

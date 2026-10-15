@@ -124,14 +124,16 @@ describe('ExtensionsMarketplace create dialog layout (#110)', () => {
     const { container } = await openCreateDialog();
     fireEvent.click(screen.getByRole('button', { name: 'Skill' }));
 
-    const skillFile = (relativePath: string, content: string) => {
-      const file = new File([content], 'SKILL.md', { type: 'text/markdown' });
+    const pickedFile = (relativePath: string, content: string) => {
+      const name = relativePath.split('/').pop() ?? 'file';
+      const file = new File([content], name, { type: 'text/markdown' });
       Object.defineProperty(file, 'webkitRelativePath', { value: relativePath });
       return file;
     };
     const files = [
-      skillFile('my-skills/alpha/SKILL.md', '---\nname: alpha-skill\n---\n\n# Alpha\n'),
-      skillFile('my-skills/beta/SKILL.md', '---\nname: dupeskill\n---\n\n# Beta\n'),
+      pickedFile('my-skills/alpha/SKILL.md', '---\nname: alpha-skill\n---\n\n# Alpha\n'),
+      pickedFile('my-skills/alpha/references/api.md', '# API\n'),
+      pickedFile('my-skills/beta/SKILL.md', '---\nname: dupeskill\n---\n\n# Beta\n'),
     ];
     const folderInput = container.querySelector('input[webkitdirectory]');
     expect(folderInput).not.toBeNull();
@@ -147,5 +149,17 @@ describe('ExtensionsMarketplace create dialog layout (#110)', () => {
       '/api/skills/import-batch',
       expect.objectContaining({ method: 'POST' }),
     );
+    // Companion files travel with the batch item so the daemon materializes
+    // the folder instead of rebuilding a lone SKILL.md (mrcfps PR #8754).
+    const batchCall = fetchMock.mock.calls.find(
+      (call) => call[0] === '/api/skills/import-batch',
+    );
+    const sent = JSON.parse(String((batchCall?.[1] as RequestInit).body));
+    expect(sent.skills[0]).toMatchObject({ fallbackName: 'alpha' });
+    expect(sent.skills[0].skillMd).toContain('name: alpha-skill');
+    expect(sent.skills[0].files).toEqual([
+      { path: 'references/api.md', contentBase64: btoa('# API\n') },
+    ]);
+    expect(sent.skills[1]).toMatchObject({ fallbackName: 'beta', files: [] });
   });
 });

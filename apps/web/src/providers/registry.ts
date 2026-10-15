@@ -483,11 +483,28 @@ export interface SkillBatchImportItemResult {
   error?: string;
 }
 
+// One companion file inside a batch-imported skill folder. Mirrors the
+// contracts type but is repeated here so the registry module is
+// self-describing for callers.
+export interface SkillBatchImportFile {
+  path: string;
+  contentBase64: string;
+}
+
+// One item of POST /api/skills/import-batch. Carries the ORIGINAL SKILL.md
+// plus companion files so the daemon materializes the folder verbatim
+// instead of rebuilding it from parsed fields.
+export interface SkillBatchImportSkill {
+  skillMd: string;
+  fallbackName?: string;
+  files?: SkillBatchImportFile[];
+}
+
 // Batch variant of `importSkill` (issue #8753): the daemon imports each
 // item independently and reports per-skill outcomes; one malformed or
 // conflicting item never blocks the rest (partial success).
 export async function importSkillsBatch(
-  skills: SkillImportInput[],
+  skills: SkillBatchImportSkill[],
   workspaceContext?: WorkspaceCollabContext | null,
 ): Promise<{ results: SkillBatchImportItemResult[] } | { error: SkillImportError }> {
   try {

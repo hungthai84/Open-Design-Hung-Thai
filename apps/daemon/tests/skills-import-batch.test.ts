@@ -1,5 +1,5 @@
 import type http from 'node:http';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -38,8 +38,12 @@ function batchBody(
   });
 }
 
-function skillItem(name: string, body = `# ${name}\n\nDo the thing.`) {
-  return { name, description: `${name} fixture`, body };
+function skillMdFor(name: string, body = `# ${name}\n\nDo the thing.`) {
+  return `---\nname: ${name}\ndescription: ${name} fixture\n---\n\n${body}`;
+}
+
+function skillItem(name: string, body?: string) {
+  return { fallbackName: name, skillMd: skillMdFor(name, body) };
 }
 
 describe('POST /api/skills/import-batch', () => {
@@ -49,7 +53,7 @@ describe('POST /api/skills/import-batch', () => {
     const seeded = await fetch(`${baseUrl}/api/skills/import`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(skillItem(`batch-seeded-${suffix}`)),
+      body: JSON.stringify({ name: `batch-seeded-${suffix}`, description: 'seed', body: '# seed' }),
     });
     expect(seeded.status).toBe(201);
     await seeded.json();
@@ -57,8 +61,8 @@ describe('POST /api/skills/import-batch', () => {
     const response = await batchBody([
       skillItem(`batch-good-${suffix}`),
       skillItem(`batch-seeded-${suffix}`),
-      { name: `batch-empty-body-${suffix}`, body: '   ' },
-      { body: '# nameless' },
+      { fallbackName: `batch-empty-${suffix}`, skillMd: '   ' },
+      { skillMd: '# nameless' },
     ]);
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -83,12 +87,89 @@ describe('POST /api/skills/import-batch', () => {
     expect(String(results[1]!.code)).toBeTruthy();
 
     expect(results[2]).toMatchObject({
-      name: `batch-empty-body-${suffix}`,
+      name: `batch-empty-${suffix}`,
       status: 'failed',
       code: 'BAD_REQUEST',
     });
 
     expect(results[3]).toMatchObject({ name: '', status: 'failed', code: 'BAD_REQUEST' });
+  });
+
+  it('materializes the original SKILL.md and companion files verbatim', async () => {
+    const suffix = Date.now();
+    const name = `batch-folder-${suffix}`;
+    // Block-scalar description + triggers + companion files: every part the
+    // old rebuild-from-parse path dropped (mrcfps PR #8754 review).
+    const skillMd = [
+      '---',
+      `name: ${name}`,
+      'description: |',
+      '  Line one of a block scalar.',
+      '  Line two survives only when the file is not rebuilt.',
+      'triggers:',
+      '  - "deploy"',
+      '---',
+      '',
+      `# ${name}`,
+      '',
+      'Uses references/api.md and scripts/run.sh.',
+      '',
+    ].join('\n');
+    const response = await batchBody([
+      {
+        fallbackName: name,
+        skillMd,
+        files: [
+          {
+            path: 'references/api.md',
+            contentBase64: Buffer.from('# API reference\n\nEndpoints live here.\n').toString('base64'),
+          },
+          {
+            path: 'scripts/run.sh',
+            contentBase64: Buffer.from('#!/bin/sh\necho ok\n').toString('base64'),
+          },
+        ],
+      },
+    ]);
+    expect(response.status).toBe(200);
+    const { results } = (await response.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(results[0]).toMatchObject({ name, status: 'imported', id: name });
+
+    const dir = path.join(process.env.OD_DATA_DIR!, 'skills', name);
+    expect(readFileSync(path.join(dir, 'SKILL.md'), 'utf8')).toBe(skillMd);
+    expect(
+      readFileSync(path.join(dir, 'references', 'api.md'), 'utf8'),
+    ).toBe('# API reference\n\nEndpoints live here.\n');
+    expect(readFileSync(path.join(dir, 'scripts', 'run.sh'), 'utf8')).toBe('#!/bin/sh\necho ok\n');
+  });
+
+  it('fails items whose side files escape the folder or carry dotfiles, leaving nothing behind', async () => {
+    const suffix = Date.now();
+    const first = `batch-escape-${suffix}`;
+    const second = `batch-dot-${suffix}`;
+    const response = await batchBody([
+      {
+        fallbackName: first,
+        skillMd: skillMdFor(first),
+        files: [{ path: '../evil.txt', contentBase64: Buffer.from('hi').toString('base64') }],
+      },
+      {
+        fallbackName: second,
+        skillMd: skillMdFor(second),
+        files: [{ path: '.git/config', contentBase64: Buffer.from('hi').toString('base64') }],
+      },
+    ]);
+    expect(response.status).toBe(200);
+    const { results } = (await response.json()) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(results[0]).toMatchObject({ name: first, status: 'failed', code: 'BAD_REQUEST' });
+    expect(results[1]).toMatchObject({ name: second, status: 'failed', code: 'BAD_REQUEST' });
+    expect(existsSync(path.join(process.env.OD_DATA_DIR!, 'evil.txt'))).toBe(false);
+    expect(existsSync(path.join(process.env.OD_DATA_DIR!, 'skills', first))).toBe(false);
+    expect(existsSync(path.join(process.env.OD_DATA_DIR!, 'skills', second))).toBe(false);
   });
 
   it('reports a within-batch duplicate as skipped without blocking the first import', async () => {

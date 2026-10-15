@@ -27,7 +27,9 @@ import {
   importSkillsBatch,
   installSkill,
   uninstallSkill,
+  type SkillBatchImportFile,
   type SkillBatchImportItemResult,
+  type SkillBatchImportSkill,
   type SkillImportInput,
   type SkillImportError,
 } from '../providers/registry';
@@ -1337,26 +1339,27 @@ export function ExtensionsMarketplace({
       // (个人的) registry; promoting to the team is the existing 转为团队共享 action.
       // When the selection is a parent folder containing several skill folders,
       // import them all through /api/skills/import-batch instead (issue #8753):
-      // each item is independent, and the per-skill outcome list renders in
+      // each item carries the ORIGINAL SKILL.md plus every companion file so
+      // the daemon materializes the folders verbatim (references/, scripts/,
+      // assets/ survive) — a rebuild from parsed fields would drop them.
+      // Items are independent, and the per-skill outcome list renders in
       // this dialog so a skipped duplicate or a malformed folder never hides
       // what happened to the rest.
       const skillGroups = skillFolderGroups(createFolderFiles);
       if (skillGroups.size > 1) {
-        const items: SkillImportInput[] = [];
+        const items: SkillBatchImportSkill[] = [];
         for (const [dir, skillFile] of skillGroups) {
-          let text = '';
+          let skillMd = '';
           try {
-            text = await skillFile.text();
+            skillMd = await skillFile.text();
           } catch {
-            // Leave the body empty; the daemon reports this item as failed
+            // Leave skillMd empty; the daemon reports this item as failed
             // and the rest of the batch keeps going.
           }
-          const parsed = parseSkillMarkdown(text, dir.split('/').pop() ?? dir);
           items.push({
-            name: parsed.name,
-            description: parsed.description,
-            body: parsed.body,
-            triggers: [],
+            fallbackName: dir.split('/').pop() ?? dir,
+            skillMd,
+            files: await readSkillBatchSideFiles(dir, createFolderFiles),
           });
         }
         const batch = await importSkillsBatch(items, workspaceContext);
@@ -2759,6 +2762,46 @@ function skillFolderGroups(files: File[]): Map<string, File> {
     groups.set(dirSegments.join('/'), file);
   }
   return groups;
+}
+
+// Bounds mirror the daemon's side-file validation; dotfiles are skipped so
+// a stray .DS_Store never fails an import (the daemon would reject it).
+const SKILL_BATCH_MAX_FILES = 500;
+
+// Collects every companion file under `skillDir` (the directory holding one
+// picked SKILL.md) and shapes it into a /api/skills/import-batch side-file
+// list. SKILL.md itself travels separately in `skillMd`.
+async function readSkillBatchSideFiles(
+  skillDir: string,
+  files: File[],
+): Promise<SkillBatchImportFile[]> {
+  const prefix = `${skillDir}/`;
+  const out: SkillBatchImportFile[] = [];
+  const sorted = [...files].sort((a, b) =>
+    (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name));
+  for (const file of sorted) {
+    if (out.length >= SKILL_BATCH_MAX_FILES) break;
+    const rel = file.webkitRelativePath || file.name;
+    if (!rel.startsWith(prefix)) continue;
+    const inner = rel.slice(prefix.length);
+    if (!inner || /(^|\/)\./.test(inner) || /(^|\/)SKILL\.md$/i.test(inner)) continue;
+    try {
+      out.push({ path: inner, contentBase64: await fileToBase64(file) });
+    } catch {
+      // Unreadable file: skip rather than fail the whole folder.
+    }
+  }
+  return out;
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 // Reads a SKILL.md out of a webkitdirectory folder selection and shapes it into

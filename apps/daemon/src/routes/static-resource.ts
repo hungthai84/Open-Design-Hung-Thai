@@ -18,8 +18,10 @@ import {
   deleteUserSkill,
   findSkillById,
   importUserSkill,
+  importUserSkillFolder,
   listSkills,
   listSkillFiles,
+  resolveSkillFolderImportName,
   splitDerivedSkillId,
   updateUserSkill,
 } from '../skills.js';
@@ -620,11 +622,15 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
   });
 
   // POST /api/skills/import-batch — import multiple user skills in one
-  // request (issue #8753). Items are independent: a malformed or conflicting
-  // item is reported per-skill (skipped for duplicate/conflict, failed for
-  // invalid input) and never blocks the remaining items (partial success).
-  // Duplicate names inside one batch fall out naturally: the first item
-  // creates the slug folder, the second hits importUserSkill's CONFLICT.
+  // request (issue #8753). Items carry the ORIGINAL SKILL.md plus companion
+  // files and are materialized verbatim (importUserSkillFolder), so a
+  // parent-folder import keeps references/, scripts/, assets/ and the exact
+  // frontmatter it started with instead of reporting success over a rebuilt
+  // fragment (mrcfps PR #8754 review). Items are independent: a malformed or
+  // conflicting item is reported per-skill (skipped for duplicate/conflict,
+  // failed for invalid input) and never blocks the remaining items (partial
+  // success). Duplicate names inside one batch fall out naturally: the first
+  // item creates the slug folder, the second hits the CONFLICT below.
   app.post('/api/skills/import-batch', async (req, res) => {
     try {
       const authority = await resolveWorkspaceAuthority(req, res);
@@ -643,8 +649,9 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       }
       const results: SkillBatchImportItemResult[] = [];
       for (const item of items) {
-        const name = typeof item?.name === 'string' ? item.name.trim() : '';
+        const label = typeof item?.fallbackName === 'string' ? item.fallbackName.trim() : '';
         try {
+          const name = resolveSkillFolderImportName(item || {});
           if (name && await skillIdentityConflict(authority, name)) {
             results.push({
               name,
@@ -654,19 +661,19 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
             });
             continue;
           }
-          const result = await importUserSkill(USER_SKILLS_DIR, item || {});
+          const result = await importUserSkillFolder(USER_SKILLS_DIR, item || {});
           bindImportedSkillToWorkspace(authority, result.id);
           results.push({ name, status: 'imported', id: result.id, slug: result.slug });
         } catch (err) {
           if (err instanceof SkillImportError) {
             results.push({
-              name,
+              name: label,
               status: err.code === 'CONFLICT' ? 'skipped' : 'failed',
               code: err.code,
               error: err.message,
             });
           } else {
-            results.push({ name, status: 'failed', code: 'INTERNAL_ERROR', error: String(err) });
+            results.push({ name: label, status: 'failed', code: 'INTERNAL_ERROR', error: String(err) });
           }
         }
       }

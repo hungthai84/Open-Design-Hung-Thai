@@ -59,8 +59,8 @@ describe('od skill CLI', () => {
         if (req.url === '/api/skills/import-batch') {
           const skills = JSON.parse(body)?.skills ?? [];
           res.end(JSON.stringify({
-            results: skills.map((skill: { name: string }) => ({
-              name: skill.name,
+            results: skills.map((skill: { fallbackName: string }) => ({
+              name: skill.fallbackName,
               status: 'imported',
             })),
           }));
@@ -244,14 +244,16 @@ describe('od skill CLI', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it('skill import batch-posts every skill folder under the picked directory', async () => {
+  it('skill import batch-posts every skill folder with its original SKILL.md and side files', async () => {
     const parent = mkdtempSync(joinPath(tmpdir(), 'od-skill-import-'));
     try {
-      mkdirSync(joinPath(parent, 'alpha'));
+      mkdirSync(joinPath(parent, 'alpha', 'references'), { recursive: true });
       writeFileSync(
         joinPath(parent, 'alpha', 'SKILL.md'),
-        '---\nname: alpha-skill\ndescription: Alpha fixture\n---\n\n# Alpha\n',
+        '---\nname: alpha-skill\ndescription: |\n  Block scalar kept verbatim.\n---\n\n# Alpha\n',
       );
+      writeFileSync(joinPath(parent, 'alpha', 'references', 'api.md'), '# API\n');
+      writeFileSync(joinPath(parent, 'alpha', '.DS_Store'), 'junk');
       mkdirSync(joinPath(parent, 'beta'));
       writeFileSync(joinPath(parent, 'beta', 'SKILL.md'), '# Beta has no frontmatter\n');
       mkdirSync(joinPath(parent, 'not-a-skill'));
@@ -270,14 +272,26 @@ describe('od skill CLI', () => {
       expect(requests[0]).toMatchObject({ method: 'POST', url: '/api/skills/import-batch' });
       const sent = JSON.parse(requests[0]!.body);
       expect(sent.skills).toHaveLength(2);
-      expect(sent.skills[0]).toMatchObject({
-        name: 'alpha-skill',
-        description: 'Alpha fixture',
+      // The original SKILL.md travels verbatim — the daemon materializes it
+      // instead of rebuilding it from parsed fields (mrcfps PR #8754 review).
+      expect(sent.skills[0]).toMatchObject({ fallbackName: 'alpha' });
+      expect(sent.skills[0].skillMd).toBe(
+        '---\nname: alpha-skill\ndescription: |\n  Block scalar kept verbatim.\n---\n\n# Alpha\n',
+      );
+      expect(sent.skills[0].files).toEqual([
+        {
+          path: 'references/api.md',
+          contentBase64: Buffer.from('# API\n').toString('base64'),
+        },
+      ]);
+      expect(sent.skills[1]).toMatchObject({
+        fallbackName: 'beta',
+        skillMd: '# Beta has no frontmatter\n',
+        files: [],
       });
-      expect(sent.skills[1]).toMatchObject({ name: 'beta' });
       const printed = JSON.parse(result.stdout);
       expect(printed.results).toEqual([
-        { name: 'alpha-skill', status: 'imported' },
+        { name: 'alpha', status: 'imported' },
         { name: 'beta', status: 'imported' },
       ]);
     } finally {
