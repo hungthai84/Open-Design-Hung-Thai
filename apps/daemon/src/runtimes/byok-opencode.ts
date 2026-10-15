@@ -236,10 +236,11 @@ function buildProviderEntry(
         },
       };
     case 'openai':
-      // Real OpenAI speaks the Responses API via @ai-sdk/openai. Every other
-      // host under the "openai" protocol (DeepSeek, vLLM, etc.) only serves
-      // /chat/completions, so route it through @ai-sdk/openai-compatible.
-      if (isRealOpenAIHost(baseUrl)) {
+      // OpenAI and Databricks' unified gateway support Responses, including
+      // reasoning with tools. Other compatible hosts use Chat Completions.
+      if (isRealOpenAIHost(baseUrl) || (
+        baseUrl.startsWith('https://') && safeUrlPathname(baseUrl) === '/ai-gateway/mlflow/v1'
+      )) {
         return {
           npm: '@ai-sdk/openai',
           options: {

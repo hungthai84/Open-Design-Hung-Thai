@@ -10,7 +10,7 @@ import {
 import { byokOpenCodeAgentDef } from '../../src/runtimes/defs/byok-opencode.js';
 
 describe('byok-opencode runtime config', () => {
-  it('uses Databricks gateway paths and bearer auth without embedding the token', () => {
+  it('uses the Databricks Anthropic gateway and bearer auth without embedding the token', () => {
     const anthropic = buildOpenCodeByokProviderConfig({
       protocol: 'anthropic',
       apiKey: 'workspace-secret',
@@ -31,15 +31,17 @@ describe('byok-opencode runtime config', () => {
         },
       },
     } });
+  });
 
+  it('uses the Responses transport for Databricks model services with reasoning and tools', () => {
     const openai = buildOpenCodeByokProviderConfig({
       protocol: 'openai',
       apiKey: 'other-secret',
       baseUrl: 'https://acme.cloud.databricks.com/ai-gateway/mlflow/v1',
-    }, 'system.ai.some-service');
+    }, 'system.ai.gpt-6-luna');
     expect(openai?.config).toMatchObject({ provider: {
       [BYOK_OPENCODE_PROVIDER_ID]: {
-        npm: '@ai-sdk/openai-compatible',
+        npm: '@ai-sdk/openai',
         options: { baseURL: 'https://acme.cloud.databricks.com/ai-gateway/mlflow/v1' },
       },
     } });
