@@ -19,13 +19,20 @@ export const museAgentDef = {
   fallbackModels: [DEFAULT_MODEL_OPTION],
   // Headless runs need tool calls auto-approved: otherwise a write request
   // stalls on an approval prompt the daemon cannot answer. Use the
-  // approval-only controls so Muse's sandbox stays on for unattended
-  // runs: `--disable-approval` skips approval prompts and
-  // `--trust-workspace` loads project instructions for this run. Never
-  // use `--yolo` here — it also disables the sandbox, giving every prompt
-  // unrestricted host filesystem/network execution. `--user-input-auto-resolve`
-  // is required on top because `muse` can still stop to ask a question,
-  // which would hang the run waiting for input.
+  // approval-only control so Muse's sandbox stays on for unattended
+  // runs. Never use `--yolo` here — it also disables the sandbox, giving
+  // every prompt unrestricted host filesystem/network execution.
+  //
+  // Deliberately no `--trust-workspace`: trusting a folder is an
+  // independent grant that loads its committed `.muse/` skills, rules,
+  // and lifecycle hooks, so auto-trusting every project folder would let
+  // an untrusted repository run its own hooks without user consent.
+  // `muse exec` runs with whatever trust state already exists — a folder
+  // the user trusted interactively keeps full authority, an untrusted one
+  // runs with limited authority (no project config, no delegation). OD's
+  // instructions travel in the prompt file either way.
+  // `--user-input-auto-resolve` is required on top because `muse` can
+  // still stop to ask a question, which would hang the run.
   buildArgs: (_prompt, _imagePaths, _extra = [], options = {}, runtimeContext = {}) => {
     if (!runtimeContext.promptFilePath) {
       throw new Error('muse requires runtimeContext.promptFilePath');
@@ -35,7 +42,6 @@ export const museAgentDef = {
       '--prompt-file',
       runtimeContext.promptFilePath,
       '--disable-approval',
-      '--trust-workspace',
       '--user-input-auto-resolve',
     ];
     if (options.model && options.model !== DEFAULT_MODEL_OPTION.id) {

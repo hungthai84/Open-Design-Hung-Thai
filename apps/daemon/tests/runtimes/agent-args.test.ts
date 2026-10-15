@@ -1166,7 +1166,6 @@ test('muse uses exec --prompt-file and never embeds the prompt in argv or stdin'
     '--prompt-file',
     promptFilePath,
     '--disable-approval',
-    '--trust-workspace',
     '--user-input-auto-resolve',
     '--model',
     'spark',
@@ -1179,6 +1178,10 @@ test('muse uses exec --prompt-file and never embeds the prompt in argv or stdin'
   // filesystem/network execution instead of workspace containment.
   assert.equal(args.includes('--yolo'), false);
   assert.equal(args.includes('--disable-sandbox'), false);
+  // Trusting a folder loads its committed .muse hooks/rules, so the
+  // daemon must never grant it implicitly; exec runs with whatever
+  // trust state the user already granted interactively.
+  assert.equal(args.includes('--trust-workspace'), false);
 });
 
 test('muse omits model and reasoning flags for default options', () => {
@@ -1190,11 +1193,11 @@ test('muse omits model and reasoning flags for default options', () => {
     '--prompt-file',
     promptFilePath,
     '--disable-approval',
-    '--trust-workspace',
     '--user-input-auto-resolve',
   ]);
   assert.equal(args.includes('--yolo'), false);
   assert.equal(args.includes('--disable-sandbox'), false);
+  assert.equal(args.includes('--trust-workspace'), false);
 });
 
 test('muse requires a daemon-provided prompt file path', () => {
