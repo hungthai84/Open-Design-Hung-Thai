@@ -183,7 +183,11 @@ export interface ProjectExportManifestResponse {
   artifacts: ProjectExportManifestArtifact[];
 }
 
+/** Internal preview transport; resource scopes retain the original asset CSP. */
+export type ProjectPreviewDocumentMode = 'resource' | 'url' | 'bootstrap' | 'bootstrap-quirks';
+
 export interface ProjectPreviewUrlResponse {
+  documentMode?: ProjectPreviewDocumentMode;
   url: string;
   file: string;
   csp: string;

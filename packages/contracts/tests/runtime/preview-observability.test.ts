@@ -3,9 +3,54 @@ import {
   PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
   PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
   PREVIEW_OBSERVABILITY_PROTOCOL_VERSION,
+  buildPreviewBaseHrefBridge,
   buildPreviewObservabilityBridge,
   parsePreviewObservabilityMessage,
 } from '../../src/runtime/preview-observability.js';
+
+describe('native preview base recovery', () => {
+  const directory = 'https://preview.example/api/projects/project-1/preview/scope-1/pages/';
+  const entry = directory + 'deck.html';
+  const replacement = directory.replace('scope-1', 'scope-2');
+  function recover(currentUrl: string, targetHref = replacement, fromParent = true): string[] {
+    const navigations: string[] = [];
+    let receive: ((event: { source: unknown; data: unknown }) => void) | undefined;
+    const parent = { postMessage: () => undefined };
+    const frame = { parent, addEventListener: (type: string, listener: typeof receive) => {
+      if (type === 'message') receive = listener;
+    } };
+    const current = new URL(currentUrl);
+    const location = { href: current.href, search: current.search, hash: current.hash,
+      replace: (url: string) => navigations.push(url) };
+    const document = { baseURI: directory, querySelector: () => null };
+    const script = buildPreviewBaseHrefBridge({ href: directory, documentUrl: entry, expiresAt: 123 })
+      .replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
+    new Function('window', 'document', 'Node', 'location', script)(frame, document, class {}, location);
+    receive?.({ source: fromParent ? parent : {}, data: { type: 'od:preview-base-update', href: targetHref } });
+    return navigations;
+  }
+
+  it.each([entry, directory])('preserves query/hash from the bound native entry %s', current => {
+    expect(recover(current + '?theme=light#/details')).toEqual([replacement + 'deck.html?theme=light#/details']);
+  });
+
+  it.each([
+    directory + 'other.html',
+    directory.replace('/pages/', '/other/'),
+    directory.replace('scope-1', 'different-scope'),
+    directory.replace('project-1', 'other-project'),
+    entry.replace('preview.example', 'foreign.example'),
+  ])('does not recover a different source document %s', current => {
+    expect(recover(current + '?theme=light#/details')).toEqual([]);
+  });
+
+  it('keeps updates parent-only, same-origin and within the same project', () => {
+    expect(recover(directory, replacement, false)).toEqual([]);
+    expect(recover(directory, replacement.replace('preview.example', 'foreign.example'))).toEqual([]);
+    expect(recover(directory, replacement.replace('project-1', 'other-project'))).toEqual([]);
+    expect(recover(directory, replacement + 'other.html')).toEqual([]);
+  });
+});
 
 describe('preview observability contract', () => {
   it('builds one bounded bridge for runtime, resource, console, and white-screen failures', () => {

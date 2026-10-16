@@ -34,6 +34,7 @@ import {
 import { useT } from '../i18n';
 import { useInView } from './plugins-home/useInView';
 import { DeckSlideThumbnail } from './DeckSlideThumbnail';
+import { PreviewDocumentFrame } from './PreviewDocumentFrame';
 import type { ParsedDeckThumbnails } from '../runtime/deck-thumbnail-parser';
 
 /**
@@ -55,6 +56,7 @@ interface DeckIframeThumbnailProps {
   label: string;
   srcDoc: string;
   previewViewport?: DeckThumbnailViewport | null;
+  documentUrl?: string;
   onReady: () => void;
 }
 
@@ -62,6 +64,7 @@ function DeckIframeThumbnail({
   label,
   srcDoc,
   previewViewport,
+  documentUrl,
   onReady,
 }: DeckIframeThumbnailProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -93,17 +96,18 @@ function DeckIframeThumbnail({
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
     observer?.observe(host);
     return () => observer?.disconnect();
-  }, [previewViewport?.height, previewViewport?.width]);
+  }, [previewViewport?.height, previewViewport?.width, srcDoc, documentUrl]);
 
   return (
     <div ref={hostRef} className="deck-thumbnail-iframe-host">
-      <iframe
+      <PreviewDocumentFrame
         ref={frameRef}
         title={label}
         sandbox="allow-scripts allow-downloads"
         srcDoc={srcDoc}
+        documentUrl={documentUrl}
         tabIndex={-1}
-        onLoad={onReady}
+        onReady={onReady}
       />
     </div>
   );
@@ -159,6 +163,7 @@ interface DeckThumbnailItemProps {
    */
   parsedDeck: ParsedDeckThumbnails | null;
   previewViewport?: DeckThumbnailViewport | null;
+  documentUrl?: string;
   getSrcDoc: (index: number) => string;
   onSelect: (index: number) => void;
   onVisibilityChange: (index: number, inView: boolean) => void;
@@ -172,6 +177,7 @@ const DeckThumbnailItem = memo(function DeckThumbnailItem({
   listRef,
   parsedDeck,
   previewViewport,
+  documentUrl,
   getSrcDoc,
   onSelect,
   onVisibilityChange,
@@ -245,6 +251,7 @@ const DeckThumbnailItem = memo(function DeckThumbnailItem({
               label={label}
               srcDoc={getSrcDoc(index)}
               previewViewport={previewViewport}
+              documentUrl={documentUrl}
               onReady={handleThumbnailReady}
             />
           )
@@ -278,6 +285,7 @@ export interface DeckThumbnailRailProps {
   /** Live preview iframe viewport. Used to make responsive fallback thumbnails
    *  take the same media-query branch and line-wrap identically. */
   previewViewport?: DeckThumbnailViewport | null;
+  documentUrl?: string;
   onSelect: (index: number) => void;
 }
 
@@ -288,6 +296,7 @@ export const DeckThumbnailRail = memo(function DeckThumbnailRail({
   buildThumbSrcDoc,
   parsedDeck = null,
   previewViewport = null,
+  documentUrl,
   onSelect,
 }: DeckThumbnailRailProps) {
   const t = useT();
@@ -340,6 +349,7 @@ export const DeckThumbnailRail = memo(function DeckThumbnailRail({
             listRef={listRef}
             parsedDeck={parsedDeck}
             previewViewport={previewViewport}
+            documentUrl={documentUrl}
             getSrcDoc={getSrcDoc}
             onSelect={onSelect}
             onVisibilityChange={onVisibilityChange}

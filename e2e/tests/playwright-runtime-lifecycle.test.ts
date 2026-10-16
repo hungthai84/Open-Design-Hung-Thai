@@ -47,7 +47,7 @@ describe('Playwright tools-dev runtime lifecycle', () => {
   });
 
   test('clears the previous slot incarnation before allocating ports and passes its owner pid', async () => {
-    const calls: Array<{ args: string[]; timeoutMs: number | undefined }> = [];
+    const calls: Array<{ args: string[]; timeoutMs: number | undefined; env: Record<string, string | undefined> }> = [];
     const order: string[] = [];
     const spec: ToolsDevSuiteSpec = {
       codexHomeDir: '/tmp/codex-home',
@@ -61,10 +61,10 @@ describe('Playwright tools-dev runtime lifecycle', () => {
       _workspaceRoot: string,
       _suite: ToolsDevSuiteSpec,
       args: string[],
-      _env: Record<string, string | undefined> = {},
+      env: Record<string, string | undefined> = {},
       options?: RunToolsDevJsonOptions,
     ): Promise<T> => {
-      calls.push({ args, timeoutMs: options?.timeoutMs });
+      calls.push({ args, timeoutMs: options?.timeoutMs, env });
       order.push(args[0] === 'stop' ? 'stop' : 'start');
       if (args[0] === 'start') {
         return {
@@ -72,6 +72,7 @@ describe('Playwright tools-dev runtime lifecycle', () => {
           web: { status: { url: 'http://127.0.0.1:31002' } },
         } as T;
       }
+      if (args[0] === 'restart') return { start: { daemon: { status: { url: 'http://127.0.0.1:31001' } } } } as T;
       return {} as T;
     };
     const suite = createToolsDevSuite(spec, {
@@ -88,7 +89,7 @@ describe('Playwright tools-dev runtime lifecycle', () => {
       runJson,
     });
 
-    await suite.startWeb();
+    await suite.startWeb({ AMR_HOME: '/tmp/isolated-amr-home' });
 
     expect(order).toEqual(['stop', 'allocate', 'release', 'start']);
     expect(calls[0]?.args.slice(0, 2)).toEqual(['stop', 'web']);
@@ -96,6 +97,14 @@ describe('Playwright tools-dev runtime lifecycle', () => {
     expect(calls[1]?.args).toContain('--parent-pid');
     expect(calls[1]?.args).toContain('4242');
     expect(calls[1]?.timeoutMs).toBe(180_000);
+    await suite.restartDaemon();
+    expect(calls[2]?.args).toEqual([
+      'restart', 'daemon', '--namespace', spec.namespace,
+      '--tools-dev-root', spec.toolsDevRoot, '--daemon-port', '31001', '--web-port', '31002', '--json',
+    ]);
+    expect(calls[2]?.env).toMatchObject({ AMR_HOME: '/tmp/isolated-amr-home', OD_TOOLS_DEV_PARENT_PID: '4242' });
+    expect(suite.daemonUrl).toBe('http://127.0.0.1:31001');
+    expect(suite.webUrl).toBe('http://127.0.0.1:31002');
   });
 
   test('aborts a blocked cold warmup before the fixture teardown budget is consumed', async () => {

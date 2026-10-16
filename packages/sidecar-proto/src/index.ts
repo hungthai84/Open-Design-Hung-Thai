@@ -283,6 +283,8 @@ export type DesktopExportPdfResult = {
 // slide order; `width`/`height` are the captured pixel dimensions.
 export type DesktopRenderSlidesInput = {
   baseHref?: string;
+  /** Bound bootstrap URL; html remains the authoritative version snapshot. */
+  documentUrl?: string;
   html: string;
   // Explicit page-vs-deck signal from the caller (the web side knows whether the
   // artifact is a deck). `true` forces deck slide capture, `false` forces a
@@ -435,6 +437,8 @@ export type DesktopArtifactCaptureErrorCode =
 // bytes to the HTTP caller (the `od export` CLI), then removes the temp file.
 export type DesktopExportArtifactInput = {
   baseHref?: string;
+  /** Bound bootstrap URL; html remains the authoritative version snapshot. */
+  documentUrl?: string;
   /**
    * Omitted means `full_page_export`. Left optional and undefaulted on the wire
    * so an older daemon that has never heard of capture modes keeps producing
@@ -951,7 +955,7 @@ function normalizeDesktopExportPdfInput(input: unknown): DesktopExportPdfInput {
 
 function normalizeDesktopRenderSlidesInput(input: unknown): DesktopRenderSlidesInput {
   const value = assertObject(input, "desktop render slides input");
-  assertKnownKeys(value, ["baseHref", "deck", "editable", "height", "html", "index", "outputDir", "pageImageFormat", "stitch", "paginate", "width"], "desktop render slides input");
+  assertKnownKeys(value, ["baseHref", "documentUrl", "deck", "editable", "height", "html", "index", "outputDir", "pageImageFormat", "stitch", "paginate", "width"], "desktop render slides input");
   if (value.deck != null && typeof value.deck !== "boolean") {
     throw new Error("desktop render slides deck must be a boolean");
   }
@@ -981,6 +985,7 @@ function normalizeDesktopRenderSlidesInput(input: unknown): DesktopRenderSlidesI
   }
   return {
     ...(value.baseHref == null ? {} : { baseHref: normalizeNonEmptyString(value.baseHref, "desktop render slides baseHref") }),
+    ...(value.documentUrl == null ? {} : { documentUrl: normalizeNonEmptyString(value.documentUrl, "desktop render slides documentUrl") }),
     ...(value.deck == null ? {} : { deck: value.deck }),
     ...(value.editable == null ? {} : { editable: value.editable }),
     html: normalizeNonEmptyString(value.html, "desktop render slides html"),
@@ -1035,7 +1040,7 @@ const DESKTOP_EXPORT_ARTIFACT_IMAGE_FORMATS: readonly DesktopExportArtifactImage
 
 function normalizeDesktopExportArtifactInput(input: unknown): DesktopExportArtifactInput {
   const value = assertObject(input, "desktop artifact export input");
-  assertKnownKeys(value, ["baseHref", "captureMode", "deck", "format", "html", "imageFormat", "title", "width", "height"], "desktop artifact export input");
+  assertKnownKeys(value, ["baseHref", "documentUrl", "captureMode", "deck", "format", "html", "imageFormat", "title", "width", "height"], "desktop artifact export input");
   if (!DESKTOP_EXPORT_ARTIFACT_FORMATS.includes(value.format as DesktopExportArtifactFormat)) {
     throw new Error(`unsupported artifact export format: ${String(value.format)}`);
   }
@@ -1059,6 +1064,7 @@ function normalizeDesktopExportArtifactInput(input: unknown): DesktopExportArtif
   }
   return {
     ...(value.baseHref == null ? {} : { baseHref: normalizeNonEmptyString(value.baseHref, "desktop artifact export baseHref") }),
+    ...(value.documentUrl == null ? {} : { documentUrl: normalizeNonEmptyString(value.documentUrl, "desktop artifact export documentUrl") }),
     ...(value.captureMode == null ? {} : { captureMode: value.captureMode as DesktopArtifactCaptureMode }),
     deck: normalizeBoolean(value.deck, "desktop artifact export deck"),
     format: value.format as DesktopExportArtifactFormat,

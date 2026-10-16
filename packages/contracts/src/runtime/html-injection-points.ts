@@ -468,7 +468,7 @@ const ATTRIBUTE_NAMED_REFERENCES: ReadonlyMap<string, string> = new Map([
  * when terminated by `;`: without it, an alphanumeric or `=` following makes it
  * an ambiguous ampersand, which stays literal.
  */
-function decodeAttributeValue(value: string): string {
+export function decodeHtmlAttributeValue(value: string): string {
   if (!value.includes('&')) return value;
   return value.replace(
     /&(?:#([0-9]+);?|#[xX]([0-9a-fA-F]+);?|([a-zA-Z][a-zA-Z0-9]*);)/g,
@@ -509,7 +509,7 @@ function isForeignBreakoutTag(tagName: string, attrs: ReadonlyMap<string, string
  */
 function annotationXmlEncodingIsHtml(value: string | undefined): boolean {
   if (value === undefined) return false;
-  return HTML_ANNOTATION_ENCODINGS.includes(asciiLower(decodeAttributeValue(value)));
+  return HTML_ANNOTATION_ENCODINGS.includes(asciiLower(decodeHtmlAttributeValue(value)));
 }
 
 /**
@@ -553,7 +553,10 @@ function foreignChildNamespace(
  * but a `<math>` beneath that foreignObject re-enters MathML, and its children
  * are foreign again. A counter cannot express that.
  */
-function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
+function skipForeignContent(
+  html: string, lowerHtml: string, rootName: string, from: number,
+  visit?: HtmlOpeningTagVisitor,
+): number {
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   // The stack is the element's whole lifetime — there is no parallel counter.
   // A name counter cannot survive an unwind: in `<svg><foreignObject><svg>` the
@@ -646,9 +649,22 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     // is ignored on anything that is not void, so it must not pop a frame.
     const selfClosing = tag.selfClosing
       && (currentNs !== 'html' || PREVIEW_VOID_ELEMENTS.includes(tagName));
-    if (!selfClosing && currentNs === 'html'
-        && (HTML_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
-      const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
+    const rawText = !selfClosing && currentNs === 'html'
+      && (HTML_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName);
+    const contentEnd = rawText || (visit && tagName === 'script')
+      ? findRawTextClose(lowerHtml, tagName, tagEnd + 1) : tagEnd + 1;
+    if (visit) {
+      if (visit({ name: tagName, attrs: tag.attrs, namespace: currentNs, offset: i,
+        rawText: html.slice(tagEnd + 1, contentEnd < 0 ? html.length : contentEnd) })) return i;
+      // A template stays inert even inside an HTML integration point.
+      if (currentNs === 'html' && tagName === 'template') {
+        const contentEnd = skipTemplateContent(html, lowerHtml, tagEnd + 1);
+        if (contentEnd < 0) return -1;
+        i = contentEnd;
+        continue;
+      }
+    }
+    if (rawText) {
       if (contentEnd < 0) return -1;
       i = contentEnd;
       continue;
@@ -677,14 +693,33 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
   return -1;
 }
 
-export function findRealTagOffset(html: string, pattern: RegExp): number {
-  const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
+export interface HtmlOpeningTag {
+  name: string;
+  attrs: ReadonlyMap<string, string>;
+  namespace: string;
+  rawText: string;
+}
+
+const HTML_TAG_SCAN_UNCERTAIN = -2;
+
+type HtmlOpeningTagVisitor = (tag: HtmlOpeningTag & { offset: number }) => boolean;
+
+function findHtmlTagOffset(
+  html: string, pattern?: RegExp, predicate?: (tag: HtmlOpeningTag) => boolean,
+): number {
+  const anchored = pattern && new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   // ASCII-only, so the shadow stays index-aligned with `html`. A full
   // toLowerCase() is not length-preserving (U+0130 lowercases to two code
   // units), and every offset taken from the shadow is used against `html`.
   const lower = asciiLower(html);
   const selectMode = newSelectModeState();
+  let matchedOffset = -1;
+  const visit: HtmlOpeningTagVisitor | undefined = predicate && (tag => {
+    if (!predicate(tag)) return false;
+    matchedOffset = tag.offset;
+    return true;
+  });
   let i = 0;
   while (i < html.length) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -715,8 +750,10 @@ export function findRealTagOffset(html: string, pattern: RegExp): number {
       i = end + 1;
       continue;
     }
-    anchored.lastIndex = i;
-    if (anchored.test(html)) return i;
+    if (anchored) {
+      anchored.lastIndex = i;
+      if (anchored.test(html)) return i;
+    }
     tagOpen.lastIndex = i;
     const open = tagOpen.exec(html);
     if (!open) {
@@ -726,7 +763,7 @@ export function findRealTagOffset(html: string, pattern: RegExp): number {
     }
     const tag = scanTag(html, i + open[0].length);
     const tagEnd = tag.end;
-    if (tagEnd < 0) return -1;
+    if (tagEnd < 0) return visit ? HTML_TAG_SCAN_UNCERTAIN : -1;
     const tagName = (open[2] ?? '').toLowerCase();
     // `<select>` is the one HTML context this scan has to know about: the
     // in-select insertion mode *ignores* an `<svg>` / `<math>` start tag
@@ -747,9 +784,12 @@ export function findRealTagOffset(html: string, pattern: RegExp): number {
     // `<table>` start tag — foster parenting can move the select out of the
     // table it appeared inside. A linear scan cannot tell those apart, and both
     // answers are wrong in some document, so that case refuses.
-    if (!observeSelectMode(selectMode, tagName, !!open[1], tag.selfClosing)) return -1;
-    if (!open[1] && (HTML_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
-      const contentEnd = findRawTextClose(lower, tagName, tagEnd + 1);
+    if (!observeSelectMode(selectMode, tagName, !!open[1], tag.selfClosing)) return visit ? HTML_TAG_SCAN_UNCERTAIN : -1;
+    const rawText = !open[1] && (HTML_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName);
+    const contentEnd = rawText ? findRawTextClose(lower, tagName, tagEnd + 1) : tagEnd + 1;
+    if (!open[1] && visit?.({ name: tagName, attrs: tag.attrs, namespace: 'html', offset: i,
+      rawText: html.slice(tagEnd + 1, contentEnd < 0 ? html.length : contentEnd) })) return i;
+    if (rawText) {
       // Unclosed raw text runs to the end of the document — same as above.
       if (contentEnd < 0) return -1;
       i = contentEnd;
@@ -757,9 +797,10 @@ export function findRealTagOffset(html: string, pattern: RegExp): number {
     }
     if (!open[1] && !selectMode.inSelect && (tagName === 'svg' || tagName === 'math')
         && !tag.selfClosing) {
-      const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
-      if (contentEnd < 0) return -1;
-      i = contentEnd;
+      const foreignEnd = skipForeignContent(html, lower, tagName, tagEnd + 1, visit);
+      if (matchedOffset >= 0) return matchedOffset;
+      if (foreignEnd < 0) return visit ? HTML_TAG_SCAN_UNCERTAIN : -1;
+      i = foreignEnd;
       continue;
     }
     if (!open[1] && tagName === 'template') {
@@ -767,13 +808,23 @@ export function findRealTagOffset(html: string, pattern: RegExp): number {
       // document, so a `</body>` inside one is not this document's boundary and
       // an injection placed there would never run.
       const contentEnd = skipTemplateContent(html, lower, tagEnd + 1);
-      if (contentEnd < 0) return -1;
+      if (contentEnd < 0) return visit ? HTML_TAG_SCAN_UNCERTAIN : -1;
       i = contentEnd;
       continue;
     }
     i = tagEnd + 1;
   }
   return -1;
+}
+
+export function findRealTagOffset(html: string, pattern: RegExp): number {
+  return findHtmlTagOffset(html, pattern);
+}
+
+/** Null means the existing boundary walker refused to guess a parser state. */
+export function htmlHasOpeningTag(html: string, predicate: (tag: HtmlOpeningTag) => boolean): boolean | null {
+  const offset = findHtmlTagOffset(html, undefined, predicate);
+  return offset === HTML_TAG_SCAN_UNCERTAIN ? null : offset >= 0;
 }
 
 /**

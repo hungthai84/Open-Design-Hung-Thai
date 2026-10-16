@@ -1,3 +1,5 @@
+import { previewHtmlNeedsNativeNavigation, previewHtmlUsesQuirksMode } from '@open-design/contracts/runtime/preview-guards';
+import { findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
 import type { Express, Response } from 'express';
 import {
   PROJECT_EXPORT_MANIFEST_SCHEMA,
@@ -956,6 +958,11 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       const metadata = project?.metadata ?? null;
       const versionId = normalizeExportVersionId(body?.versionId);
       const sourceHtml = await readExportVersionSource(projectId, fileName, versionId, metadata);
+      const selectedHtml = sourceHtml ?? (await readProjectFile(PROJECTS_DIR, projectId, fileName, metadata)).buffer.toString('utf8');
+      const nativeExport = previewHtmlNeedsNativeNavigation(selectedHtml) && findRealTagOffset(selectedHtml, HTML_TAG_PATTERNS.baseOpen) < 0;
+      const renderDocumentMode = nativeExport
+        ? (previewHtmlUsesQuirksMode(selectedHtml) ? 'bootstrap-quirks' : 'bootstrap')
+        : 'resource';
       if (format === 'image' && imageFormat != null && imageFormat !== 'png' && imageFormat !== 'jpeg') {
         return sendApiError(res, 400, 'BAD_REQUEST', 'imageFormat must be png or jpeg');
       }
@@ -970,7 +977,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
           renderPreviewScope = ctx.projectPreviewScopes.mint(
             projectId,
             authority.previewWorkspace,
-            { ttlMs: SCREENSHOT_RENDER_PREVIEW_SCOPE_TTL_MS },
+            { ttlMs: SCREENSHOT_RENDER_PREVIEW_SCOPE_TTL_MS, entryFile: fileName, documentMode: renderDocumentMode },
           );
           const input = await buildDesktopArtifactExportInput({
             baseHref: scopedProjectPreviewBaseHref(projectId, fileName, renderPreviewScope),
@@ -980,13 +987,14 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
             metadata,
             projectId,
             projectsRoot: PROJECTS_DIR,
-            ...(sourceHtml !== undefined ? { sourceHtml } : {}),
+            sourceHtml: selectedHtml,
             ...(typeof title === 'string' ? { title } : {}),
             ...(typeof body?.deck === 'boolean' ? { deck: body.deck } : {}),
             ...(format === 'image' && imageFormat === 'jpeg' ? { imageFormat: 'jpeg' } : {}),
             ...(typeof width === 'number' ? { width } : {}),
             ...(typeof height === 'number' ? { height } : {}),
           });
+          if (nativeExport) input.documentUrl = input.baseHref + encodeURIComponent(nodePath.posix.basename(fileName));
           let result;
           try {
             result = await desktopArtifactExporter(input);
@@ -1060,14 +1068,14 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       renderPreviewScope = ctx.projectPreviewScopes.mint(
         projectId,
         authority.previewWorkspace,
-        { ttlMs: SCREENSHOT_RENDER_PREVIEW_SCOPE_TTL_MS },
+        { ttlMs: SCREENSHOT_RENDER_PREVIEW_SCOPE_TTL_MS, entryFile: fileName, documentMode: renderDocumentMode },
       );
       renderOptions.baseHref = scopedProjectPreviewBaseHref(
         projectId,
         fileName,
         renderPreviewScope,
       );
-      if (sourceHtml !== undefined) renderOptions.sourceHtml = sourceHtml;
+      renderOptions.sourceHtml = selectedHtml;
       if (typeof title === 'string') renderOptions.title = title;
       if (typeof width === 'number') renderOptions.width = width;
       if (typeof height === 'number') renderOptions.height = height;
@@ -1103,6 +1111,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       const tStart = Date.now();
       const { input, title: resolvedTitle, defaultFilename } =
         await buildDeckRenderInput(renderOptions);
+      if (nativeExport) input.documentUrl = input.baseHref + encodeURIComponent(nodePath.posix.basename(fileName));
       // The renderer call crosses the sidecar client boundary (600s). A
       // missing desktop process, broken socket, or timeout is an upstream
       // renderer outage — surface it as 502 UPSTREAM_UNAVAILABLE (matching the

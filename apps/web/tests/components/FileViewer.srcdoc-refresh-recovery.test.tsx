@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JSDOM } from 'jsdom';
 
 import { FileViewer } from '../../src/components/FileViewer';
 import {
@@ -45,6 +46,45 @@ function transportGeneration(frame: HTMLIFrameElement): string {
   return generation;
 }
 
+const directDocumentRealms: JSDOM[] = [];
+
+function realDirectSrcDocDocument(frame: HTMLIFrameElement) {
+  // Browsers retain a WindowProxy across same-iframe document navigations.
+  // jsdom can replace its backing Window while React changes src/srcdoc, so
+  // hold the proxy constant while our independent realms model its documents.
+  const proxy = frame.contentWindow!;
+  Object.defineProperty(frame, 'contentWindow', { configurable: true, get: () => proxy });
+  let active: JSDOM | null = null;
+  const messages: Record<string, unknown>[] = [];
+  const hostPosts: Record<string, unknown>[] = [];
+  const parent = { postMessage(data: Record<string, unknown>) {
+    messages.push(data);
+    window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, data }));
+  } };
+  vi.spyOn(proxy, 'postMessage').mockImplementation((data) => {
+    hostPosts.push(data);
+    active?.window.dispatchEvent(new active.window.MessageEvent('message', { source: parent as unknown as Window, data }));
+  });
+  async function commitDocument(load = true) {
+    const d = new JSDOM(frame.srcdoc, { runScripts: 'outside-only', url: 'about:srcdoc' });
+    directDocumentRealms.push(d); active = d;
+    Object.defineProperty(d.window, 'parent', { value: parent, configurable: true });
+    const script = d.window.document.querySelector('script[data-od-srcdoc-transport-activation]')!.textContent!;
+    const marker = d.window.document.querySelector('template[data-od-srcdoc-transport-body-complete]')!;
+    marker.remove();
+    await act(async () => {
+      d.window.eval(script);
+      d.window.eval(d.window.document.querySelector('script[data-od-edit-bridge]')!.textContent!);
+      d.window.document.body.append(marker);
+      await Promise.resolve();
+    });
+    if (load) act(() => fireEvent.load(frame));
+    return { id: (d.window as unknown as { __odSrcdocTransportDocumentId: string }).__odSrcdocTransportDocumentId,
+      generation: messages.at(-1)?.generation, doc: d.window.document };
+  }
+  return { commitDocument, parentMessages: messages, hostMessages: hostPosts };
+}
+
 beforeEach(() => {
   setExceptionTrackingContext({
     apiKey: 'phc_preview_test',
@@ -57,6 +97,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  directDocumentRealms.splice(0).forEach((realm) => realm.window.close());
   clearExceptionTrackingContext();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -324,15 +365,17 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
     expect(JSON.stringify(payload)).not.toContain('partial-document');
   });
 
-  it('does not remount a healthy document while a parser-blocking script is still loading', () => {
+  it('does not remount a healthy document while a parser-blocking script is still loading', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (
       _input: RequestInfo | URL,
       _init?: RequestInit,
-    ) => new Response('', { status: 404 }));
+    ) => String(_input).includes('/preview-url?')
+      ? new Response(JSON.stringify({ url: '/api/projects/project-1/preview/native-scope/preview.html', documentMode: 'bootstrap-quirks', expiresAt: Date.now() + 3600000 }))
+      : new Response('', { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(
+    await act(async () => { render(
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
@@ -344,10 +387,13 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
           <main>Delayed but healthy</main>
         </body></html>`}
       />,
-    );
+    ); });
 
     const parsingFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     const postMessage = vi.spyOn(parsingFrame.contentWindow!, 'postMessage');
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { source: parsingFrame.contentWindow, data: { type: 'od:srcdoc-transport-ready' } }));
+    });
     act(() => {
       vi.advanceTimersByTime(1_500);
     });
@@ -483,5 +529,77 @@ describe('FileViewer srcDoc file-watch refresh recovery', () => {
     const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     expect(recoveredFrame).not.toBe(refreshedFrame);
     expect(recoveredFrame.srcdoc).toContain('data-od-lazy-srcdoc-transport');
+  });
+  it('challenges a same-generation direct document without rewriting normal loads or trusting old ACKs', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+    render(<FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()}
+      liveHtml={srcDocHtml('direct-document-reload')} />);
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(frame.srcdoc).not.toContain('data-od-lazy-srcdoc-transport');
+    const bridge = realDirectSrcDocDocument(frame);
+    const original = await bridge.commitDocument();
+    const oldAck = bridge.parentMessages.find(message => message.bodyComplete === true
+      && typeof message.probeId === 'string')!;
+    expect(oldAck).toBeTruthy();
+    const current = await bridge.commitDocument();
+    expect(current.id).not.toBe(original.id);
+    expect(current.generation).toBe(original.generation);
+    const postsBeforeOldAck = bridge.hostMessages.length;
+    act(() => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow, data: oldAck,
+    })));
+    expect(bridge.hostMessages).toHaveLength(postsBeforeOldAck);
+    // Duplicate load belongs to this same document, rather than another reload.
+    act(() => fireEvent.load(frame));
+    act(() => vi.advanceTimersByTime(1500));
+    expect(screen.getByTestId('artifact-preview-frame') === frame).toBe(true);
+    expect(bridge.hostMessages.filter(message => message.type === 'od:srcdoc-transport-activate')).toHaveLength(0);
+    expect(bridge.hostMessages.filter(message => message.type === 'od:srcdoc-transport-ready-probe').at(-1)?.documentId).toBeUndefined();
+  });
+
+  it('consumes a saved-source latch only after challenging a same-generation direct document', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let persisted = srcDocHtml('Before save').replace('<main>', '<main data-od-id="hero">');
+    const writes: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/projects/project-1/files') && init?.method === 'POST') {
+        persisted = (JSON.parse(String(init.body)) as { content: string }).content;
+        writes.push(persisted);
+        return new Response(JSON.stringify({ file: htmlFile() }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/raw/deepflow-landing.html')) return new Response(persisted, { status: 200 });
+      if (url.includes('/files/deepflow-landing.html/versions')) return new Response(JSON.stringify({ versions: [] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+      return new Response('', { status: 404 });
+    }));
+    render(<FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} liveHtml={persisted} />);
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const bridge = realDirectSrcDocDocument(frame);
+    const original = await bridge.commitDocument();
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => expect(screen.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true'));
+    act(() => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: { type: 'od-edit-text-commit', id: 'hero', value: 'Saved content' },
+    })));
+    await waitFor(() => expect(bridge.hostMessages.some(message => message.type === 'od-edit-preview-text'
+      && message.value === 'Saved content')).toBe(true));
+    expect(writes).toHaveLength(1);
+    expect(persisted).toContain('Saved content');
+    expect(original.doc.querySelector('main')?.textContent).toBe('Saved content');
+    expect(frame.srcdoc.includes('Saved content')).toBe(false);
+    // The actual new realm's eager ACK has no probe and cannot retire the owner.
+    await bridge.commitDocument(false);
+    expect(frame.srcdoc.includes('Saved content')).toBe(false);
+    act(() => fireEvent.load(frame));
+    expect(frame.srcdoc.includes('Saved content')).toBe(true);
+    const saved = await bridge.commitDocument();
+    expect(saved.doc.querySelector('main')?.textContent).toBe('Saved content');
+    act(() => vi.advanceTimersByTime(1500));
+    expect(screen.getByTestId('artifact-preview-frame') === frame).toBe(true);
+    expect(writes).toHaveLength(1);
   });
 });

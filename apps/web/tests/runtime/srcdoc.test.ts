@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { DECK_STRUCTURED_SLIDE_SELECTOR } from '@open-design/contracts/runtime/deck-stage-fallback';
 import { buildSrcdoc } from '../../src/runtime/srcdoc';
+import { buildPreviewBaseHrefBridge } from '@open-design/contracts/runtime/preview-observability';
 
 const deckHtml = `<!doctype html>
 <html>
@@ -30,6 +31,39 @@ const brokenDeckStageHtml = `<!doctype html>
 </html>`;
 
 describe('buildSrcdoc', () => {
+  it.each(['', 'index.html'])('keeps a native entry %s base fragment-free for scripts and descendant nodes', (entry) => {
+    const href = '/api/projects/project-1/preview/scope-1/pages/';
+    const dom = new JSDOM(`<html><head>${buildPreviewBaseHrefBridge({ href, expiresAt: 123, documentUrl: href + entry })}</head><body><img></body></html>`, {
+      url: `http://open-design.local${href}${entry}?theme=dark#/home`, runScripts: 'dangerously',
+    });
+    expect(dom.window.document.querySelector('base')).toBeNull();
+    expect(dom.window.document.baseURI + 'logo.svg').toBe(`http://open-design.local${href}logo.svg`);
+    expect(dom.window.document.body.baseURI).toBe(`http://open-design.local${href}`);
+    dom.window.location.hash = '#/details';
+    expect(dom.window.document.baseURI).toBe(`http://open-design.local${href}`);
+    dom.window.close();
+  });
+
+  it('keeps legacy baseURI concatenation working when the scope is replaced', () => {
+    const doc = buildSrcdoc(
+      '<!doctype html><html><head></head><body><main>Preview</main></body></html>',
+      { baseHref: 'od://app/api/projects/project-1/preview/scope-1/pages/' },
+    );
+    const dom = new JSDOM(doc, { url: 'http://open-design.local/', runScripts: 'dangerously', pretendToBeVisual: true });
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      source: dom.window.parent,
+      data: {
+        type: 'od:preview-base-update',
+        href: 'od://app/api/projects/project-1/preview/scope-2/pages/',
+      },
+    }));
+    expect(dom.window.document.baseURI + 'logo.svg')
+      .toBe('od://app/api/projects/project-1/preview/scope-2/pages/logo.svg');
+    expect(new URL('./asset.svg', dom.window.document.baseURI).href)
+      .toBe('od://app/api/projects/project-1/preview/scope-2/pages/asset.svg');
+    dom.window.close();
+  });
+
   it('preserves an artifact-authored base instead of overriding its navigation semantics', () => {
     const authored = '<base href="https://cdn.example/assets/">';
     const doc = buildSrcdoc(
@@ -218,6 +252,66 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).not.toContain("document.querySelector('template[data-od-srcdoc-transport-body-complete]')");
     expect(srcdoc).toContain('message.documentReadyState = document.readyState');
     expect(srcdoc).toContain('message.bodyChildCount = document.body ? document.body.children.length : 0');
+  });
+
+  it('reports query-only history changes and only acknowledges the current transport document', async () => {
+    const messages: Array<Record<string, unknown>> = [];
+    const parent = { postMessage: (message: Record<string, unknown>) => messages.push(message) };
+    const documentId = 'document-current';
+    const generation = 'generation-history';
+    const href = 'http://open-design.local/api/projects/project-1/preview/scope-1/';
+    const documentUrl = href + 'deck.html';
+    const dom = new JSDOM(buildSrcdoc('<!doctype html><html><head></head><body><main>Ready</main></body></html>', {
+      nativeDocumentBase: { href, documentUrl, expiresAt: 123 },
+      transportActivationGeneration: generation,
+    }), {
+      url: documentUrl + '#/home',
+      runScripts: 'dangerously',
+      pretendToBeVisual: true,
+      beforeParse(window) {
+        Object.defineProperty(window, 'parent', { value: parent });
+        Object.defineProperty(window, '__odSrcdocTransportDocumentId', { value: documentId, writable: true });
+      },
+    });
+    await new Promise<void>((resolve) => dom.window.addEventListener('load', () => resolve()));
+    messages.length = 0;
+    dom.window.history.replaceState({}, '', '?theme=dark#/home');
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'od:preview-base-scope', documentId, documentUrl: documentUrl + '?theme=dark#/home',
+    }));
+    dom.window.history.pushState({}, '', '?theme=light#/home');
+    expect(messages.at(-1)).toMatchObject({
+      type: 'od:preview-base-scope', documentId, documentUrl: documentUrl + '?theme=light#/home',
+    });
+    dom.window.dispatchEvent(new dom.window.PopStateEvent('popstate'));
+    expect(messages.at(-1)).toMatchObject({ type: 'od:preview-base-scope', documentId });
+    const messagesBeforeFailedHistory = messages.length;
+    dom.window.history.replaceState({}, '', 'https://other.example/');
+    expect(messages).toHaveLength(messagesBeforeFailedHistory);
+
+    messages.length = 0;
+    const probe = (id: string) => dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      source: dom.window.parent,
+      data: { type: 'od:srcdoc-transport-ready-probe', generation, documentId: id, probeId: 'probe-1' },
+    }));
+    probe('previous-document');
+    expect(messages).toEqual([]);
+    probe(documentId);
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'od:srcdoc-transport-activated', generation, documentId, probeId: 'probe-1', bodyComplete: true,
+    }));
+    messages.length = 0;
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      source: dom.window.parent,
+      data: { type: 'od:srcdoc-transport-activate', generation: 'generation-next', documentId: 'previous-document', html: '<main>Stale</main>' },
+    }));
+    expect(messages).toEqual([]);
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      source: dom.window.parent,
+      data: { type: 'od:srcdoc-transport-activate', generation: 'generation-next', documentId, html: '<main>Next</main>' },
+    }));
+    expect(messages).toContainEqual(expect.objectContaining({ type: 'od:srcdoc-transport-reset-required', generation: 'generation-next', documentId }));
+    dom.window.close();
   });
 
   it('keeps parser completion latched after authored code removes the completed body', async () => {

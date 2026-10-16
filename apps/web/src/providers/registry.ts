@@ -1,3 +1,4 @@
+import type { ProjectPreviewDocumentMode } from '@open-design/contracts';
 import {
   PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
   workspaceContextHasTeamIdentity,
@@ -2592,6 +2593,8 @@ export function projectFileUrl(
 export interface ProjectPreviewBaseScope {
   href: string;
   expiresAt: number;
+  documentUrl?: string;
+  documentMode?: ProjectPreviewDocumentMode;
 }
 
 // Newer daemons return the authoritative scope expiry. During a rolling
@@ -2611,17 +2614,24 @@ export async function fetchProjectPreviewBaseHref(
   projectId: string,
   name: string,
   _workspaceContext?: WorkspaceCollabContext | null,
+  options: { documentMode?: ProjectPreviewDocumentMode; bridges?: readonly string[]; signal?: AbortSignal; throwOnError?: boolean } = {},
 ): Promise<ProjectPreviewBaseScope | null> {
   const params = new URLSearchParams({ file: name });
+  if (options.documentMode) params.set('documentMode', options.documentMode);
+  for (const bridge of options.bridges ?? []) params.append('odPreviewBridge', bridge);
   const requestUrl =
     `/api/projects/${encodeURIComponent(projectId)}/preview-url?${params.toString()}`;
   try {
     const response = await fetch(requestUrl, {
       cache: 'no-store',
+      ...(options.signal ? { signal: options.signal } : {}),
     });
-    if (!response.ok) return null;
+    if (!response.ok) throw Object.assign(new Error(`Preview scope request failed (${response.status})`), { status: response.status });
     const body = (await response.json()) as ProjectPreviewUrlResponse;
     if (typeof body.url !== 'string' || !body.url.startsWith('/')) return null;
+    if (options.documentMode && body.documentMode !== options.documentMode) {
+      throw Object.assign(new Error('Preview document transport is unavailable'), { status: 400 });
+    }
     const parsed = new URL(body.url, 'http://open-design.local');
     const expectedPrefix = `/api/projects/${encodeURIComponent(projectId)}/preview/`;
     if (!parsed.pathname.startsWith(expectedPrefix)) return null;
@@ -2637,8 +2647,13 @@ export async function fetchProjectPreviewBaseHref(
       // capability against the host document while it still has a real origin.
       href: previewCapabilityHref(parsed.pathname.slice(0, directoryEnd)),
       expiresAt,
+      ...(options.documentMode ? {
+        documentMode: body.documentMode,
+        documentUrl: previewCapabilityHref(parsed.pathname),
+      } : {}),
     };
-  } catch {
+  } catch (error) {
+    if (options.throwOnError) throw error;
     return null;
   }
 }

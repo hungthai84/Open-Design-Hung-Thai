@@ -19,6 +19,8 @@ import {
   buildPreviewBuildFocusBridge,
 } from '@open-design/contracts/runtime/preview-build-focus';
 import {
+  buildLazySrcdocTransport,
+  previewHtmlNeedsNativeNavigation,
   buildPreviewFocusGuard,
   buildPreviewRedirectGuard,
   buildPreviewSandboxShim,
@@ -1702,6 +1704,16 @@ function wantsUrlPreviewFocusGuard(value: unknown): boolean {
 
 function wantsUrlPreviewRedirectGuard(value: unknown): boolean {
   return previewBridgeTokens(value).some((token) => token === 'redirect');
+}
+
+function previewBridgePolicy(value: unknown): string[] {
+  const policies: Array<[string, (input: unknown) => boolean]> = [
+    ['scroll', wantsUrlPreviewScrollBridge], ['selection', wantsUrlPreviewSelectionBridge],
+    ['snapshot', wantsUrlPreviewSnapshotBridge], ['observability', wantsUrlPreviewObservabilityBridge],
+    ['buildfocus', wantsUrlPreviewBuildFocusBridge], ['sandbox', wantsUrlPreviewSandboxGuard],
+    ['focus', wantsUrlPreviewFocusGuard], ['redirect', wantsUrlPreviewRedirectGuard],
+  ];
+  return policies.filter(([, selected]) => selected(value)).map(([name]) => name);
 }
 
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
@@ -5849,12 +5861,15 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     "base-uri 'none'",
     "object-src 'none'",
   ].join('; ');
+  // Documents preserve the resource capabilities of raw/srcDoc previews.
+  // The opaque sandbox still prevents host access, forms and top navigation.
+  const projectPreviewDocumentCsp = "sandbox allow-scripts allow-downloads; base-uri 'none'; object-src 'none'; form-action 'none'";
   const previewScopeRe = /^[A-Za-z0-9_-]{8,128}$/u;
 
-  function setProjectPreviewHeaders(res: Response) {
+  function setProjectPreviewHeaders(res: Response, document = false) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', projectPreviewCsp);
+    res.setHeader('Content-Security-Policy', document ? projectPreviewDocumentCsp : projectPreviewCsp);
   }
 
   // "Powered preview" headers — the opposite trade-off from setProjectPreviewHeaders.
@@ -6362,14 +6377,13 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     // below is gated on the document having some — 10% of this repository's
     // HTML files reach it, at a few milliseconds each.
     if (/<(svg|math)[\t\n\f\r />]/i.test(html) && hasAuthoredHtmlBase(html)) return html;
+    // Keep the legacy directory base for code that concatenates baseURI with
+    // a resource name. This scope binds directory navigation to ownerFilePath.
     const ownerDir = path.posix.dirname(ownerFilePath);
-    const dirSuffix = ownerDir === '.'
-      ? ''
-      : `${encodeProjectPathForUrl(ownerDir)}/`;
-    const baseTag = `<base href="/api/projects/${encodeURIComponent(projectId)}`
-      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}" data-od-project-preview-base>`;
+    const dirSuffix = ownerDir === '.' ? '' : `${encodeProjectPathForUrl(ownerDir)}/`;
     const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
       + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
+    const baseTag = `<base href="${baseHref}" data-od-project-preview-base>`;
     const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
     // Same structural rule as the bridge injectors above: a `<head>` inside a
     // script string is text, not this document's head.
@@ -6743,8 +6757,17 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         requestedPath,
         project.metadata,
       );
+      const documentMode = req.query.documentMode ?? 'resource';
+      if (!['resource', 'url', 'bootstrap', 'bootstrap-quirks'].includes(String(documentMode)) || typeof documentMode !== 'string') {
+        sendApiError(res, 400, 'BAD_REQUEST', 'invalid preview document mode');
+        return;
+      }
+      if (documentMode !== 'resource' && !/^text\/html(?:;|$)/i.test(meta.mime)) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'preview document must be HTML');
+        return;
+      }
       const requestContext = workspaceProjectContextFromRequest(req);
-      const scope = projectPreviewScopes.mint(
+      const scope = projectPreviewScopes.acquire(
         project.id,
         requestContext === null || requestContext === 'missing'
           ? null
@@ -6752,6 +6775,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
               workspaceId: requestContext.workspaceId,
               workspaceMemberId: requestContext.workspaceMemberId,
             },
+        {
+          entryFile: meta.name,
+          documentMode: documentMode as import('@open-design/contracts').ProjectPreviewDocumentMode,
+          bridges: documentMode === 'url' ? previewBridgePolicy(req.query.odPreviewBridge) : [],
+        },
       );
       const expiresAt = projectPreviewScopes.expiresAt(project.id, scope);
       if (expiresAt === undefined) {
@@ -6762,7 +6790,8 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const body = {
         url: `/api/projects/${encodeURIComponent(project.id)}/preview/${scope}/${encodeProjectPathForUrl(meta.name)}`,
         file: meta.name,
-        csp: projectPreviewCsp,
+        documentMode,
+        csp: documentMode === 'resource' ? projectPreviewCsp : projectPreviewDocumentCsp,
         iframeSandbox: projectPreviewIframeSandbox,
         opaqueOrigin: true,
         expiresAt,
@@ -6896,7 +6925,14 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     }
   });
 
-  app.get(/^\/api\/projects\/([^/]+)\/preview\/([^/]+)\/(.+)$/u, async (req, res) => {
+  /** A directory may serve only the HTML entry explicitly bound to its scope. */
+  function previewDirectoryEntry(relPath: string, entryFile: string | undefined): string | null {
+    if (!entryFile || !/\.html?$/i.test(entryFile)) return null;
+    const dir = path.posix.dirname(entryFile);
+    return relPath === (dir === '.' ? '' : `${dir}/`) ? entryFile : null;
+  }
+
+  app.get(/^\/api\/projects\/([^/]+)\/preview\/([^/]+)\/(.*)$/u, async (req, res) => {
     try {
       const params = req.params as unknown as { 0?: string; 1?: string; 2?: string };
       const projectId = String(params[0] ?? '');
@@ -6932,24 +6968,54 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         projectId,
         { mode: 'read', allowNavigationQuery: true },
       )) return;
+      const document = projectPreviewScopes.document(project.id, scope);
+      const isDirectory = relPath === '' || relPath.endsWith('/');
+      const filePath = isDirectory
+        ? previewDirectoryEntry(relPath, document?.entryFile)
+        : relPath;
+      if (filePath === null) {
+        sendApiError(res, 404, 'FILE_NOT_FOUND', 'preview directory has no bound HTML entry');
+        return;
+      }
       if (req.headers.origin === 'null') {
         res.header('Access-Control-Allow-Origin', '*');
       }
+      const isBoundDocument = document && filePath === document.entryFile;
+      const mode = isBoundDocument ? document.documentMode : 'resource';
+      if (mode === 'bootstrap' || mode === 'bootstrap-quirks') {
+        // Resolve the real entry before serving the shell so path/Workspace
+        // containment remains identical to a normal project file read.
+        await resolveProjectFilePath(PROJECTS_DIR, project.id, filePath, project.metadata);
+        setProjectPreviewHeaders(res, true);
+        res.type('html').send(buildLazySrcdocTransport({ quirksMode: mode === 'bootstrap-quirks' }));
+        return;
+      }
       await sendProjectFile(
-        req,
-        res,
-        project.id,
-        relPath,
-        project.metadata,
-        () => setProjectPreviewHeaders(res),
-        async (file) => maybeResolveVitePreviewHtml({
-          file,
-          projectId: project.id,
-          relPath,
-          metadata: project.metadata,
-          projectsRoot: PROJECTS_DIR,
-          readProjectFile,
-        }),
+        req, res, project.id, filePath, project.metadata,
+        () => setProjectPreviewHeaders(res, mode === 'url'),
+        async (file) => {
+          const transformed = await maybeResolveVitePreviewHtml({
+            file, projectId: project.id, relPath: filePath,
+            metadata: project.metadata, projectsRoot: PROJECTS_DIR, readProjectFile,
+          });
+          if (!isBoundDocument || mode !== 'url' || !/^text\/html(?:;|$)/i.test(file.mime)) return transformed;
+          const bridged = applyUrlPreviewBridgesToHtml(
+            transformed,
+            file.mime,
+            document.bridges,
+            req.query.odMotionPreview,
+          );
+          const expiresAt = projectPreviewScopes.documentExpiresAt(project.id, scope);
+          if (expiresAt === undefined) return bridged;
+          const dir = path.posix.dirname(filePath);
+          const href = `/api/projects/${encodeURIComponent(project.id)}/preview/${encodeURIComponent(scope)}/`
+            + (dir === '.' ? '' : `${encodeProjectPathForUrl(dir)}/`);
+          return injectAfterHeadOpen(
+            Buffer.isBuffer(bridged) ? bridged.toString('utf8') : bridged,
+            'data-od-preview-base-bridge',
+            buildPreviewBaseHrefBridge({ href, expiresAt, documentUrl: req.originalUrl }),
+          );
+        },
       );
     } catch (err: any) {
       const status = err && err.code === 'ENOENT' ? 404 : 400;
@@ -7016,6 +7082,31 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         res.setHeader(MOTION_PREVIEW_OUTPUT_HEADER, isMotionVideoComposition(file.buffer.toString('utf8')) ? 'video' : 'html');
       }
 
+      if (!skipHtmlPreviewBridge && /^text\/html(?:;|$)/i.test(meta.mime)
+        && (wantsUrlPreviewRedirectGuard(req.query.odPreviewBridge) || wantsUrlPreviewSandboxGuard(req.query.odPreviewBridge))) {
+        const source = await readProjectFile(PROJECTS_DIR, projectId, relPath, project?.metadata);
+        const html = source.buffer.toString('utf8');
+        if (previewHtmlNeedsNativeNavigation(html) && !hasAuthoredHtmlBase(html)) {
+          const context = workspaceProjectContextFromRequest(req);
+          const workspace = typeof req.query.workspaceId === 'string' && typeof req.query.workspaceMemberId === 'string'
+            ? { workspaceId: req.query.workspaceId, workspaceMemberId: req.query.workspaceMemberId }
+            : context && context !== 'missing'
+              ? { workspaceId: context.workspaceId, workspaceMemberId: context.workspaceMemberId }
+              : null;
+          const scope = projectPreviewScopes.acquire(projectId, workspace, {
+            entryFile: relPath, documentMode: 'url', bridges: previewBridgePolicy(req.query.odPreviewBridge),
+          });
+          const query = new URLSearchParams();
+          for (const key of ['v', 'r', 'fr', 'odPreviewEpoch', 'odEditStandby']) {
+            if (typeof req.query[key] === 'string') query.set(key, req.query[key] as string);
+          }
+          if (req.query.odMotionPreview === '1') query.set('odMotionPreview', '1');
+          res.setHeader('Cache-Control', 'no-store');
+          res.redirect(302, `/api/projects/${encodeURIComponent(projectId)}/preview/${scope}/${encodeProjectPathForUrl(relPath)}?${query}`);
+          return;
+        }
+      }
+
       await sendProjectFile(
         req,
         res,
@@ -7074,7 +7165,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                   workspaceMemberId: headerContext.workspaceMemberId,
                 }
               : null;
-          const scope = projectPreviewScopes.acquire(projectId, previewWorkspace);
+          const scope = projectPreviewScopes.acquire(projectId, previewWorkspace, {
+            entryFile: relPath,
+            documentMode: 'url',
+            bridges: previewBridgePolicy(req.query.odPreviewBridge),
+          });
           // The document's own expiry, not the live one: renewal must keep the
           // scope alive without changing a single byte of what this read
           // returns.

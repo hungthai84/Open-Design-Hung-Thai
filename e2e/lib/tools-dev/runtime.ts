@@ -1,5 +1,6 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SIDECAR_ENV } from '@open-design/sidecar-proto';
 
 import {
   isToolsDevPortConflict,
@@ -48,6 +49,7 @@ export function createToolsDevSuite(
   let currentPortAllocation: ToolsDevPortAllocation | null = null;
   let currentDaemonUrl: string | null = null;
   let currentWebUrl: string | null = null;
+  let startedEnv: Record<string, string | undefined> = {};
 
   async function command<T>(
     args: string[],
@@ -93,6 +95,7 @@ export function createToolsDevSuite(
         });
         currentDaemonUrl = assertRuntimeUrl(result.daemon?.status.url, 'daemon');
         currentWebUrl = assertRuntimeUrl(result.web?.status.url, 'web');
+        startedEnv = { ...env };
         return result;
       } catch (error) {
         lastError = error;
@@ -120,6 +123,28 @@ export function createToolsDevSuite(
     currentDaemonUrl = null;
     currentWebUrl = null;
     return result;
+  }
+
+  async function restartDaemon(): Promise<void> {
+    const daemonUrl = requireUrl(currentDaemonUrl, 'daemon');
+    const webUrl = requireUrl(currentWebUrl, 'web');
+    const args = [
+      'restart', 'daemon', '--namespace', spec.namespace,
+      '--tools-dev-root', spec.toolsDevRoot,
+      '--daemon-port', String(currentPortAllocation!.daemonPort),
+      '--web-port', String(currentPortAllocation!.webPort), '--json',
+    ];
+    const env = {
+      ...startedEnv,
+      ...(spec.ownerPid == null ? {} : { [SIDECAR_ENV.TOOLS_DEV_PARENT_PID]: String(spec.ownerPid) }),
+    };
+    const result = await command<{ start: ToolsDevStartResult }>(args, env, {
+      timeoutMs: TOOLS_DEV_START_TIMEOUT_MS,
+    });
+    const restartedUrl = assertRuntimeUrl(result.start.daemon?.status.url, 'daemon');
+    if (restartedUrl !== daemonUrl) throw new Error('Daemon restart changed the running web proxy target');
+    currentDaemonUrl = restartedUrl;
+    currentWebUrl = webUrl;
   }
 
   function requireUrl(value: string | null, app: 'daemon' | 'web'): string {
@@ -168,6 +193,7 @@ export function createToolsDevSuite(
         env,
       ),
     startWeb,
+    restartDaemon,
     status: (env) =>
       command<ToolsDevStatusResult>(
         ['status', '--namespace', spec.namespace, '--tools-dev-root', spec.toolsDevRoot, '--json'],

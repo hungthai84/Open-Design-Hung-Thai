@@ -72,6 +72,7 @@ export type ToolsDevSuite = ToolsDevSuiteSpec & {
   readonly webUrl: string | null;
   check: (env?: Record<string, string | undefined>) => Promise<ToolsDevCheckResult>;
   logs: (env?: Record<string, string | undefined>) => Promise<Record<string, ToolsDevLogResult>>;
+  restartDaemon: () => Promise<void>;
   startWeb: (env?: Record<string, string | undefined>) => Promise<ToolsDevStartResult>;
   status: (env?: Record<string, string | undefined>) => Promise<ToolsDevStatusResult>;
   stopWeb: (env?: Record<string, string | undefined>) => Promise<unknown>;

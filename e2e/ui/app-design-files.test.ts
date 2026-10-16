@@ -1,11 +1,18 @@
+import { ACTIVE_ARTIFACT_PREVIEW_SELECTOR } from '@/playwright/artifact-preview';
+import { expectStableCount } from '@/playwright/assertions';
 import { expect, test } from '@/playwright/suite';
 import { openNewProjectModal as openNewProjectModalFromProjects } from '@/playwright/rail';
 import { applyStandardMocks, routeAgents } from '@/playwright/mock-factory';
-import { expectAllProjectFilesActive, openAllProjectFiles } from '@/playwright/workspace';
+import { clickPreviewToolbarAction, expectAllProjectFilesActive, openAllProjectFiles } from '@/playwright/workspace';
 import type { Locator, Page, Request } from '@playwright/test';
 import { automatedUiScenarios } from '@/playwright/resources';
 import type { UiScenario } from '@/playwright/resources';
 import { T } from '@/timeouts';
+import {
+  expectRecoveryFrame, expectRecoveryPresenter, openPreviewPresenter, observePreviewScopeRecovery,
+  previewDirectoryHref, previewRecoveryDeck, previewRecoveryWitness,
+} from '@/playwright/preview-recovery';
+import { warmPlaywrightDaemonRuntime } from '@/playwright/runtime-lifecycle';
 import {
   PREVIEW_WHITE_SCREEN_CONFIRMATION_MS,
   PREVIEW_WHITE_SCREEN_TIMEOUT_MS,
@@ -24,6 +31,13 @@ test.describe.configure({ timeout: T.xlong });
 
 test.beforeEach(async ({ page }) => {
   await applyStandardMocks(page);
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if ((!testInfo.title.includes('native preview recovery') && !testInfo.title.includes('direct srcdoc reload'))
+    || testInfo.status === testInfo.expectedStatus) return;
+  const pages = await Promise.all(page.context().pages().map(previewRecoveryWitness));
+  await testInfo.attach('preview-recovery-witness', { body: JSON.stringify(pages, null, 2), contentType: 'application/json' });
 });
 
 const designFileFlows = new Set([
@@ -954,6 +968,387 @@ test('[P1] design files batch download posts selected names to the archive endpo
   expect(archiveRequest).toEqual({ files: ['download-alpha.txt', 'download-beta.txt'] });
 });
 
+for (const srcdoc of [false, true]) {
+  test(`[P1] hash initialization preserves the HTML preview (${srcdoc ? 'srcDoc' : 'URL-load'})`, async ({ page }, testInfo) => {
+    await routeMockAgents(page);
+    const projectId = await createProjectViaApi(page, 'Hash preview regression');
+    await seedProjectFile(page, projectId, 'styles.css', 'h1 { color: rgb(0, 128, 0); }');
+    await seedProjectFile(page, projectId, 'boot.js', 'window.bootLoaded = true;');
+    await seedProjectFile(page, projectId, 'logo.png', TINY_PNG_B64, 'base64');
+    await seedProjectFile(page, projectId, 'index.html', `<!doctype html><html><head>
+      <link rel="stylesheet" href="./styles.css"><script src="./boot.js"></script>
+      </head><body>${srcdoc ? '<section class="slide active">' : '<main>'}<h1>Hash home</h1><img src="./logo.png" alt="Logo">
+      <a href="#/details">Details</a><a href="#/home">Home</a><a href="#/leave" id="stay">Stay</a>
+      <script>
+        var logo = document.createElement('img');
+        logo.alt = 'Concatenated logo';
+        logo.src = document.baseURI + 'logo.png';
+        document.body.appendChild(logo);
+        document.getElementById('stay').addEventListener('click', function (event) { event.preventDefault(); });
+        function render() { document.querySelector('h1').textContent = location.hash === '#/details' ? 'Hash details' : 'Hash home'; }
+        window.addEventListener('hashchange', render);
+        if (!location.hash) location.replace('#/home');
+        render();
+      </script>${srcdoc ? '</section><section class="slide"><h2>Second slide</h2></section>' : '</main>'}</body></html>`, undefined, {
+      version: 1,
+      kind: srcdoc ? 'deck' : 'html',
+      title: 'Hash preview',
+      entry: 'index.html',
+      // Deck previews use srcDoc through the production renderer contract.
+      renderer: srcdoc ? 'deck-html' : 'html',
+      exports: ['html'],
+    });
+    const directoryRequests: string[] = [];
+    page.on('request', (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (new RegExp('/api/projects/' + projectId + '/preview/[^/]+/$').test(pathname)) directoryRequests.push(pathname);
+    });
+    await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+    await expectWorkspaceReady(page);
+    await openDesignFile(page, 'index.html');
+    await expect(page.getByTestId('artifact-preview-frame'))
+      .toHaveAttribute('data-od-render-mode', srcdoc ? 'srcdoc' : 'url-load');
+    const preview = page.frameLocator('[data-testid="artifact-preview-frame"]');
+    await expect(preview.getByRole('heading', { name: 'Hash home' })).toBeVisible();
+    await expect(preview.getByRole('heading', { name: 'Hash home' })).toHaveCSS('color', 'rgb(0, 128, 0)');
+    await expect.poll(() => preview.locator('body').evaluate(() => (window as unknown as { bootLoaded: boolean }).bootLoaded)).toBe(true);
+    await expect.poll(() => preview.getByRole('img', { name: 'Logo', exact: true }).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
+    await expect.poll(() => preview.getByRole('img', { name: 'Concatenated logo' }).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
+    await preview.getByRole('link', { name: 'Stay', exact: true }).click();
+    expect(await preview.locator('body').evaluate(() => location.hash)).toBe('#/home');
+    await preview.getByRole('link', { name: 'Details' }).click();
+    await expect(preview.getByRole('heading', { name: 'Hash details' })).toBeVisible();
+    await preview.getByRole('link', { name: 'Details' }).click();
+    await expect(preview.getByRole('heading', { name: 'Hash details' })).toBeVisible();
+    await preview.getByRole('link', { name: 'Home', exact: true }).click();
+    await expect(preview.getByRole('heading', { name: 'Hash home' })).toBeVisible();
+    await preview.locator('body').evaluate(() => history.back());
+    await expect(preview.getByRole('heading', { name: 'Hash details' })).toBeVisible();
+    await preview.locator('body').evaluate(() => history.back());
+    await expect(preview.getByRole('heading', { name: 'Hash home' })).toBeVisible();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(preview.getByRole('heading', { name: 'Hash home' })).toBeVisible();
+    if (srcdoc) {
+      await expect(page.locator('.deck-thumbnail-loading')).toHaveCount(0);
+      await page.locator('.deck-thumbnail-button').nth(1).click();
+      await expect(preview.getByRole('heading', { name: 'Second slide' })).toBeVisible();
+      await page.locator('.deck-thumbnail-button').first().click();
+      await page.getByRole('button', { name: 'Present', exact: true }).click();
+      const popupPromise = page.waitForEvent('popup');
+      await page.getByRole('menuitem').filter({ hasText: /in this tab/i }).click();
+      const presenter = await popupPromise;
+      await expect(page.frameLocator('iframe[title="present"]').getByRole('heading', { name: 'Hash home' })).toBeVisible();
+      await expect(presenter.frameLocator('#current').getByRole('heading', { name: 'Hash home' })).toBeVisible();
+      await page.locator('.present-exit-btn').click();
+    }
+    expect(directoryRequests).toHaveLength(0);
+    await page.screenshot({ path: testInfo.outputPath('preview-working.png') });
+  });
+}
+
+for (const [name, initializer, bodyOnload, htmlPrefix] of [
+  ['alias', "const go = location.replace.bind(location); go('#/home');", false, ''],
+  ['computed property', "location['replace']('#/home');", false, ''],
+  ['body onload alias', "const go = location.replace.bind(location); go('#/home');", true, ''],
+  ['odd HTML comment', "const go = location.replace.bind(location); go('#/home');", false, '<!-->'],
+] as const) {
+  test(`[P1] native preview recovery supports ${name} hash initialization in a personal deck`, async ({ page }) => {
+    await routeMockAgents(page);
+    const projectId = await createProjectViaApi(page, 'Native alias deck');
+    await seedPreviewRecoveryDeck(page, projectId, initializer, false, bodyOnload, htmlPrefix);
+    const directories: string[] = [];
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith(`/api/projects/${projectId}/preview/`) && url.pathname.endsWith('/')) directories.push(url.pathname);
+    });
+    await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+    await expectWorkspaceReady(page);
+    await openDesignFile(page, 'index.html');
+    await expectRecoveryFrame(page.frameLocator('[data-testid="artifact-preview-frame"]'), 0, undefined, '#/home');
+    const documentUrl = await page.frameLocator('[data-testid="artifact-preview-frame"]').locator('body').evaluate(() => location.href);
+    expect(new URL(documentUrl).pathname).toMatch(new RegExp(`/api/projects/${projectId}/preview/[^/]+/index\\.html$`));
+    await expectRecoveryFrame(page.frameLocator('[data-testid="artifact-preview-frame"]'), 0, previewDirectoryHref(documentUrl), '#/home');
+    expect(directories, 'hash initialization left the bound file for its directory').toEqual([]);
+  });
+}
+
+for (const initialIndex of [0, 2, 1]) {
+  test(`[P1] native preview recovery replaces presenter scopes twice from slide ${initialIndex + 1}`, async ({ page, toolsDev }, testInfo) => {
+    test.setTimeout(T.xlong * 2);
+    await routeMockAgents(page);
+    await page.clock.install();
+    const projectId = await createProjectViaApi(page, 'Native presenter recovery');
+    await seedPreviewRecoveryDeck(page, projectId, "location.replace('#/1');");
+    const { scopes, renewalStatuses } = await observePreviewScopeRecovery(page, projectId);
+    await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+    await expectWorkspaceReady(page);
+    await openDesignFile(page, 'index.html');
+    await expectRecoveryFrame(page.frameLocator('[data-testid="artifact-preview-frame"]'), 0);
+    await expect(page.locator('.deck-thumbnail-loading')).toHaveCount(0);
+    await page.locator('.deck-thumbnail-button').nth(initialIndex).click();
+    await expectRecoveryFrame(page.frameLocator('[data-testid="artifact-preview-frame"]'), initialIndex);
+    const presenter = await openPreviewPresenter(page);
+    await expectRecoveryPresenter(presenter, initialIndex);
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + T.short));
+    try {
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const slots = ['current', ...(initialIndex > 0 ? ['previous'] : []), ...(initialIndex < 2 ? ['next'] : [])];
+        const locations = await Promise.all(slots.map(slot => presenter.frameLocator('#' + slot).locator('body').evaluate(() => ({ search: location.search, hash: location.hash }))));
+        const previous = scopes.at(-1);
+        expect(previous, 'native document did not acquire an initial capability').toBeTruthy();
+        await toolsDev.restartDaemon();
+        await warmPlaywrightDaemonRuntime(toolsDev.url.daemon('/api/health'));
+        const oldAsset = await page.request.get(previewDirectoryHref(previous!) + 'logo.png');
+        expect(oldAsset.status(), 'daemon restart must invalidate the previous asset capability').toBe(404);
+        await page.clock.fastForward(T.long);
+        await expect.poll(() => scopes.at(-1), { timeout: T.long }).not.toBe(previous);
+        expect(renewalStatuses.at(-1), 'the running product did not observe the expired-scope HTTP renewal failure').toBe(404);
+        const currentBase = previewDirectoryHref(scopes.at(-1)!);
+        await expectRecoveryPresenter(presenter, initialIndex, currentBase);
+        await expectRecoveryFrame(page.frameLocator('iframe[title="present"]'), initialIndex, currentBase);
+        const restoredLocations = await Promise.all(slots.map(slot => presenter.frameLocator('#' + slot).locator('body').evaluate(() => ({ search: location.search, hash: location.hash }))));
+        expect(restoredLocations, 'scope replacement changed an already loaded presenter route').toEqual(locations);
+      }
+      expect(new Set(scopes).size, 'two recoveries must mint two fresh capabilities').toBe(3);
+      // At an edge, one neighbor was never mounted before either recovery.
+      // Moving to the middle must create that cell from the latest snapshot.
+      if (initialIndex !== 1) await presenter.keyboard.press(initialIndex === 0 ? 'ArrowRight' : 'ArrowLeft');
+      await expectRecoveryPresenter(presenter, 1, previewDirectoryHref(scopes.at(-1)!));
+      await expectRecoveryFrame(page.frameLocator('iframe[title="present"]'), 1, previewDirectoryHref(scopes.at(-1)!));
+      await presenter.screenshot({ path: testInfo.outputPath('presenter-after-two-scope-replacements.png') });
+      await testInfo.attach('scope-recovery', { body: JSON.stringify({ scopes, renewalStatuses }, null, 2), contentType: 'application/json' });
+    } catch (error) {
+      await testInfo.attach('presenter-before-close', { body: JSON.stringify(await previewRecoveryWitness(presenter), null, 2), contentType: 'application/json' });
+      throw error;
+    } finally {
+      await presenter.close();
+      await page.clock.resume();
+    }
+  });
+}
+
+test('[P1] native preview recovery survives query-only history, scope replacement and real preview/Present reloads', async ({ page, toolsDev }, testInfo) => {
+  test.setTimeout(T.xlong * 2);
+  await routeMockAgents(page);
+  await page.clock.install();
+  const projectId = await createProjectViaApi(page, 'Native reload recovery');
+  await seedPreviewRecoveryDeck(page, projectId, "location.replace('#/1');");
+  const { scopes, renewalStatuses } = await observePreviewScopeRecovery(page, projectId);
+  await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+  await expectWorkspaceReady(page);
+  await openDesignFile(page, 'index.html');
+  const preview = page.frameLocator('[data-testid="artifact-preview-frame"]');
+  await expectRecoveryFrame(preview, 0);
+  await page.locator('.deck-thumbnail-button').nth(1).click();
+  await expectRecoveryFrame(preview, 1);
+  const previewReload = page.waitForResponse(response => response.request().isNavigationRequest() && new URL(response.url()).searchParams.get('phase') === 'preview');
+  await preview.locator('body').evaluate(() => { history.replaceState(null, '', '?phase=preview' + location.hash); location.reload(); });
+  await previewReload;
+  await expectRecoveryFrame(preview, 1);
+  await expect.poll(() => preview.locator('body').evaluate(() => location.search)).toBe('?phase=preview');
+  const previousScope = scopes.at(-1);
+  const previousLocation = await preview.locator('body').evaluate(() => ({ search: location.search, hash: location.hash }));
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + T.short));
+  try {
+    await toolsDev.restartDaemon();
+    await warmPlaywrightDaemonRuntime(toolsDev.url.daemon('/api/health'));
+    expect((await page.request.get(previewDirectoryHref(previousScope!) + 'logo.png')).status()).toBe(404);
+    await page.clock.fastForward(T.long);
+    await expect.poll(() => scopes.at(-1), { timeout: T.long }).not.toBe(previousScope);
+    await expectRecoveryFrame(preview, 1, previewDirectoryHref(scopes.at(-1)!));
+    expect(await preview.locator('body').evaluate(() => ({ search: location.search, hash: location.hash }))).toEqual(previousLocation);
+    expect(renewalStatuses.at(-1)).toBe(404);
+  } finally { await page.clock.resume(); }
+  await testInfo.attach('query-scope-recovery', { body: JSON.stringify({ scopes, renewalStatuses, previousLocation }, null, 2), contentType: 'application/json' });
+  const presenter = await openPreviewPresenter(page);
+  try {
+    await expectRecoveryPresenter(presenter, 1);
+    const present = page.frameLocator('iframe[title="present"]');
+    const presentReload = page.waitForResponse(response => response.request().isNavigationRequest() && new URL(response.url()).searchParams.get('phase') === 'present');
+    await present.locator('body').evaluate(() => { history.replaceState(null, '', '?phase=present' + location.hash); location.reload(); });
+    await presentReload;
+    await expectRecoveryFrame(present, 1);
+    await expect.poll(() => present.locator('body').evaluate(() => location.search)).toBe('?phase=present');
+    const currentDocument = await presenter.frameLocator('#current').locator('body').evaluate(() => location.href);
+    const currentReload = presenter.waitForResponse(response => response.request().isNavigationRequest() && new URL(response.url()).pathname === new URL(currentDocument).pathname);
+    await presenter.frameLocator('#current').locator('body').evaluate(() => location.reload());
+    await currentReload;
+    await expectRecoveryPresenter(presenter, 1);
+  } catch (error) {
+    await testInfo.attach('presenter-before-close', { body: JSON.stringify(await previewRecoveryWitness(presenter), null, 2), contentType: 'application/json' });
+    throw error;
+  } finally { await presenter.close(); }
+});
+
+test('[P1] native preview recovery preserves directory routes and saved Manual Edit text across daemon restart and a real reload', async ({ page, toolsDev }, testInfo) => {
+  test.setTimeout(T.xlong * 2);
+  await routeMockAgents(page);
+  await page.clock.install();
+  const projectId = await createProjectViaApi(page, 'Native saved edit recovery');
+  await seedPreviewRecoveryDeck(page, projectId, "location.replace('#/1');");
+  const { scopes, renewalStatuses } = await observePreviewScopeRecovery(page, projectId);
+  await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+  await expectWorkspaceReady(page);
+  await openDesignFile(page, 'index.html');
+  const preview = page.frameLocator('[data-testid="artifact-preview-frame"]');
+  await expectRecoveryFrame(preview, 0);
+  const initialScope = scopes.at(-1)!;
+  expect(initialScope, 'native edit workflow did not mint a bootstrap capability').toBeTruthy();
+  const directoryHref = previewDirectoryHref(initialScope);
+  const directoryNavigation = page.waitForResponse(response => response.request().isNavigationRequest()
+    && new URL(response.url()).pathname === new URL(directoryHref).pathname);
+  await preview.locator('body').evaluate(() => location.replace(new URL('#/details', document.baseURI).href));
+  await directoryNavigation;
+  await expectRecoveryFrame(preview, 0, directoryHref, '#/details');
+  await preview.locator('body').evaluate(() => history.replaceState(null, '', '?phase=directory' + location.hash));
+  const directoryLocation = await preview.locator('body').evaluate(() => ({ pathname: location.pathname, search: location.search, hash: location.hash }));
+  expect(directoryLocation).toEqual({ pathname: new URL(directoryHref).pathname, search: '?phase=directory', hash: '#/details' });
+
+  await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/);
+  await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(preview.locator('html[data-od-edit-mode]')).toHaveCount(1);
+  await preview.getByRole('heading', { name: 'Recovery slide 1', exact: true }).click();
+  const textInput = page.locator('.manual-edit-content-inspector textarea');
+  await expect(textInput).toBeVisible();
+  const savedText = 'Saved native edit text';
+  await textInput.fill(savedText);
+  const savedResponse = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${projectId}/files`);
+  await page.locator('.manual-edit-modal').getByRole('button', { name: /^Save$/ }).click();
+  const saved = await savedResponse;
+  expect(saved.ok(), 'Manual Edit did not persist its text patch').toBe(true);
+  const savedSource = (saved.request().postDataJSON() as { content: string }).content;
+  expect(savedSource).toContain(savedText);
+  await expectRecoveryFrame(preview, 0, directoryHref, '#/details', savedText);
+  await expect.poll(async () => (await page.request.get(`/api/projects/${projectId}/files/index.html`)).text()).toContain(savedText);
+  const savedDocumentId = await preview.locator('body').evaluate(() =>
+    (window as unknown as { __odSrcdocTransportDocumentId?: string }).__odSrcdocTransportDocumentId);
+  expect(savedDocumentId, 'the saved live editing document has no identity').toBeTruthy();
+
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + T.short));
+  try {
+    await toolsDev.restartDaemon();
+    await warmPlaywrightDaemonRuntime(toolsDev.url.daemon('/api/health'));
+    expect((await page.request.get(directoryHref + 'logo.png')).status(), 'restart did not invalidate the old capability').toBe(404);
+    await page.clock.fastForward(T.long);
+    await expect.poll(() => scopes.at(-1), { timeout: T.long }).not.toBe(initialScope);
+    expect(renewalStatuses.at(-1)).toBe(404);
+    const replacementBase = previewDirectoryHref(scopes.at(-1)!);
+    await expectRecoveryFrame(preview, 0, replacementBase, '#/details', savedText);
+    await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(preview.locator('html[data-od-edit-mode]')).toHaveCount(1);
+    const recovered = await preview.locator('body').evaluate(() => ({
+      href: location.href, search: location.search, hash: location.hash,
+      documentId: (window as unknown as { __odSrcdocTransportDocumentId?: string }).__odSrcdocTransportDocumentId,
+    }));
+    expect({ search: recovered.search, hash: recovered.hash }, 'directory-entry recovery lost query or hash').toEqual({ search: directoryLocation.search, hash: directoryLocation.hash });
+    expect(recovered.documentId).not.toBe(savedDocumentId);
+    await expect.poll(async () => (await page.request.get(`/api/projects/${projectId}/files/index.html`)).text()).toContain(savedText);
+    const reloadedResponse = page.waitForResponse(response => response.request().isNavigationRequest()
+      && new URL(response.url()).pathname === new URL(recovered.href).pathname
+      && new URL(response.url()).search === recovered.search);
+    await preview.locator('body').evaluate(() => location.reload());
+    await reloadedResponse;
+    await expectRecoveryFrame(preview, 0, replacementBase, '#/details', savedText);
+    await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(preview.locator('html[data-od-edit-mode]')).toHaveCount(1);
+    await expect.poll(() => preview.locator('body').evaluate(() =>
+      (window as unknown as { __odSrcdocTransportDocumentId?: string }).__odSrcdocTransportDocumentId)).not.toBe(recovered.documentId);
+    await expect.poll(async () => (await page.request.get(`/api/projects/${projectId}/files/index.html`)).text()).toContain(savedText);
+    await testInfo.attach('saved-edit-native-recovery', { body: JSON.stringify({ scopes, renewalStatuses, directoryLocation, savedSource, savedDocumentId, recovered }, null, 2), contentType: 'application/json' });
+  } finally { await page.clock.resume(); }
+});
+
+test('[P1] direct srcdoc reload preserves saved Manual Edit text without remounting the iframe', async ({ page }, testInfo) => {
+  await routeMockAgents(page);
+  const projectId = await createProjectViaApi(page, 'Direct saved edit reload');
+  const beforeText = 'Before direct reload';
+  const savedText = 'Saved direct edit text';
+  // An authored base disables the native carrier; Edit materializes direct
+  // srcdoc. No asset requests or external services participate in this reload.
+  await seedHtmlArtifact(page, projectId, 'index.html', `<!doctype html><html><head>
+    <base href="/authored-base/"><style>body { padding: 40px; font: 24px sans-serif; }</style>
+    </head><body><main><h1>${beforeText}</h1></main></body></html>`);
+  await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+  await expectWorkspaceReady(page);
+  await openDesignFile(page, 'index.html');
+  const acks: Array<{ documentId: string; generation: string; probeId: string }> = [];
+  await page.exposeFunction('recordDirectSrcdocAck', (ack: typeof acks[number]) => { acks.push(ack); });
+  await page.evaluate(() => {
+    window.addEventListener('message', (event) => {
+      const frame = document.querySelector<HTMLIFrameElement>('iframe[data-od-render-mode="srcdoc"][data-od-active="true"]');
+      const data = event.data;
+      if (event.source !== frame?.contentWindow || data?.type !== 'od:srcdoc-transport-activated'
+        || data.bodyComplete !== true || typeof data.documentId !== 'string'
+        || typeof data.generation !== 'string' || typeof data.probeId !== 'string') return;
+      void (window as unknown as { recordDirectSrcdocAck: (ack: {
+        documentId: string; generation: string; probeId: string;
+      }) => Promise<void> }).recordDirectSrcdocAck({ documentId: data.documentId, generation: data.generation, probeId: data.probeId });
+    });
+  });
+  await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/);
+  const iframe = page.locator(ACTIVE_ARTIFACT_PREVIEW_SELECTOR);
+  const preview = page.frameLocator(ACTIVE_ARTIFACT_PREVIEW_SELECTOR);
+  await expect(iframe).toHaveAttribute('data-od-render-mode', 'srcdoc');
+  await expect(iframe).toHaveAttribute('src', 'about:blank');
+  await expect(preview.locator('html[data-od-edit-mode]')).toHaveCount(1);
+  await expect(preview.getByRole('heading', { name: beforeText, exact: true })).toBeVisible();
+  const originalFrame = await iframe.elementHandle();
+  if (!originalFrame) throw new Error('Direct srcdoc iframe is missing');
+  const originalWindow = await originalFrame.evaluateHandle((element) => (element as HTMLIFrameElement).contentWindow);
+  const readDocumentId = () => preview.locator('body').evaluate(() =>
+    (window as unknown as { __odSrcdocTransportDocumentId?: string }).__odSrcdocTransportDocumentId);
+  await expect.poll(async () => {
+    const documentId = await readDocumentId();
+    return acks.some((ack) => ack.documentId === documentId);
+  }, { timeout: T.medium, message: 'Direct Edit document never completed a real readiness probe' }).toBe(true);
+
+  await preview.getByRole('heading', { name: beforeText, exact: true }).click();
+  const textInput = page.locator('.manual-edit-content-inspector textarea');
+  await expect(textInput).toBeVisible();
+  await textInput.fill(savedText);
+  const savedResponse = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${projectId}/files`);
+  await page.locator('.manual-edit-modal').getByRole('button', { name: /^Save$/ }).click();
+  expect((await savedResponse).ok(), 'Manual Edit did not persist its text patch').toBe(true);
+  await expectProjectFileToContain(page, projectId, 'index.html', savedText);
+  await expect(preview.getByRole('heading', { name: savedText, exact: true })).toBeVisible();
+  const savedDocumentId = await readDocumentId();
+  const savedOwner = acks.filter((ack) => ack.documentId === savedDocumentId).at(-1);
+  expect(savedOwner, 'Saved live document has no completed readiness probe').toBeTruthy();
+  expect(await iframe.getAttribute('srcdoc'), 'Saved edits should retain the live document until reload').toContain(beforeText);
+  const beforeReload = acks.length;
+
+  await preview.locator('body').evaluate(() => location.reload());
+  await expect.poll(() => acks.slice(beforeReload).some((ack) => ack.generation === savedOwner!.generation
+    && ack.documentId !== savedDocumentId && ack.probeId !== savedOwner!.probeId),
+  { timeout: T.medium, message: 'Reloaded direct document did not answer a fresh probe in its existing generation' }).toBe(true);
+  await expect(preview.getByRole('heading', { name: savedText, exact: true })).toBeVisible();
+  await expect.poll(async () => {
+    const documentId = await readDocumentId();
+    return acks.slice(beforeReload).some((ack) => ack.documentId === documentId);
+  }, { timeout: T.medium, message: 'Saved replacement document never completed its readiness probe' }).toBe(true);
+  expect(await readDocumentId()).not.toBe(savedDocumentId);
+  expect(await preview.locator('body').evaluate(() => location.href)).toBe('about:srcdoc');
+  await expect(iframe).toHaveAttribute('src', 'about:blank');
+  await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(preview.locator('html[data-od-edit-mode]')).toHaveCount(1);
+  // Observe beyond the recovery probe deadline without mutating browser time.
+  await expectStableCount(async () => await originalFrame.evaluate((element, previousWindow) =>
+    element.isConnected && (element as HTMLIFrameElement).contentWindow === previousWindow, originalWindow) ? 1 : 0,
+  1, { timeout: T.short, message: 'Healthy direct reload remounted its iframe during the recovery window' });
+  await expect(preview.getByRole('heading', { name: savedText, exact: true })).toBeVisible();
+  await expectProjectFileToContain(page, projectId, 'index.html', savedText);
+  await testInfo.attach('direct-srcdoc-saved-reload', { body: JSON.stringify({ savedDocumentId, savedOwner, acks }, null, 2), contentType: 'application/json' });
+});
+
+async function seedPreviewRecoveryDeck(page: Page, projectId: string, initializer: string, authoredNavigation = true, bodyOnload = false, htmlPrefix = ''): Promise<void> {
+  await seedProjectFile(page, projectId, 'logo.png', TINY_PNG_B64, 'base64');
+  await seedProjectFile(page, projectId, 'index.html', previewRecoveryDeck(initializer, authoredNavigation, bodyOnload, htmlPrefix), undefined, {
+    version: 1, kind: 'deck', title: 'Preview recovery deck', entry: 'index.html', renderer: 'deck-html', exports: ['html'],
+  });
+}
+
 test('[P0] @critical file workspace restores HTML preview after switching through a source file', async ({ page }) => {
   await routeMockAgents(page);
 
@@ -1390,4 +1785,77 @@ function designFileScenarioPriority(entry: UiScenario): 'P0' | 'P1' {
 
 function criticalDesignFileScenarioTag(entry: UiScenario): string {
   return CRITICAL_DESIGN_FILE_SCENARIO_IDS.has(entry.id) ? ' @critical' : '';
+}
+
+
+for (const hashNavigation of [false, true]) {
+  test(`[P1] edit bridge survives ${hashNavigation ? 'hash initialization' : 'ordinary HTML control'}`, async ({ page }, testInfo) => {
+    await routeMockAgents(page);
+    const projectId = await createProjectViaApi(page, 'Review preview edit');
+    await seedHtmlArtifact(page, projectId, 'index.html', `<!doctype html><html><head></head><body>
+      <h1 data-od-id="hero">Review editable hero</h1>
+      <script>${hashNavigation ? "if (!location.hash) location.replace('#/home');" : ''}</script>
+      </body></html>`);
+    await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+    await expectWorkspaceReady(page);
+    await openDesignFile(page, 'index.html');
+    const frame = page.frameLocator(ACTIVE_ARTIFACT_PREVIEW_SELECTOR);
+    await expect(frame.getByRole('heading', { name: 'Review editable hero' })).toBeVisible();
+    await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/);
+    await expect(page.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+    try {
+      await expect(frame.locator('html[data-od-edit-mode]')).toHaveCount(1);
+      await frame.locator('[data-od-id="hero"]').click();
+      await expect(frame.locator('[data-od-id="hero"]')).toHaveAttribute('data-od-edit-selected', 'true');
+      const fontSize = page.locator('.manual-edit-modal .cc-section').filter({ hasText: 'Parameters' })
+        .locator('.cc-row').filter({ hasText: 'Font size' }).locator('input');
+      await fontSize.fill('48');
+      await expect(frame.locator('[data-od-id="hero"]')).toHaveCSS('font-size', '48px');
+      await page.locator('.manual-edit-modal').getByRole('button', { name: /^Save$/ }).click();
+      await expect.poll(async () => (await page.request.get(`/api/projects/${projectId}/raw/index.html`)).text()).toContain('font-size: 48px');
+      await expect(page.locator('.manual-edit-error')).toHaveCount(0);
+      await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/);
+      await expect(frame.getByRole('heading', { name: 'Review editable hero' })).toBeVisible();
+      await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/);
+      await expect(frame.locator('html[data-od-edit-mode]')).toHaveCount(1);
+
+
+    } finally {
+      const state = await page.frameLocator('[data-od-render-mode=srcdoc]').locator('html').evaluate((el) => ({
+        url: location.href,
+        editMode: el.getAttribute('data-od-edit-mode'),
+        scripts: Array.from(document.scripts).map(s => Array.from(s.attributes).map(a => a.name)),
+      }));
+      await testInfo.attach('review-state', { body: JSON.stringify(state, null, 2), contentType: 'application/json' });
+    }
+  });
+}
+
+for (const hashNavigation of [false, true]) {
+  test(`[P1] remote resources survive ${hashNavigation ? 'hash initialization' : 'ordinary HTML control'}`, async ({ page }, testInfo) => {
+    await routeMockAgents(page);
+    const errors: string[] = [];
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.route('https://preview-cdn.invalid/boot.js', route => route.fulfill({
+      contentType: 'application/javascript', body: "document.querySelector('h1').textContent = 'CDN app mounted';",
+    }));
+    const projectId = await createProjectViaApi(page, 'Review CDN preview');
+    await seedHtmlArtifact(page, projectId, 'index.html', `<!doctype html><html><head></head><body>
+      <h1>CDN app waiting</h1>
+      <script>${hashNavigation ? "if (!location.hash) location.replace('#/home');" : ''}</script>
+      <script src="https://preview-cdn.invalid/boot.js"></script>
+      </body></html>`);
+    await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+    await expectWorkspaceReady(page);
+    await openDesignFile(page, 'index.html');
+    const frame = page.frameLocator(ACTIVE_ARTIFACT_PREVIEW_SELECTOR);
+    if (hashNavigation) await expect.poll(() => frame.locator('body').evaluate(() => location.hash)).toBe('#/home');
+    try {
+      await expect(frame.getByRole('heading', { name: 'CDN app mounted' })).toBeVisible();
+    } finally {
+      const state = await frame.locator('body').evaluate(() => ({ url: location.href, text: document.querySelector('h1')?.textContent }));
+      const evidence = { ...state, errors };
+      await testInfo.attach('cdn-state', { body: JSON.stringify(evidence, null, 2), contentType: 'application/json' });
+    }
+  });
 }

@@ -1,3 +1,4 @@
+import { writePreviewDocument } from './preview-document.js';
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,7 +14,7 @@ import {
 
 import { DECK_PAGE_SIZE, DECK_PRINT_CSS, inferPageSize, waitForPrintableContent } from "./pdf-export.js";
 import { bgraBitmapHasPaint, freezePageForStaticCapture, type StaticCaptureFreeze } from "./static-capture.js";
-import { findRealElementRange, findRealTagEnd, findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
+import { findRealElementRange, findRealTagEnd, findRealTagOffset, HTML_TAG_PATTERNS, prependAfterDoctype } from '@open-design/contracts/runtime/html-injection-points';
 
 // Headless programmatic exporter for the `od export` CLI (PDF / image).
 // The on-screen web Download menu rasterizes client-side; this is the daemon →
@@ -89,7 +90,9 @@ export async function exportArtifact(
   try {
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", (event) => event.preventDefault());
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildDocument(input))}`);
+    const doc = buildDocument(input);
+    await window.loadURL(input.documentUrl ?? `data:text/html;charset=utf-8,${encodeURIComponent(doc)}`);
+    if (input.documentUrl) await writePreviewDocument(window, doc, input.documentUrl, input.baseHref ?? new URL('.', input.documentUrl).href);
 
     if (thumbnail) return await renderFirstViewportThumbnail(window, input, { height, width });
 
@@ -277,7 +280,7 @@ async function encodeCapture(
 }
 
 function buildDocument(input: DesktopExportArtifactInput): string {
-  let doc = injectBaseHref(input.html, input.baseHref);
+  let doc = input.documentUrl ? input.html : injectBaseHref(input.html, input.baseHref);
   doc = injectTitle(doc, input.title);
   if (input.deck && input.format === "pdf") doc = injectStyle(doc, DECK_PRINT_CSS);
   return doc;
@@ -315,7 +318,7 @@ function injectStyle(doc: string, css: string): string {
   if (headClose >= 0) return doc.slice(0, headClose) + tag + doc.slice(headClose);
   const headEnd = findRealTagEnd(doc, HTML_TAG_PATTERNS.headOpen);
   if (headEnd >= 0) return doc.slice(0, headEnd) + tag + doc.slice(headEnd);
-  return `${tag}${doc}`;
+  return prependAfterDoctype(doc, tag);
 }
 
 function escapeAttr(value: string): string {

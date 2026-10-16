@@ -135,6 +135,7 @@ function buildPresenterFrameHtml(previewHtml: string): string {
 
 export function buildSpeakerNotesPresenterHtml(options: {
   previewHtml: string;
+  previewDocumentUrl?: string;
   previewHtmlBySlide?: readonly string[];
   labels: SpeakerNotesPresenterLabels;
   title: string;
@@ -151,6 +152,7 @@ export function buildSpeakerNotesPresenterHtml(options: {
   const data = {
     previewHtml: buildPresenterFrameHtml(options.previewHtml),
     previewHtmlBySlide,
+    previewDocumentUrl: options.previewDocumentUrl,
     title: options.title,
     projectId: options.projectId,
     fileName: options.fileName,
@@ -396,22 +398,71 @@ export function buildSpeakerNotesPresenterHtml(options: {
       function postGo(frame, target){
         try { frame.contentWindow.postMessage({ type: 'od:slide', action: 'go', index: target }, '*'); } catch (_) {}
       }
+      var previewProbeSequence = 0;
+      function probeShell(frame, st, candidate){
+        st.probeCandidate = candidate;
+        st.probeId = 'presenter-shell-' + (++previewProbeSequence);
+        frame.contentWindow.postMessage({ type: 'od:srcdoc-transport-shell-probe', probeId: st.probeId }, '*');
+      }
       // Load each preview deck exactly once, then drive it by postMessage so a
       // slide change is a smooth in-deck transition instead of a full iframe
       // reload/flash on every keypress. Out-of-range targets (before the first
       // slide, past the last) return false so their filmstrip cell is hidden.
       function setFrame(frame, target){
         if (!frame) return false;
-        var st = frame.__od || (frame.__od = { loaded: false, ready: false, want: -1 });
+        var st = frame.__od || (frame.__od = {
+          loaded: false, ready: false, want: -1, documentId: null,
+          probeId: null, probeCandidate: null, retiredDocuments: Object.create(null)
+        });
         if (target < 0 || target >= count) { st.want = -1; return false; }
         st.want = target;
         if (!st.loaded) {
           st.loaded = true;
           frame.addEventListener('load', function(){
+            if (data.previewDocumentUrl) {
+              probeShell(frame, st, null);
+              if (st.documentId) frame.contentWindow.postMessage({
+                type: 'od:srcdoc-transport-ready-probe', documentId: st.documentId,
+                generation: 'auxiliary-preview', probeId: 'presenter-load-' + (++previewProbeSequence)
+              }, '*');
+              return;
+            }
             st.ready = true;
             if (st.want >= 0) postGo(frame, st.want);
           });
-          frame.srcdoc = htmlFor(target);
+          window.addEventListener('message', function(ev){
+            if (ev.source !== frame.contentWindow || !data.previewDocumentUrl) return;
+            var message = ev.data || {};
+            if (message.type === 'od:srcdoc-transport-ready') {
+              if (typeof message.documentId !== 'string' || !message.documentId || st.retiredDocuments[message.documentId]) return;
+              if (message.documentId === st.documentId) {
+                if (message.probeId === st.probeId) st.probeId = null;
+                return;
+              }
+              // A child navigation keeps its WindowProxy. Verify which shell
+              // is live before accepting a queued message from the old one.
+              if (!st.probeId || message.probeId !== st.probeId) {
+                if (!st.probeId || st.probeCandidate !== message.documentId) probeShell(frame, st, message.documentId);
+                return;
+              }
+              if (st.documentId) st.retiredDocuments[st.documentId] = true;
+              st.documentId = message.documentId;
+              st.probeId = null;
+              st.ready = false;
+              frame.contentWindow.postMessage({
+                type: 'od:srcdoc-transport-activate', html: htmlFor(st.want >= 0 ? st.want : target),
+                generation: 'auxiliary-preview', documentId: st.documentId
+              }, '*');
+            }
+            if (message.type === 'od:srcdoc-transport-activated' && st.documentId
+              && message.documentId === st.documentId && message.generation === 'auxiliary-preview'
+              && message.bodyComplete === true && !st.ready) {
+              st.ready = true;
+              if (st.want >= 0) postGo(frame, st.want);
+            }
+          });
+          if (data.previewDocumentUrl) frame.src = data.previewDocumentUrl;
+          else frame.srcdoc = htmlFor(target);
         } else if (st.ready) {
           postGo(frame, target);
         }
@@ -554,6 +605,27 @@ export function buildSpeakerNotesPresenterHtml(options: {
       });
       window.addEventListener('message', function(ev){
         var msg = ev.data || {};
+        if (msg.type === 'od:presenter-preview-update') {
+          if (ev.source !== window.opener || msg.projectId !== data.projectId || msg.fileName !== data.fileName) return;
+          if (typeof msg.previewDocumentUrl !== 'string' || !msg.previewDocumentUrl
+            || !Array.isArray(msg.previewHtmlBySlide) || !msg.previewHtmlBySlide.every(function(html){ return typeof html === 'string'; })) return;
+          // Update the parent's snapshot as well as mounted children. The
+          // previous/next cell may not have loaded when the scope expired.
+          data.previewDocumentUrl = msg.previewDocumentUrl;
+          data.previewHtmlBySlide = msg.previewHtmlBySlide.slice();
+          data.previewHtml = typeof msg.previewHtml === 'string' ? msg.previewHtml : data.previewHtmlBySlide[0] || '';
+          [els.current, els.previous, els.next].forEach(function(frame){
+            var st = frame && frame.__od;
+            if (!st || !st.loaded) return;
+            if (st.documentId) st.retiredDocuments[st.documentId] = true;
+            st.documentId = null;
+            st.probeId = null;
+            st.probeCandidate = null;
+            st.ready = false;
+            frame.src = data.previewDocumentUrl;
+          });
+          return;
+        }
         if (msg.type !== 'od:presenter-slide-state') return;
         if (msg.projectId !== data.projectId || msg.fileName !== data.fileName) return;
         if (Array.isArray(msg.notes)) notes = msg.notes.slice();

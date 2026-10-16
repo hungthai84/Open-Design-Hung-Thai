@@ -99,7 +99,7 @@ describe('screenshot export desktop renderer file handoff', () => {
       path.join(dataDir, 'projects'),
       projectId,
       'versioned.html',
-      '<html><body><main>Historical export version</main></body></html>',
+      '<html><body><main>Historical export version</main><script>if (!location.hash) location.replace("#/home")</script></body></html>',
     );
     versionedVersionId = versioned.id;
     await writeFile(path.join(dir, 'versioned.html'), '<html><body><main>Current file content</main></body></html>');
@@ -194,6 +194,9 @@ describe('screenshot export desktop renderer file handoff', () => {
     expect(seenInputs.length).toBe(before + 1);
     expect(seenInputs.at(-1)?.html).toContain('Historical export version');
     expect(seenInputs.at(-1)?.html).not.toContain('Current file content');
+    expect(seenInputs.at(-1)?.documentUrl).toBe(seenInputs.at(-1)?.baseHref + 'versioned.html');
+    // Renderer-only capabilities are revoked when the export finishes.
+    expect((await fetch(seenInputs.at(-1)!.documentUrl!)).status).toBe(404);
   });
 
   it('preserves generic export width and height contract inputs', async () => {

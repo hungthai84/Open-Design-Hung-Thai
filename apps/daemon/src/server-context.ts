@@ -1,3 +1,4 @@
+import type { ProjectPreviewDocumentMode } from '@open-design/contracts';
 import type { Express } from 'express';
 import type { SkillInfo } from './skills.js';
 import type { DesignSystemSummary } from './design-systems/index.js';
@@ -93,14 +94,21 @@ export interface RoutineDeps {
   routineService: RoutineRoutesService;
 }
 
+export interface ProjectPreviewScopeOptions {
+  readonly ttlMs?: number;
+  readonly entryFile?: string;
+  readonly bridges?: readonly string[];
+  readonly documentMode?: ProjectPreviewDocumentMode;
+}
+
 export interface ProjectPreviewScopeDeps {
   mint: (
     projectId: string,
     workspace?: { workspaceId: string; workspaceMemberId: string } | null,
-    options?: { readonly ttlMs?: number },
+    options?: ProjectPreviewScopeOptions,
   ) => string;
   /**
-   * Like `mint`, but reuses the live scope for this exact (project, workspace)
+   * Like `mint`, but reuses the live scope for this exact document and Workspace
    * when one exists — **without renewing it**. Preview reads must be
    * byte-stable across refetches, and the scope's expiry is serialized into
    * the bridged document, so touching it here would change the served bytes
@@ -113,7 +121,7 @@ export interface ProjectPreviewScopeDeps {
   acquire: (
     projectId: string,
     workspace?: { workspaceId: string; workspaceMemberId: string } | null,
-    options?: { readonly ttlMs?: number },
+    options?: ProjectPreviewScopeOptions,
   ) => string;
   revoke: (scope: string) => void;
   expiresAt: (projectId: string, scope: string) => number | undefined;
@@ -134,6 +142,11 @@ export interface ProjectPreviewScopeDeps {
     projectId: string,
     scope: string,
   ) => { workspaceId: string; workspaceMemberId: string } | null | undefined;
+  document: (projectId: string, scope: string) => {
+    readonly entryFile: string;
+    readonly bridges: readonly string[];
+    readonly documentMode: ProjectPreviewDocumentMode;
+  } | undefined;
 }
 
 export interface TelemetryDeps {

@@ -434,3 +434,14 @@ describe("open-design sidecar contract", () => {
     ).toThrow(/unsupported fields/);
   });
 });
+
+
+it('preserves the bound export document URL across the renderer boundary', () => {
+  const documentUrl = 'http://localhost:43123/api/projects/p/preview/scope/index.html';
+  for (const type of [SIDECAR_MESSAGES.RENDER_SLIDES, SIDECAR_MESSAGES.EXPORT_ARTIFACT]) {
+    const input = type === SIDECAR_MESSAGES.RENDER_SLIDES
+      ? { html: '<p>Historical snapshot</p>', documentUrl }
+      : { html: '<p>Historical snapshot</p>', documentUrl, format: 'image', title: 'History', deck: false };
+    expect(normalizeDesktopSidecarMessage({ type, input })).toEqual({ type, input });
+  }
+});

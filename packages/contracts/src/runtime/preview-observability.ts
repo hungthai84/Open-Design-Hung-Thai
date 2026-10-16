@@ -1,3 +1,5 @@
+import { buildPreviewTransportDocumentIdentityScript } from './preview-guards.js';
+
 /**
  * Cross-runtime protocol used by generated artifact previews to report
  * failures to the OpenDesign host. The bridge runs inside both srcDoc and
@@ -29,10 +31,13 @@ export interface PreviewBaseScopeMessage {
   type: typeof PREVIEW_BASE_SCOPE_MESSAGE_TYPE;
   href: string;
   expiresAt: number;
+  /** Current native file URL, including its authored fragment. */
+  documentUrl?: string;
+  documentId?: string;
 }
 
 export function buildPreviewBaseHrefBridge(
-  initialScope?: { readonly href: string; readonly expiresAt: number },
+  initialScope?: { readonly href: string; readonly expiresAt: number; readonly documentUrl?: string },
 ): string {
   const initialScopeJson = initialScope
     ? JSON.stringify(initialScope).replace(/</g, '\\u003c')
@@ -40,14 +45,46 @@ export function buildPreviewBaseHrefBridge(
   return `<script data-od-preview-base-bridge>(function(){
   if (window.__odPreviewBaseBridge) return;
   window.__odPreviewBaseBridge = true;
+  ${buildPreviewTransportDocumentIdentityScript()}
   var initialScope = ${initialScopeJson};
+  function isNativeEntryLocation(){
+    if (!initialScope) return false;
+    var current = new URL(location.href);
+    var entry = new URL(initialScope.documentUrl || initialScope.href, location.href);
+    var directory = new URL(initialScope.href, location.href);
+    return current.protocol === entry.protocol && current.host === entry.host
+      && current.protocol === directory.protocol && current.host === directory.host
+      && (current.pathname === entry.pathname || current.pathname === directory.pathname);
+  }
+  // A native preview document has base-uri 'none', so adding a <base> would
+  // violate its CSP. Expose the same fragment-free directory base to scripts
+  // as the original raw preview, even after location.hash changes.
+  if (initialScope && !document.querySelector('base')) {
+    try {
+      var nativeBase = Object.getOwnPropertyDescriptor(Node.prototype, 'baseURI');
+      var entryBase = new URL(initialScope.href, location.href).href;
+      var previewDocument = document;
+      if (nativeBase && nativeBase.get && isNativeEntryLocation()) {
+        Object.defineProperty(Node.prototype, 'baseURI', {
+          configurable: nativeBase.configurable,
+          enumerable: nativeBase.enumerable,
+          get: function(){
+            return this === previewDocument || this.ownerDocument === previewDocument
+              ? entryBase : nativeBase.get.call(this);
+          }
+        });
+      }
+    } catch (_) {}
+  }
   function announce(){
     if (!initialScope) return;
     try {
       window.parent.postMessage({
         type: '${PREVIEW_BASE_SCOPE_MESSAGE_TYPE}',
         href: initialScope.href,
-        expiresAt: initialScope.expiresAt
+        expiresAt: initialScope.expiresAt,
+        documentId: documentId,
+        documentUrl: initialScope.documentUrl ? location.href : undefined
       }, '*');
     } catch (_) {}
   }
@@ -68,9 +105,21 @@ export function buildPreviewBaseHrefBridge(
       if (!sameOrigin) return;
       var parts = next.pathname.split('/');
       if (parts[1] !== 'api' || parts[2] !== 'projects' || !parts[3] || parts[4] !== 'preview' || !parts[5]) return;
+      if (parts[3] !== current.pathname.split('/')[3]) return;
       if (next.pathname.charAt(next.pathname.length - 1) !== '/') return;
       var base = document.querySelector('base[data-od-project-preview-base]');
-      if (!base) return;
+      if (!base) {
+        // This is a native URL document under base-uri 'none'.
+        // After daemon restart it cannot change its effective base in place;
+        // recover on the new bound file, preserving the current hash.
+        if (isNativeEntryLocation()) {
+          var suffix = initialScope.documentUrl
+            ? new URL(initialScope.documentUrl, location.href).pathname.slice(new URL(initialScope.href, location.href).pathname.length)
+            : '';
+          location.replace(next.href + suffix + location.search + location.hash);
+        }
+        return;
+      }
       base.setAttribute('href', next.href);
       window.parent.postMessage({
         type: 'od:preview-base-updated',
@@ -79,6 +128,26 @@ export function buildPreviewBaseHrefBridge(
       }, '*');
     } catch (_) {}
   });
+  function reportHistoryChange(name){
+    try {
+      var original = window.history && window.history[name];
+      if (typeof original !== 'function' || original.__odPreviewLocationReporter) return;
+      var report = function(){
+        var previousHref = location.href;
+        var result = original.apply(this, arguments);
+        // The opaque-origin sandbox shim can swallow an invalid history URL.
+        // Publish only when a successful call actually changed the location.
+        if (location.href !== previousHref) announce();
+        return result;
+      };
+      report.__odPreviewLocationReporter = true;
+      window.history[name] = report;
+    } catch (_) {}
+  }
+  reportHistoryChange('pushState');
+  reportHistoryChange('replaceState');
+  window.addEventListener('popstate', announce);
+  window.addEventListener('hashchange', announce);
   announce();
 })();</script>`;
 }

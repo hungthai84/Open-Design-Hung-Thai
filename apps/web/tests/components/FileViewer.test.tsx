@@ -217,6 +217,37 @@ function baseFile(overrides: Partial<ProjectFile>): ProjectFile {
   };
 }
 
+// External scripts and native navigation use a file URL shell; their enhanced
+// HTML arrives through activation rather than the iframe's srcdoc attribute.
+function nativePreviewResponse(requestUrl: string, file: string): Response {
+  return new Response(JSON.stringify({
+    url: `/api/projects/project-1/preview/native-scope/${file}`,
+    file,
+    documentMode: new URL(requestUrl, window.location.href).searchParams.get('documentMode'),
+    csp: '',
+    iframeSandbox: 'allow-scripts allow-forms',
+    opaqueOrigin: true,
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  }), { status: 200 });
+}
+
+function activateNativePreview(frame: HTMLIFrameElement) {
+  const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+  act(() => window.dispatchEvent(new MessageEvent('message', {
+    source: frame.contentWindow,
+    data: { type: 'od:srcdoc-transport-ready' },
+  })));
+  return {
+    latestHtml: () => {
+      const activation = postMessage.mock.calls
+        .map(([message]) => message as { type?: string; html?: string })
+        .filter(message => message.type === 'od:srcdoc-transport-activate').at(-1);
+      expect(activation?.html).toBeTruthy();
+      return activation!.html!;
+    },
+  };
+}
+
 function createDragDataTransfer() {
   const store = new Map<string, string>();
   return {
@@ -1670,6 +1701,9 @@ describe('FileViewer SVG artifacts', () => {
     let fullHtml = `${previewText}<body><main>Imported filesystem app</main></body></html>`;
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/preview-url')) {
+        return nativePreviewResponse(url, file.name);
+      }
       if (url.startsWith('/api/projects/project-1/text-preview/index.html')) {
         return new Response(JSON.stringify({
           text: previewText,
@@ -1697,11 +1731,16 @@ describe('FileViewer SVG artifacts', () => {
 
     const { rerender } = render(<FileViewer projectId="project-1" projectKind="prototype" file={file} />);
 
-    await waitFor(() => {
-      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(frame.getAttribute('srcDoc')).toContain('Imported filesystem app');
+    const frame = await waitFor(() => {
+      const current = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(current.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(current.src).toContain('/preview/native-scope/index.html');
+      expect(current.hasAttribute('srcdoc')).toBe(false);
+      return current;
     });
+    const activation = activateNativePreview(frame);
+    expect(activation.latestHtml()).toContain('Imported filesystem app');
+    expect(activation.latestHtml()).toContain('<script src="./app.js"></script>');
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/projects/project-1/text-preview/index.html'), { cache: 'no-store' });
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/projects/project-1/raw/index.html?cacheBust='),
@@ -1718,9 +1757,9 @@ describe('FileViewer SVG artifacts', () => {
     );
 
     await waitFor(() => {
-      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(frame.getAttribute('srcDoc')).toContain('Updated filesystem app');
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+      expect(activation.latestHtml()).toContain('Updated filesystem app');
+      expect(activation.latestHtml()).not.toContain('Imported filesystem app');
     });
   });
 
@@ -1836,7 +1875,7 @@ describe('FileViewer SVG artifacts', () => {
           mime: 'text/html',
           kind: 'html',
         })}
-        liveHtml={'<!doctype html><html><body><main>Deck</main><script>location.reload()</script></body></html>'}
+        liveHtml={'<!doctype html><html><body><main>Deck</main><script>localStorage.getItem("preview")</script></body></html>'}
         workspaceActive
       />
     );
@@ -1870,7 +1909,7 @@ describe('FileViewer SVG artifacts', () => {
             mime: 'text/html',
             kind: 'html',
           })}
-          liveHtml={'<!doctype html><html><body><main>First paint</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main>First paint</main><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive
         />
       </I18nProvider>
@@ -1930,8 +1969,8 @@ describe('FileViewer SVG artifacts', () => {
           workspaceActive={workspaceActive}
         />
       );
-      const firstSource = '<!doctype html><html><head><link rel="stylesheet" href="app.css"></head><body><main>Blob preview v1</main><img src="art.png"><script src="app.jsx"></script><script>location.reload()</script></body></html>';
-      const secondSource = '<!doctype html><html><body><main>Blob preview v2</main><script>location.reload()</script></body></html>';
+      const firstSource = '<!doctype html><html><head><link rel="stylesheet" href="app.css"></head><body><main>Blob preview v1</main><img src="art.png"><script>localStorage.setItem("preview", "1")</script></body></html>';
+      const secondSource = '<!doctype html><html><body><main>Blob preview v2</main><script>localStorage.setItem("preview", "2")</script></body></html>';
       const { rerender } = render(renderViewer(firstSource));
 
       const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
@@ -1951,7 +1990,7 @@ describe('FileViewer SVG artifacts', () => {
       expect(activations()[0]?.html).toContain(
         '<base href="http://localhost:3000/api/projects/blob-preview-project/raw/pages/" data-od-project-preview-base>',
       );
-      expect(activations()[0]?.html).toContain('src="app.jsx"');
+      expect(activations()[0]?.html).toContain('localStorage.setItem');
       expect(activations()[0]?.html).toContain('data-od-edit-bridge');
       expect(activations()[0]?.html).toContain('data-od-srcdoc-transport-activation');
 
@@ -2082,7 +2121,7 @@ describe('FileViewer SVG artifacts', () => {
             mime: 'text/html',
             kind: 'html',
           })}
-          liveHtml={'<!doctype html><html><body><main>Project preview</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main>Project preview</main><script>localStorage.setItem("preview", "1")</script></body></html>'}
           workspaceActive
         />
       );
@@ -4927,7 +4966,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(toggle.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('renders sandbox-shim artifacts on the srcdoc transport without entering edit mode (#2791)', () => {
+  it('renders sandbox-shim artifacts on the srcdoc transport without entering edit mode (#2791)', async () => {
     const file = baseFile({
       name: 'search.html',
       path: 'search.html',
@@ -4943,7 +4982,13 @@ describe('FileViewer SVG artifacts', () => {
       },
     });
 
-    const { container } = render(
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return url.includes('/preview-url')
+        ? nativePreviewResponse(url, file.name)
+        : new Response('', { status: 404 });
+    }));
+    render(
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
@@ -4952,11 +4997,19 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    const srcDocFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement | null;
-    expect(srcDocFrame?.getAttribute('data-od-active')).toBe('true');
-    expect(srcDocFrame?.srcdoc).toContain('data-od-id="results"');
-    expect(srcDocFrame?.srcdoc).not.toContain('data-od-lazy-srcdoc-transport');
-    expect(srcDocFrame?.srcdoc).toContain('data-od-sandbox-shim');
+    const frame = await waitFor(() => {
+      const current = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(current.src).toContain('/preview/native-scope/search.html');
+      return current;
+    });
+    expect(frame.getAttribute('data-od-active')).toBe('true');
+    expect(frame.hasAttribute('srcdoc')).toBe(false);
+    const html = activateNativePreview(frame).latestHtml();
+    expect(html).toContain('data-od-id="results"');
+    expect(html).toContain('<script src="app.js"></script>');
+    expect(html).not.toContain('data-od-lazy-srcdoc-transport');
+    expect(html).toContain('data-od-sandbox-shim');
+    expect(screen.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('uses an absolute personal-project base for injected Electron previews', () => {
@@ -4980,7 +5033,7 @@ describe('FileViewer SVG artifacts', () => {
         projectId="project-1"
         projectKind="prototype"
         file={file}
-        liveHtml='<html><head><link rel="stylesheet" href="app.css"></head><body><script src="app.js"></script><main>Preview</main></body></html>'
+        liveHtml='<html><head><link rel="stylesheet" href="app.css"></head><body><script>localStorage.getItem("preview")</script><main>Preview</main></body></html>'
       />,
     );
 
@@ -9023,7 +9076,7 @@ describe('FileViewer tweaks toolbar', () => {
   it('uses a project-scoped preview base for runtime-created relative assets in srcDoc', async () => {
     const context = teamWorkspaceContext();
     const file = htmlPreviewFile({ name: 'brand.html', path: 'brand.html' });
-    const srcDocHtml = '<!doctype html><html><head></head><body><script>location.reload(); const img = document.createElement("img"); img.src = "logos/mark.png";</script></body></html>';
+    const srcDocHtml = '<!doctype html><html><head></head><body><script>localStorage.getItem("preview"); const img = document.createElement("img"); img.src = "logos/mark.png";</script></body></html>';
     const urlLoadHtml = '<!doctype html><html><body>URL loaded</body></html>';
     const renderViewer = (liveHtml: string) => (
       <CollabProvider value={projectWorkspaceCollabValue(context)}>
@@ -9064,7 +9117,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(frame.srcdoc).not.toContain('/api/projects/project-1/raw/?workspaceId=');
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/projects/project-1/preview-url?file=brand.html',
-      { cache: 'no-store' },
+      { cache: 'no-store', signal: expect.any(AbortSignal) },
     );
 
     rerender(renderViewer(urlLoadHtml));
@@ -9108,7 +9161,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'brand.html', path: 'brand.html' })}
-          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><script>localStorage.getItem("preview")</script></body></html>'}
         />,
         context,
       );
@@ -9184,7 +9237,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
-          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><script>localStorage.getItem("preview")</script></body></html>'}
         />,
       );
 
@@ -9217,7 +9270,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
-          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive={workspaceActive}
         />
       );
@@ -9268,7 +9321,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
-          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive={workspaceActive}
         />
       );
@@ -9323,7 +9376,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
-          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive={workspaceActive}
         />
       );
@@ -9390,7 +9443,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'deck.html', path: 'deck.html' })}
-          liveHtml={'<!doctype html><html><body><main>Deck</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main>Deck</main><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive={workspaceActive}
         />
       );
@@ -9466,7 +9519,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'deck.html', path: 'deck.html' })}
-          liveHtml={'<!doctype html><html><body><main>Deck</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main>Deck</main><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive
         />,
       );
@@ -9515,7 +9568,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'blob-deck.html', path: 'blob-deck.html' })}
-          liveHtml={'<!doctype html><html><body><main>Deck</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main>Deck</main><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive
         />,
       );
@@ -9562,7 +9615,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'deck.html', path: 'deck.html' })}
-          liveHtml={'<!doctype html><html><body><main>Deck</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main>Deck</main><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive
         />,
       );
@@ -9612,7 +9665,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'deck.html', path: 'deck.html' })}
-          liveHtml={'<!doctype html><html><body><main data-od-id="hero">Deck</main><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><main data-od-id="hero">Deck</main><script>localStorage.getItem("preview")</script></body></html>'}
           workspaceActive
         />,
       );
@@ -9663,7 +9716,7 @@ describe('FileViewer tweaks toolbar', () => {
           projectId="project-1"
           projectKind="prototype"
           file={htmlPreviewFile({ name: 'sandbox.html', path: 'sandbox.html' })}
-          liveHtml={'<!doctype html><html><body><script>location.reload()</script></body></html>'}
+          liveHtml={'<!doctype html><html><body><script>localStorage.getItem("preview")</script></body></html>'}
         />,
       );
 
@@ -9679,7 +9732,7 @@ describe('FileViewer tweaks toolbar', () => {
       fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
       expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
       expect(frame.closest<HTMLElement>('[hidden]')).toHaveStyle({ display: 'none' });
-      expect(screen.getByText(/location\.reload/)).toBeVisible();
+      expect(screen.getByText(/localStorage/)).toBeVisible();
       act(() => {
         vi.advanceTimersByTime(1_500);
       });
@@ -9736,7 +9789,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
     const { rerender } = render(renderViewer(
       1_000,
-      '<!doctype html><html><body><main>Agent V1</main><script>location.reload()</script></body></html>',
+      '<!doctype html><html><body><main>Agent V1</main><script>localStorage.getItem("preview")</script></body></html>',
     ));
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
 
@@ -9746,7 +9799,7 @@ describe('FileViewer tweaks toolbar', () => {
 
     rerender(renderViewer(
       2_000,
-      '<!doctype html><html><body><main>Agent V2</main><script>location.reload()</script></body></html>',
+      '<!doctype html><html><body><main>Agent V2</main><script>localStorage.getItem("preview")</script></body></html>',
     ));
     expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
     expect(frame.srcdoc).toContain('Agent V2');
@@ -9773,7 +9826,7 @@ describe('FileViewer tweaks toolbar', () => {
         projectId="project-1"
         projectKind="prototype"
         file={{ ...fileV1, mtime }}
-        liveHtml={`<!doctype html><html><body><main>${version}</main><script>location.reload()</script></body></html>`}
+        liveHtml={`<!doctype html><html><body><main>${version}</main><script>localStorage.getItem("preview")</script></body></html>`}
         workspaceActive={workspaceActive}
       />
     );

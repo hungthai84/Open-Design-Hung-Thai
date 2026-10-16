@@ -1444,9 +1444,11 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('<script type="module" src="./scripts/module.js"></script>');
     expect(html).toContain('srcset="./assets/card.svg 1x, ./assets/card@2x.svg 2x"');
 
-    const baseHref = html.match(/<base href="([^"]+)" data-od-project-preview-base>/)?.[1];
-    expect(baseHref).toBeTruthy();
-    const previewBase = new URL(baseHref!, baseUrl);
+    // Native previews retain the filename, so relative resources resolve from
+    // the document URL without a directory <base> changing hash navigation.
+    expect(new URL(response.url).pathname).toMatch(/\/preview\/[^/]+\/prototypes\/booking\/index\.html$/);
+    expect(load(html)('base[data-od-project-preview-base]').length).toBe(0);
+    const previewBase = new URL('./', response.url);
     const expectedResources = new Map([
       ['./styles/app.css', '@import "./theme.css"; .card { background-image: url("../assets/card.svg"); }'],
       ['./styles/theme.css', ':root { --accent: #0a7; }'],

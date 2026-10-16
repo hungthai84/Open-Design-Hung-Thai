@@ -1,6 +1,7 @@
+import type { ProjectPreviewUrlResponse } from '@open-design/contracts';
 import type http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ensureWorkspaceProject, openDatabase } from '../src/db.js';
 import { startServer } from '../src/server.js';
@@ -92,6 +93,130 @@ describe('project preview containment routes', () => {
     cleanupWorkspaceHeaders.set(projectId, workspaceHeaders(workspaceId, workspaceMemberId));
   }
 
+  it.each(['index.html', 'board.html', 'screens/start.html'])(
+    'keeps hash navigation on the previewed document %s',
+    async (file) => {
+      const projectId = await createProject();
+      await writeProjectFile(projectId, file, '<!doctype html><html><head></head><body><script>if (!location.hash) location.replace("#/home");</script><h1>Home</h1></body></html>');
+      const dir = file.includes('/') ? 'screens/' : '';
+      await writeProjectFile(projectId, `${dir}asset.svg`, '<svg/>');
+      const response = await fetch(`${baseUrl}/api/projects/${projectId}/raw/${file}?odPreviewBridge=scroll&odPreviewBridge=redirect`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).not.toContain('<base ');
+      expect(new URL(response.url).pathname).toMatch(/\/preview\/[^/]+\//);
+      const entry = new URL(response.url);
+      const directory = new URL('./', entry);
+      const destination = new URL('#/home', entry);
+      const navigated = await fetch(destination);
+      expect(navigated.status).toBe(200);
+      expect(await navigated.text()).toContain('<h1>Home</h1>');
+      const asset = await fetch(new URL('asset.svg', directory));
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe('<svg/>');
+      const concatenated = await fetch(directory.href + 'asset.svg');
+      expect(concatenated.status).toBe(200);
+      expect(await concatenated.text()).toBe('<svg/>');
+    },
+  );
+
+  it('keeps hosted motion playback enabled when a native HTML preview redirects', async () => {
+    const projectId = await createProject();
+    await writeProjectFile(projectId, 'index.html', '<!doctype html><html><head><meta name="od-motion-output" content="video"></head><body><main data-composition-id="main" data-duration="5" data-width="640" data-height="360">Motion</main><script src="timeline.js"></script></body></html>');
+    const raw = await fetch(`${baseUrl}/api/projects/${projectId}/raw/index.html?odPreviewBridge=scroll&odPreviewBridge=redirect&odMotionPreview=1`);
+    expect(raw.status).toBe(200);
+    expect(new URL(raw.url).pathname).toMatch(/\/preview\/[^/]+\/index\.html$/);
+    expect(new URL(raw.url).searchParams.get('odMotionPreview')).toBe('1');
+    expect(await raw.text()).toContain('data-od-motion-source-player');
+
+    const scope = await fetch(`${baseUrl}/api/projects/${projectId}/preview-url?file=index.html&documentMode=url`)
+      .then((response) => response.json() as Promise<ProjectPreviewUrlResponse>);
+    const direct = new URL(scope.url, baseUrl);
+    direct.searchParams.set('odMotionPreview', '1');
+    const document = await fetch(direct);
+    expect(document.status).toBe(200);
+    expect(await document.text()).toContain('data-od-motion-source-player');
+  });
+
+  it('binds each directory preview to its own HTML, including same-directory files', async () => {
+    const projectId = await createProject();
+    const scopes: string[] = [];
+    for (const file of ['index.html', 'board.html', 'screens/index.html', 'screens/board.html']) {
+      await writeProjectFile(projectId, file, `<html><head></head><body><h1>${file}</h1></body></html>`);
+      const response = await fetch(`${baseUrl}/api/projects/${projectId}/raw/${file}?odPreviewBridge=scroll`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      const base = /<base\s+href="([^"]+)"/i.exec(html)?.[1];
+      expect(base).toBeTruthy();
+      scopes.push(/\/preview\/([^/]+)\//u.exec(base!)![1]!);
+      const directory = await fetch(new URL(base!, baseUrl));
+      expect(directory.status).toBe(200);
+      expect(await directory.text()).toContain(`<h1>${file}</h1>`);
+      const otherDir = new URL('other/', new URL(base!, baseUrl));
+      expect((await fetch(otherDir)).status).toBe(404);
+    }
+    expect(new Set(scopes).size).toBe(4);
+  });
+
+  it('rejects missing, expired and cross-project scopes and path escapes for a document base', async () => {
+    const projectId = await createProject();
+    const otherProjectId = await createProject();
+    await writeProjectFile(projectId, 'index.html', '<html><head></head><body>Home</body></html>');
+    const response = await fetch(`${baseUrl}/api/projects/${projectId}/preview-url?file=index.html`);
+    expect(response.status).toBe(200);
+    const { url, expiresAt } = await response.json() as { url: string; expiresAt: number };
+    const scope = /\/preview\/([^/]+)\//u.exec(url)?.[1];
+    expect(scope).toBeTruthy();
+    for (const rejected of [
+      `/api/projects/${projectId}/preview/missing-scope/index.html`,
+      `/api/projects/${otherProjectId}/preview/${scope}/index.html`,
+      `/api/projects/${projectId}/preview/missing-scope/`,
+      `/api/projects/${otherProjectId}/preview/${scope}/`,
+    ]) {
+      const denied = await fetch(new URL(rejected, baseUrl));
+      expect(denied.status).toBe(404);
+      expect(await denied.text()).toContain('PREVIEW_SCOPE_NOT_FOUND');
+    }
+    const escaped = await fetch(`${baseUrl}/api/projects/${projectId}/preview/${scope}/%2e%2e%2fsecret.html`);
+    expect(escaped.status).toBe(400);
+    // Only scope expiry needs a clock shift; real HTTP completion stays real.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(expiresAt + 1);
+    try {
+      const expired = await fetch(new URL(url, baseUrl));
+      expect(expired.status).toBe(404);
+      expect(await expired.text()).toContain('PREVIEW_SCOPE_NOT_FOUND');
+      const expiredDirectory = await fetch(`${baseUrl}/api/projects/${projectId}/preview/${scope}/`);
+      expect(expiredDirectory.status).toBe(404);
+      expect(await expiredDirectory.text()).toContain('PREVIEW_SCOPE_NOT_FOUND');
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+
+  it('isolates native document policy from resource scopes and serves an inert bound bootstrap', async () => {
+    const projectId = await createProject();
+    await writeProjectFile(projectId, 'pages/index.html', '<!doctype html><html><body><h1>Private source</h1></body></html>');
+    await writeProjectFile(projectId, 'pages/asset.html', '<html>Resource</html>');
+    const plain = await fetch(`${baseUrl}/api/projects/${projectId}/preview-url?file=pages/index.html`).then(r => r.json() as Promise<ProjectPreviewUrlResponse>);
+    const native = await fetch(`${baseUrl}/api/projects/${projectId}/preview-url?file=pages/index.html&documentMode=bootstrap`).then(r => r.json() as Promise<ProjectPreviewUrlResponse>);
+    expect(native.url).not.toBe(plain.url);
+    const shell = await fetch(new URL(native.url, baseUrl));
+    const body = await shell.text();
+    expect(body).toContain('od:srcdoc-transport-ready');
+    expect(body).not.toContain('Private source');
+    expect(shell.headers.get('content-security-policy')).toContain("base-uri 'none'");
+    expect(shell.headers.get('content-security-policy')).not.toContain("script-src 'self'");
+    expect(shell.headers.get('content-security-policy')).not.toContain('allow-same-origin');
+    const resource = await fetch(new URL('asset.html', new URL(native.url, baseUrl)));
+    expect(await resource.text()).toContain('Resource');
+    expect(resource.headers.get('content-security-policy')).toContain("connect-src 'none'");
+    const old = await fetch(new URL(plain.url, baseUrl));
+    expect(old.headers.get('content-security-policy')).toContain("connect-src 'none'");
+    expect((await fetch(new URL('other/', new URL(native.url, baseUrl)))).status).toBe(404);
+    expect((await fetch(`${baseUrl}/api/projects/${projectId}/preview-url?file=pages/index.html&documentMode=unsafe`)).status).toBe(400);
+  });
+
   // OPEND-2283. The web client builds its srcDoc preview from this response.
   // Minting a fresh scope per request makes the SAME artifact serve different
   // bytes every time, so any refetch produces a different srcDoc string, React
@@ -157,14 +282,8 @@ describe('project preview containment routes', () => {
     expect(await read()).toBe(first);
   });
 
-  // A scope minted for a one-shot job must never be handed to a live preview.
-  // Screenshot/PDF export mints a scope for the render and `revoke`s it in its
-  // `finally`; if a preview were allowed to adopt that scope, the export's
-  // teardown would revoke the very base the preview still serves its assets
-  // from -- blanking the artifact, which is the symptom this whole area exists
-  // to prevent. `preview-url` mints exactly the way an export does, so it
-  // stands in for one here without needing a renderer.
-  it('never reuses a one-shot minted scope for a live preview read', async () => {
+  // Different bridge policies need distinct, stable capabilities.
+  it('uses distinct capabilities for different preview bridge policies', async () => {
     const projectId = await createProject();
     await writeProjectFile(projectId, 'index.html', '<html><head></head><body>hi</body></html>');
 
@@ -465,6 +584,16 @@ describe('project preview containment routes', () => {
     const logoResponse = await fetch(runtimeLogoUrl);
     expect(logoResponse.status).toBe(200);
     expect(await logoResponse.text()).toBe('brand-logo-bytes');
+
+    await writeProjectFile(projectId, 'navigation.html', '<!doctype html><html><body><script>if (!location.hash) location.replace("#/home")</script></body></html>');
+    const nativeQuery = new URLSearchParams(scopeQuery);
+    nativeQuery.append('odPreviewBridge', 'sandbox');
+    const nativeResponse = await fetch(`${baseUrl}/api/projects/${projectId}/raw/navigation.html?${nativeQuery}`);
+    expect(nativeResponse.status).toBe(200);
+    expect(nativeResponse.url).toContain('/preview/');
+    expect(nativeResponse.url).not.toContain('workspaceId');
+    const nativeAsset = await fetch(new URL('logos/mark.png', nativeResponse.url));
+    expect(await nativeAsset.text()).toBe('brand-logo-bytes');
 
     const wrongWorkspaceQuery = new URLSearchParams({
       workspaceId: `wrong-${randomUUID()}`,

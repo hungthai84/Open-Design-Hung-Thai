@@ -1,3 +1,4 @@
+import { writePreviewDocument } from './preview-document.js';
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -279,8 +280,9 @@ export async function renderDeckSlides(
   };
 
   try {
-    const doc = injectBaseHref(input.html, input.baseHref);
-    await loadArtifactDocument(window, `data:text/html;charset=utf-8,${encodeURIComponent(doc)}`);
+    const doc = input.documentUrl ? input.html : injectBaseHref(input.html, input.baseHref);
+    await loadArtifactDocument(window, input.documentUrl ?? `data:text/html;charset=utf-8,${encodeURIComponent(doc)}`);
+    if (input.documentUrl) await writePreviewDocument(window, doc, input.documentUrl, input.baseHref ?? new URL('.', input.documentUrl).href);
     tLoad = Date.now();
     await waitForPrintableContent(window);
     tAssets = Date.now();

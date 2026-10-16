@@ -17,8 +17,18 @@ function tone(seconds = 5) {
   return wav;
 }
 
+function motionFrame(page: Page, id: string) {
+  return page.frames().find((frame) => {
+    const url = frame.url();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+    const pathname = new URL(url).pathname;
+    return pathname === `/api/projects/${id}/raw/index.html`
+      || (pathname.startsWith(`/api/projects/${id}/preview/`) && pathname.endsWith('/index.html'));
+  });
+}
+
 async function state(page: Page, id: string) {
-  const frame=page.frames().find(f=>f.url().includes(`/projects/${id}/raw/index.html`));
+  const frame=motionFrame(page, id);
   if(!frame) return null;
   return frame.evaluate(()=> {
     const player=(window as unknown as {__odMotionPlayer?: {state(): {playing:boolean;active:boolean;audio:{paused:boolean}[]}}}).__odMotionPlayer;
@@ -60,7 +70,7 @@ test('[P1] motion audio stops in Code, inactive file tabs and the reloaded home 
   await expect.poll(()=>state(page,id)).toMatchObject({active:false,playing:false,audio:[{paused:true}]});
   // A real iframe navigation while parked reproduces the second autoplay
   // race. Keep it hidden and require the newly loaded document to stay paused.
-  const previous=page.frames().find(f=>f.url().includes(`/projects/${id}/raw/index.html`))!;
+  const previous=motionFrame(page, id)!;
   const loaded=previous.waitForNavigation({waitUntil:'load'});
   await previous.evaluate(()=>location.reload());
   await loaded;
@@ -88,7 +98,7 @@ test('[P1] motion source sound follows pause, seek, timed effects, replay and lo
   await page.addInitScript(() => localStorage.setItem('open-design:config', JSON.stringify({ mode: 'daemon', agentId: 'mock', onboardingCompleted: true, apiKey: '', baseUrl: '', model: '' })));
   await page.goto(`/projects/${id}/conversations/${conversationId}/files/index.html`);
   await expect.poll(() => state(page, id)).toMatchObject({ active: true, playing: true });
-  const frame = page.frames().find(f => f.url().includes(`/projects/${id}/raw/index.html`))!;
+  const frame = motionFrame(page, id)!;
   type Player = { play(): void; pause(): void; seek(time: number): void; replay(): void; setMuted(value: boolean): void; state(): { time: number } };
   const states = () => frame.locator('audio').evaluateAll(els => els.map(a => {
     const audio = a as HTMLAudioElement;
