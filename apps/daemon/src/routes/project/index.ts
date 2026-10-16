@@ -102,7 +102,11 @@ import {
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
-import { isSafeId } from '../../projects.js';
+import {
+  invalidateImportedProjectFileList,
+  isSafeId,
+  resolveProjectDir,
+} from '../../projects.js';
 import {
   ensureTeamProjectCommentConversations,
   getFirstProjectConversation,
@@ -8019,6 +8023,11 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
           } catch {
             // skip files that vanished mid-flight
           }
+        }
+        if (project) {
+          invalidateImportedProjectFileList(
+            resolveProjectDir(PROJECTS_DIR, project.id, project.metadata),
+          );
         }
         /** @type {import('@open-design/contracts').UploadProjectFilesResponse} */
         const body = { files: out };
