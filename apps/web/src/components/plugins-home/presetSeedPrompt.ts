@@ -2,7 +2,7 @@
 // hook that lands in the composer when a user picks a plugin's example.
 //
 // This is the SINGLE source of truth for that seed so the Home example-prompt
-// cards (HomeHero) and the plugin detail modal's "Replicate this content"
+// cards (HomeHero) and the plugin detail modal's prompt-loading "Use"
 // action (HomeView) stay in lockstep. They used to diverge: the cards surfaced
 // a friendly description while the detail modal dumped the raw
 // `od.useCase.query` — which for many plugins is a generator-facing
@@ -16,6 +16,7 @@
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import type { Locale } from '../../i18n';
 import { localizePluginDescription } from './localization';
+import { homePresetCopy } from './homePresetCopy';
 
 const INPUT_PLACEHOLDER_PATTERN = /\{\{\s*([a-zA-Z_][\w-]*)\s*\}\}/g;
 
@@ -175,6 +176,8 @@ export function examplePresetSeedPrompt(
   locale: Locale,
   fallback: () => string,
 ): PresetSeed {
+  const curatedCopy = homePresetCopy(record.id, locale);
+  if (curatedCopy) return { text: curatedCopy.prompt, fromRenderedQuery: false };
   const description = stripAttributionTail(localizePluginDescription(locale, record).trim());
   // zh: the localized useCase.query is a generator-facing meta-instruction
   // ("follow the en field verbatim; start from example.html"), useless as a

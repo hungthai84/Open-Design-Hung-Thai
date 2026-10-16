@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { ToolPackConfig } from "../config.js";
+import type { ToolPackConfig } from "../config/index.js";
 import {
   WIN_PREBUNDLE_ENTRYPOINTS_DIR_NAME,
   WIN_PREBUNDLE_META_DIR_NAME,
@@ -10,7 +10,7 @@ import {
   WIN_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH,
   WIN_PREBUNDLED_PACKAGED_MAIN_RELATIVE_PATH,
   WIN_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH,
-} from "../win-prebundle.js";
+} from "./prebundle.js";
 import { PRODUCT_NAME } from "./constants.js";
 import { pathExists } from "./fs.js";
 import { resolveWinInstallIdentity } from "./identity.js";
@@ -94,6 +94,10 @@ export function resolveWinLocalDataRoot(config: ToolPackConfig): string {
 export async function createWinRemovalPlan(config: ToolPackConfig): Promise<WinRemovalTarget[]> {
   const runtimeRoot = config.roots.runtime.namespaceRoot;
   const targets: Array<Omit<WinRemovalTarget, "exists">> = [
+    { path: join(runtimeRoot, "cache"), scope: "cache", willRemove: config.removeCache === true },
+    { path: join(runtimeRoot, "updates", "downloads"), scope: "cache", willRemove: config.removeCache === true },
+    { path: join(runtimeRoot, "updates", "releases"), scope: "cache", willRemove: config.removeCache === true },
+    { path: join(runtimeRoot, "updates", "staging"), scope: "cache", willRemove: config.removeCache === true },
     { path: join(runtimeRoot, "data"), scope: "data", willRemove: config.removeData },
     { path: join(runtimeRoot, "logs"), scope: "logs", willRemove: config.removeLogs },
     { path: join(runtimeRoot, "runtime"), scope: "sidecars", willRemove: config.removeSidecars },

@@ -8,33 +8,28 @@ Every external project this spec leans on. Three questions per entry: what is it
 
 ## Primary references
 
-### [Anthropic Claude Design][cd]
-- **URL:** [claude.ai/design][cd] · [release announcement](https://www.infoq.cn/article/TH0QVHpvVGZ7VP3hAEmm) · [ifanr review](https://www.ifanr.com/1662860)
+### [Claude Design](https://claude.ai/design) (Anthropic)
 
-[cd]: https://x.com/claudeai/status/2045156267690213649
-- **What it is:** Anthropic's closed-source AI design product. Released 2026-04-17. Powered by Opus 4.7. Web-only (claude.ai). Generates prototypes, wireframes, decks, marketing pages, complex prototypes with voice/video/3D/shaders.
-- **Why it matters to us:** Defines the category. Its viral moment (~60M X impressions week 1) proves the market.
-- **What we borrow:** The high-level value prop — "natural language → editable visual design." Feature inspiration for modes (prototype, deck, marketing). UI ideas around inline editing and custom sliders.
-- **What we don't:** Closed source. Anthropic-only models. No self-hosting. Paid tiers (Pro/Max/Team/Enterprise) only. We are not trying to be a drop-in clone; we are an **open substrate** for the same category.
+- **Role:** Historical UX reference for natural-language editing of visual artifacts, inline editing, and adjustment controls.
 
 ### [Open CoDesign][ocod] (OpenCoworkAI)
 - **Repo:** [github.com/OpenCoworkAI/open-codesign][ocod]
 - **Site:** [opencoworkai.github.io/open-codesign](https://opencoworkai.github.io/open-codesign/)
-- **What it is:** The main open-source Claude Design alternative. MIT-licensed. Electron desktop app. React 19 + Vite + Tailwind v4. [`@mariozechner/pi-ai`][piai] for multi-provider. SQLite for version history. 12 built-in design skill modules. HTML/JSX sandboxed iframe preview. Exports HTML/PDF/PPTX/ZIP/MD. 15 templates. Comment mode + slider controls + multi-frame preview.
+- **What it is:** An open-source design workspace. MIT-licensed. Electron desktop app. React 19 + Vite + Tailwind v4. [`@mariozechner/pi-ai`][piai] for multi-provider. SQLite for version history. 12 built-in design skill modules. HTML/JSX sandboxed iframe preview. Exports HTML/PDF/PPTX/ZIP/MD. 15 templates. Comment mode + slider controls + multi-frame preview.
 
 [ocod]: https://github.com/OpenCoworkAI/open-codesign
 [piai]: https://github.com/badlogic/pi-mono/tree/main/packages/ai
-- **Why it matters:** Direct competitor; most overlap with what we're building.
+- **Why it matters:** Reference for interactive artifact review and export workflows.
 - **What we borrow:**
   - UI concepts: **comment mode** (click-to-pin element edits), **tweak sliders** (agent-emitted parameters), **multi-frame preview** (desktop/tablet/phone).
   - Sandboxed iframe preview (`<iframe sandbox="allow-scripts">` with vendored React 18 + Babel standalone for JSX).
   - Export pipeline shape (HTML/PDF/PPTX/ZIP/MD).
 - **What we don't:**
-  - **Electron** — we go Next.js web app instead (runs local and deploys to Vercel).
+  - **Electron as the product runtime** — our product UI remains the shared Next.js web app; `apps/desktop` and `apps/packaged` provide a thin Electron host around the same daemon/web sidecars.
   - **Bundled agent on `pi-ai`** — we delegate to the user's existing CLI.
   - **Proprietary skill format** (TypeScript modules compiled into the app) — we use Claude Code's `SKILL.md` so third-party skills drop in.
-  - **SQLite for artifacts** — plain files + `.jsonl` history, so git tracks it naturally.
-  - **Sole focus on UI panels** — we add Design System mode and `DESIGN.md` as first-class.
+  - **SQLite blobs for artifact bytes** — generated files remain on disk while daemon SQLite owns project and metadata state.
+  - **Sole focus on UI panels** — we add a first-class Design System product surface and `DESIGN.md` contract.
 
 ### [multica][multica] (multica-ai)
 - **Repo:** [github.com/multica-ai/multica][multica]
@@ -100,7 +95,10 @@ Every external project this spec leans on. Three questions per entry: what is it
 - **What it is:** Tauri desktop app for managing five CLI tools (Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw). Provider management, MCP server config, skills install, session browsing. SQLite at `~/.cc-switch/cc-switch.db`. **Skills dir at `~/.cc-switch/skills/` with symlinks into each agent's config dir.** 50+ provider presets.
 - **Why it matters:** Shows exactly how to live beside multiple code-agent CLIs without stepping on their config.
 - **What we borrow:**
-  - **Symlink-based skill distribution.** Canonical skill location + symlinks to each agent's skills dir.
+  - The idea of one discoverable library serving several agent runtimes. Open
+    Design implements that boundary through its own registries and makes a
+    real CWD-local copy of active skill resources for each run; it does not
+    symlink bundles into every agent's global skills directory.
   - Knowledge of per-agent config dir locations (`~/.claude/`, `~/.codex/`, …).
   - "Provider presets" idea — a curated list we can ship so users don't have to hand-enter endpoint URLs for OpenAI-compatible relays.
 - **What we don't:**
@@ -112,14 +110,22 @@ Every external project this spec leans on. Three questions per entry: what is it
 - **Repo:** [github.com/VoltAgent/awesome-claude-design][acd]
 
 [acd]: https://github.com/VoltAgent/awesome-claude-design
-- **Ecosystem:** 68 DESIGN.md files for named brands. Referenced schema has **9 standardized sections**: Visual Theme & Atmosphere, Color Palette & Roles, Typography Rules, Component Stylings, Layout Principles, Depth & Elevation, Do's and Don'ts, Responsive Behavior, Agent Prompt Guide.
+- **Historical ecosystem:** the project exposed 68 `DESIGN.md` files and a
+  nine-heading baseline when this reference was first recorded.
 - **Related URLs:** claude.ai/design, getdesign.md, Discord community
 - **Why it matters:** Defines the de-facto portable design-system format for AI agents.
 - **What we borrow:**
-  - **The entire `DESIGN.md` format, unchanged.** We adopt their 9-section schema as OD's canonical design-system format.
-  - Ecosystem compatibility: any of their 68 DESIGN.md files works as an OD active design system out of the box.
+  - Portable `DESIGN.md` prose remains a compatibility floor: a legacy folder
+    containing only that file can still be discovered and used.
+  - The original nine headings remain a useful historical sample, not a fixed
+    authoring schema. Current repository packages use `manifest.json`,
+    `DESIGN.md`, `tokens.css`, and optional rich component/source/preview
+    resources; migrated packages need substantive coverage without prescribed
+    heading names or order.
 - **What we don't:**
-  - Their curated list itself — we don't fork their 68 files; we reference upstream.
+  - Treating one upstream list as the current catalogue boundary. The bundled
+    catalogue now contains 151 packages drawn from multiple attributed sources
+    and OpenDesign-authored systems.
   - Their Discord / community layer — not our product.
 
 ### [guizang-ppt-skill][guizang] (op7418)
@@ -127,12 +133,12 @@ Every external project this spec leans on. Three questions per entry: what is it
 
 [guizang]: https://github.com/op7418/guizang-ppt-skill
 - **What it is:** A Claude Code skill producing magazine-style, horizontal-swipe web decks. Structure: `SKILL.md` + `assets/template.html` + `references/{components,layouts,themes,checklist}.md`. 6-step workflow. Single-file HTML output with embedded CSS/WebGL. Keyboard/scroll/touch navigation.
-- **Why it matters:** Reference implementation of a high-quality Claude skill, and our default deck skill.
+- **Why it matters:** Reference implementation of a high-quality Claude skill and the source of our bundled guizang deck template.
 - **What we borrow:**
-  - **The whole skill, unmodified.** It's our default v1 `deck-skill`. A user runs `od skill add https://github.com/op7418/guizang-ppt-skill` and it works.
+  - The workflow and assets are bundled under [`design-templates/guizang-ppt/`](../design-templates/guizang-ppt/) with the upstream license preserved and OpenDesign metadata/file-handoff integration applied.
   - Skill directory convention (`assets/` + `references/` + `SKILL.md`) as the pattern we document for skill authors.
   - The "6-step workflow + quality-checklist rubric" pattern for authoring new skills.
-- **What we don't:** Nothing — this is pure reuse. We add an `od:` block to its front-matter only if we want to expose theme sliders; the skill works without it.
+- **What we don't:** We do not require the retired `od skill add` flow; the rendering template ships in the catalogue and can still be consumed as a portable `SKILL.md` bundle.
 
 ---
 
@@ -141,45 +147,29 @@ Every external project this spec leans on. Three questions per entry: what is it
 | Project | Relevance |
 |---|---|
 | [Claude Code skills docs](https://docs.anthropic.com/) | Source of the `SKILL.md` format we adopt |
-| [Cursor .cursorrules](https://docs.cursor.com/) | Informs how the Cursor Agent adapter injects skill context |
+| [Cursor rules](https://docs.cursor.com/) | Historical format inspiration only; the current Cursor Agent adapter receives OpenDesign's composed prompt over stdin and uses the same CWD-local resource staging as other runtimes |
 | [Reveal.js](https://revealjs.com/) / [Marp](https://marp.app/) | Reference for deck HTML navigation patterns |
-| [Shadcn/ui](https://ui.shadcn.com/) | Likely component library for the web UI shell |
-| [Vercel AI SDK](https://sdk.vercel.ai/) | Streaming primitives for the API-fallback adapter |
-| [Puppeteer](https://pptr.dev/) | PDF export engine |
+| [Shadcn/ui](https://ui.shadcn.com/) | Component and registry reference; the product shell now uses repository-owned primitives from `@open-design/components` |
+| [Vercel AI SDK](https://sdk.vercel.ai/) | Historical API-fallback exploration; current BYOK providers run through the OpenCode adapter rather than a direct SDK adapter |
+| [Puppeteer](https://pptr.dev/) | Reference for template/skill-owned browser rendering; core desktop PDF export uses Electron `printToPDF` or the screenshot/PDF pipeline |
 | [pptxgenjs](https://gitbrent.github.io/PptxGenJS/) | PPTX export engine |
-| [chokidar](https://github.com/paulmillr/chokidar) | Filesystem watching for skill / artifact hot-reload |
-
----
-
-## Compatibility & differentiation matrix
-
-| Dimension | [Claude Design][cd] | [Open CoDesign][ocod] | [multica][multica] | [cc-switch][ccsw] | **OD** |
-|---|---|---|---|---|---|
-| Open source | ❌ | ✅ | ✅ | ✅ | ✅ |
-| Primary form factor | Web (hosted) | Electron | Web + Go daemon | Tauri | **Next.js web + Node daemon** |
-| Vercel-deployable | ❌ | ❌ | ❌ | ❌ | **✅** |
-| Runs local-only | ❌ | ✅ | ✅ | ✅ | **✅** |
-| Generates design artifacts | ✅ | ✅ | ❌ (general coding) | ❌ | **✅** |
-| Uses existing code agent | — (owns it) | ❌ | ✅ | ✅ | **✅** |
-| Supports Claude Code skills (`SKILL.md`) | — | ❌ | ✅ | ✅ | **✅** |
-| `DESIGN.md` as first-class | ❌ | ❌ | — | — | **✅** |
-| Deck mode / PPTX export | ✅ | ✅ | ❌ | ❌ | **✅ (via skill)** |
-| Template gallery | ✅ | ✅ (15) | ❌ | ❌ | **✅** |
-| Design-system authoring mode | ❌ | ❌ | ❌ | ❌ | **✅** |
-
-The two empty-column crossings where OD lights up and others don't: **Vercel-deployable + design-system authoring**, and **uses existing code agent + first-class DESIGN.md**. That's the niche.
+| [chokidar](https://github.com/paulmillr/chokidar) | Ref-counted project-file watching; skill/template registries rescan on listing requests instead |
 
 ---
 
 ## What we explicitly don't borrow (and why)
 
-- **Desktop packaging** (Electron / Tauri). Every minute spent on code-signing is a minute not spent on skills. If a user wants a tray icon, [`cc-switch`][ccsw] already does that — install both.
+- **Electron as a separate product architecture.** OpenDesign now ships thin
+  desktop and packaged Electron hosts, including signing/update work, but the
+  product UI remains the same Next.js web app and daemon rather than a second
+  desktop-only implementation.
 - **SQLite for artifacts** (from [Open CoDesign][ocod] and [cc-switch][ccsw]). Plain files + JSONL history are reviewable in git, trivially portable, and match the "skills are files" ethos.
 - **Bundled model router** ([`pi-ai`][piai] from [Open CoDesign][ocod]). The user's code agent already routes. Two routers is worse than one.
 - **PostgreSQL + pgvector** (from [multica][multica]). We don't embed anything in MVP. When we do, SQLite + `sqlite-vec` is enough for single-user scale.
 - **Board / issue model** (from [multica][multica]). Off-brand for a design tool.
 
-These "don'ts" are what keep the MVP achievable in 6–8 weeks.
+These boundaries keep external integrations from replacing the shared web,
+daemon, filesystem, and agent-runtime contracts.
 
 ---
 

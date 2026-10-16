@@ -1,9 +1,16 @@
+import { assertPackagedSidecarRuntime } from "../resources/runtime-manifest.js";
+import { MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH, MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH, MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH } from "./prebundle.js";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { ToolPackConfig } from "../config.js";
-import { macResources } from "../resources.js";
-import { electronBuilderVersionForAppVersion } from "../versions.js";
+import type { ToolPackConfig } from "../config/index.js";
+import { domToPptxBundleResource } from "../dom-to-pptx-resource.js";
+import {
+  assertNodePtyRuntime,
+  resolveNodePtyRuntimeArch,
+} from "../node-pty-runtime.js";
+import { macResources } from "../resources/index.js";
+import { electronBuilderVersionForAppVersion } from "../versioning/index.js";
 import { execFileAsync } from "./commands.js";
 import {
   ELECTRON_BUILDER_ASAR,
@@ -44,6 +51,7 @@ async function writeWebStandaloneHookConfig(config: ToolPackConfig, paths: MacPa
     `${JSON.stringify(
       {
         auditReportPath: paths.webStandaloneHookAuditPath,
+        hyperframesRuntimeSourceRoot: paths.assembledAppRoot,
         pruneCopiedSharp: true,
         pruneRootNext: true,
         pruneRootSharp: true,
@@ -115,6 +123,9 @@ export async function runElectronBuilder(
     extraResources: [
       { from: paths.resourceRoot, to: "open-design" },
       { from: paths.packagedConfigPath, to: "open-design-config.json" },
+      // Vendored dom-to-pptx browser bundle for editable PPTX export. The desktop
+      // main reads it from process.resourcesPath at runtime.
+      domToPptxBundleResource(config),
     ],
     files: [...ELECTRON_BUILDER_FILE_PATTERNS],
     mac: {
@@ -129,6 +140,18 @@ export async function runElectronBuilder(
       notarize: config.macNotarize ? undefined : false,
       target: targets,
     },
+    // Register the workspace-invite deeplink scheme so macOS routes
+    // `opendesign://workspace/invite/continue?...` to this app (electron-builder
+    // writes it into Info.plist CFBundleURLTypes; a runtime
+    // setAsDefaultProtocolClient alone is unreliable on macOS). The scheme string
+    // must match INVITE_DEEPLINK_SCHEME in
+    // apps/desktop/src/main/invite-deeplink-core.ts.
+    protocols: [
+      {
+        name: `${PRODUCT_NAME} Invite`,
+        schemes: ["opendesign"],
+      },
+    ],
     nodeGypRebuild: false,
     npmRebuild: false,
     productName: identity.productName,
@@ -160,5 +183,14 @@ export async function runElectronBuilder(
       ...(config.signed ? {} : { CSC_IDENTITY_AUTO_DISCOVERY: "false" }),
       ...(webStandaloneHookConfigPath == null ? {} : { [WEB_STANDALONE_HOOK_CONFIG_ENV]: webStandaloneHookConfigPath }),
     },
+  });
+  await assertPackagedSidecarRuntime(join(paths.appPath, "Contents", "Resources", "app"), [
+    "main.cjs",
+    ...(config.webOutputMode === "standalone" ? [MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH, MAC_PREBUNDLED_DAEMON_SIDECAR_RELATIVE_PATH, MAC_PREBUNDLED_WEB_SIDECAR_RELATIVE_PATH].map((entry) => entry.slice("app/".length)) : []),
+  ]);
+  await assertNodePtyRuntime({
+    appRoot: join(paths.appPath, "Contents", "Resources", "app"),
+    arch: resolveNodePtyRuntimeArch(process.arch),
+    platform: "darwin",
   });
 }

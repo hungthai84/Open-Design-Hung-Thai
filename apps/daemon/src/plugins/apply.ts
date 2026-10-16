@@ -23,6 +23,7 @@ import {
   renderPluginBlock,
   resolveLocalizedText,
   type AppliedPluginSnapshot,
+  type AppliedStrategyBindingV2,
   type ApplyResult,
   type InstalledPluginRecord,
   type McpServerSpec,
@@ -33,7 +34,7 @@ import {
   type PluginProjectMetadataPatch,
   type TrustTier,
 } from '@open-design/contracts';
-import { resolveCapabilitiesGranted, requiredCapabilities } from './trust.js';
+import { requiredCapabilities } from './trust.js';
 import {
   deriveAutoOAuthPrompts,
   mergeAutoOAuthPrompts,
@@ -43,6 +44,11 @@ import {
 import { deriveAutoAtomSurfaces } from './atoms/auto-surfaces.js';
 import { ensureCoreQualityStages } from './ensure-core-stages.js';
 import { getManifestContextCraft } from './context-craft.js';
+import {
+  isInternalBundledStrategyV2,
+  validateBundledStrategyActivationV2,
+} from './strategy-provenance.js';
+import { enforceOdNextStrategyPipelineV2 } from './strategy-stage-policy.js';
 
 export class MissingInputError extends Error {
   readonly fields: string[];
@@ -50,6 +56,15 @@ export class MissingInputError extends Error {
     super(`Missing required plugin inputs: ${fields.join(', ')}`);
     this.fields = fields;
     this.name = 'MissingInputError';
+  }
+}
+
+export class InternalBundledStrategyApplyError extends Error {
+  readonly pluginId: string;
+  constructor(pluginId: string) {
+    super(`Bundled strategy ${pluginId} is internal until hash-gated activation.`);
+    this.pluginId = pluginId;
+    this.name = 'InternalBundledStrategyApplyError';
   }
 }
 
@@ -77,11 +92,8 @@ export interface ApplyInput {
   // tests), the connector bindings stay in `pending` status and no
   // auto-prompt is derived.
   connectorProbe?: ConnectorProbe | undefined;
-  // Apply callers can intentionally defer selected manifest defaults when a
-  // visible UI control is still neutral. Deferred names stay out of the applied
-  // snapshot so first-turn discovery can ask instead of treating defaults as
-  // user-confirmed answers.
-  deferredDefaultInputNames?: string[] | undefined;
+  /** Daemon-internal, controlled-I/O proof for OD Next activation. */
+  internalStrategyBinding?: AppliedStrategyBindingV2 | undefined;
 }
 
 export interface ApplyComputed {
@@ -94,11 +106,21 @@ export interface ApplyComputed {
 }
 
 export function applyPlugin(input: ApplyInput): ApplyComputed {
+  const isInternalStrategy = isInternalBundledStrategyV2(input.plugin);
+  if (isInternalStrategy && !input.internalStrategyBinding) {
+    throw new InternalBundledStrategyApplyError(input.plugin.id);
+  }
+  if (!isInternalStrategy && input.internalStrategyBinding) {
+    throw new InternalBundledStrategyApplyError(input.plugin.id);
+  }
+  const strategy = input.internalStrategyBinding
+    ? validateBundledStrategyActivationV2(input.plugin, input.internalStrategyBinding)
+    : undefined;
   const manifest = input.plugin.manifest;
   const rawTrust: TrustTier = input.trust ?? input.plugin.trust;
   const trust: ApplyTrust = rawTrust === 'restricted' ? 'restricted' : 'trusted';
 
-  const validated = validateInputs(manifest, input.inputs, new Set(input.deferredDefaultInputNames ?? []));
+  const validated = validateInputs(manifest, input.inputs);
   if (validated.missing.length > 0) {
     throw new MissingInputError(validated.missing);
   }
@@ -122,7 +144,8 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   const { resolved: connectorsResolved, required: connectorsRequired } =
     resolveConnectorBindings(manifest, input.connectorProbe);
   const required = requiredCapabilities(manifest);
-  const granted = resolveCapabilitiesGranted({ manifest, trust });
+  // Persisted grants are authoritative; recomputing defaults here would undo revocations.
+  const granted = Array.from(new Set([...(input.plugin.capabilitiesGranted ?? []), 'prompt:inject']));
   const taskKind = (manifest.od?.taskKind ?? 'new-generation') as AppliedPluginSnapshot['taskKind'];
 
   // Spec §23.3.3: when the plugin omits `od.pipeline`, fall back to
@@ -141,12 +164,18 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   // anti-slop) stages, so the five-stage main flow is stable whether the
   // artifact came from a free-form prompt or a plugin. Pure media stays
   // generate-only. See ensure-core-stages.ts for the full rationale.
-  const appliedPipeline = ensureCoreQualityStages({
-    pipeline: pipelineResolution.pipeline,
-    taskKind,
-    mode: manifest.od?.mode,
-    source: pipelineResolution.source,
-  });
+  const appliedPipeline = strategy
+    ? enforceOdNextStrategyPipelineV2({
+        plugin: input.plugin,
+        binding: strategy,
+        pipeline: pipelineResolution.pipeline,
+      })
+    : ensureCoreQualityStages({
+        pipeline: pipelineResolution.pipeline,
+        taskKind,
+        mode: manifest.od?.mode,
+        source: pipelineResolution.source,
+      });
 
   const declaredSurfaces = manifest.od?.genui?.surfaces ?? [];
   const autoOAuth = input.connectorProbe
@@ -212,6 +241,7 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
     pluginTitle,
     pluginDescription,
     query:                queryText || undefined,
+    ...(strategy ? { strategy } : {}),
     status:               'fresh',
   };
 
@@ -238,26 +268,18 @@ interface ValidationResult {
   missing: string[];
 }
 
-function validateInputs(
-  manifest: PluginManifest,
-  raw: Record<string, unknown>,
-  deferredDefaultInputNames: ReadonlySet<string> = new Set(),
-): ValidationResult {
+function validateInputs(manifest: PluginManifest, raw: Record<string, unknown>): ValidationResult {
   const fields = manifest.od?.inputs ?? [];
   const coerced: Record<string, string | number | boolean> = {};
   const missing: string[] = [];
-  const declaredInputNames = new Set<string>();
 
   for (const field of fields) {
     const name = field.name;
     if (!name) continue;
-    declaredInputNames.add(name);
     const provided = raw[name];
     if (provided === undefined || provided === null || provided === '') {
       const fallback = field.default;
-      const hasDefault = fallback !== undefined && fallback !== null && fallback !== '';
-      if (deferredDefaultInputNames.has(name) && hasDefault) continue;
-      if (hasDefault) {
+      if (fallback !== undefined && fallback !== null && fallback !== '') {
         coerced[name] = coerceScalar(fallback as unknown);
       } else if (field.required === true) {
         missing.push(name);
@@ -272,7 +294,6 @@ function validateInputs(
   // but predictable; the digest captures whatever survives coercion.
   for (const [key, value] of Object.entries(raw)) {
     if (key in coerced) continue;
-    if (declaredInputNames.has(key)) continue;
     if (value === undefined || value === null) continue;
     coerced[key] = coerceScalar(value);
   }

@@ -16,7 +16,11 @@
 // branch on a single discriminator and lets the unit tests assert
 // classification without touching React.
 
-import type { InstalledPluginRecord } from '@open-design/contracts';
+import type {
+  InstalledPluginRecord,
+  WorkspaceCollabContext,
+} from '@open-design/contracts';
+import { workspaceResourceUrl } from '../../collab/workspace-identity';
 
 export type PluginPreviewKind = 'media' | 'html' | 'design' | 'text';
 
@@ -64,6 +68,7 @@ export interface DesignPreviewSpec {
   brand: string;
   designSystemId: string | null;
   swatches: string[];
+  workspaceContext?: WorkspaceCollabContext | null;
 }
 
 export interface TextPreviewSpec {
@@ -182,7 +187,10 @@ function brandLabel(record: InstalledPluginRecord): string {
 
 export function inferPluginPreview(
   record: InstalledPluginRecord,
-  opts?: { preferBaked?: boolean },
+  opts?: {
+    preferBaked?: boolean;
+    workspaceContext?: WorkspaceCollabContext | null;
+  },
 ): PluginPreviewSpec {
   // Gallery tiles opt in to a pre-baked hover-pan clip (cheap thumbnail) when
   // the daemon has attached one. Everything else — crucially the detail modal —
@@ -212,6 +220,33 @@ export function inferPluginPreview(
     const gif = typeof preview.gif === 'string' ? preview.gif : null;
     const audio = typeof preview.audio === 'string' ? preview.audio : null;
     const entry = typeof preview.entry === 'string' ? preview.entry : null;
+
+    if (t === 'html' && entry) {
+      // Bundled stills make new templates usable before the post-merge CDN
+      // bake. They belong to cards only; details keep the real HTML preview.
+      if (opts?.preferBaked && poster) {
+        const relative = !/^(?:[a-z][a-z\d+.-]*:|\/)/i.test(poster);
+        const posterUrl = relative
+          ? workspaceResourceUrl(
+            `/api/plugins/${encodeURIComponent(record.id)}/asset/${poster.replace(/^\.\//, '').split('/').map(encodeURIComponent).join('/')}`,
+            opts.workspaceContext,
+          )
+          : poster;
+        return {
+          kind: 'media', mediaType: 'image', poster: posterUrl,
+          videoUrl: null, audioUrl: null, imageOnly: true,
+        };
+      }
+      return {
+        kind: 'html',
+        src: workspaceResourceUrl(
+          `/api/plugins/${encodeURIComponent(record.id)}/preview`,
+          opts?.workspaceContext,
+        ),
+        label: entry.replace(/^\.\//, '').split(/[\\/]/).pop() ?? entry,
+        source: 'preview',
+      };
+    }
 
     if (t === 'video' || video) {
       const holdMs = typeof preview.holdMs === 'number' ? preview.holdMs : null;
@@ -245,14 +280,6 @@ export function inferPluginPreview(
         imageOnly: true,
       };
     }
-    if (t === 'html' && entry) {
-      return {
-        kind: 'html',
-        src: `/api/plugins/${encodeURIComponent(record.id)}/preview`,
-        label: entry.replace(/^\.\//, '').split(/[\\/]/).pop() ?? entry,
-        source: 'preview',
-      };
-    }
   }
 
   if (examples.length > 0) {
@@ -262,7 +289,10 @@ export function inferPluginPreview(
         typeof examples[0]!.title === 'string' ? (examples[0]!.title as string) : stem;
       return {
         kind: 'html',
-        src: `/api/plugins/${encodeURIComponent(record.id)}/example/${encodeURIComponent(stem)}`,
+        src: workspaceResourceUrl(
+          `/api/plugins/${encodeURIComponent(record.id)}/example/${encodeURIComponent(stem)}`,
+          opts?.workspaceContext,
+        ),
         label: title,
         source: 'example',
         exampleStem: stem,
@@ -276,6 +306,9 @@ export function inferPluginPreview(
       brand: brandLabel(record),
       designSystemId: designSystemRef(record),
       swatches: deriveSwatches(record),
+      ...(opts?.workspaceContext
+        ? { workspaceContext: opts.workspaceContext }
+        : {}),
     };
   }
 

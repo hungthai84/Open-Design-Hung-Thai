@@ -285,6 +285,41 @@ describe('classifyChatRunCloseStatus (#1451 close-handler classification)', () =
     ).toBe('succeeded');
   });
 
+  it('returns succeeded when the daemon force-closed a completed ACP attempt (Windows code 1)', () => {
+    expect(
+      classifyChatRunCloseStatus({
+        ...base,
+        code: 1,
+        signal: null,
+        acpCleanCompletion: true,
+        acpCompletionShutdownRequested: true,
+      }),
+    ).toBe('succeeded');
+  });
+
+  it('returns failed on code 1 after clean ACP completion when the daemon did not close it', () => {
+    expect(
+      classifyChatRunCloseStatus({
+        ...base,
+        code: 1,
+        signal: null,
+        acpCleanCompletion: true,
+      }),
+    ).toBe('failed');
+  });
+
+  it('returns failed when shutdown was requested but the ACP prompt never completed cleanly', () => {
+    expect(
+      classifyChatRunCloseStatus({
+        ...base,
+        code: 1,
+        signal: null,
+        acpCleanCompletion: false,
+        acpCompletionShutdownRequested: true,
+      }),
+    ).toBe('failed');
+  });
+
   it('returns failed on Vela ACP code 130 before clean ACP completion', () => {
     expect(
       classifyChatRunCloseStatus({
@@ -569,6 +604,46 @@ describe('applyClaudeStreamJsonRunBookkeeping', () => {
     expect(run.turnCompletedCleanly).toBe(false);
     expect(run.stdinOpen).toBe(true);
     expect(run.child.stdin.end).not.toHaveBeenCalled();
+  });
+
+  it('closes stdin without recording clean completion when usage reports an error termination', () => {
+    // Real Claude CLI error terminations (error_during_execution,
+    // error_max_turns, resume failures — the #4275 fixture family) emit a
+    // result frame with is_error true and stop_reason null. The turn IS over,
+    // so stdin must close — but it did not complete cleanly: marking it clean
+    // lets classifyChatRunCloseStatus translate the CLI's exit code 1 into
+    // 'succeeded' and the run fails silently with no error surfaced.
+    const run = {
+      stdinOpen: true,
+      turnCompletedCleanly: false,
+      child: {
+        stdin: {
+          destroyed: false,
+          end: vi.fn(),
+        },
+      },
+    };
+
+    applyClaudeStreamJsonRunBookkeeping(run, {
+      type: 'usage',
+      usage: null,
+      stopReason: null,
+      isError: true,
+    });
+
+    expect(run.stdinOpen).toBe(false);
+    expect(run.child.stdin.end).toHaveBeenCalled();
+    expect(run.turnCompletedCleanly).toBe(false);
+
+    expect(classifyChatRunCloseStatus({
+      cancelRequested: false,
+      code: 1,
+      signal: null,
+      acpCleanCompletion: false,
+      artifactQuietShutdownRequested: false,
+      turnCompletedCleanly: run.turnCompletedCleanly,
+      artifactProducedThisRun: false,
+    })).toBe('failed');
   });
 
   it('closes stdin and records clean completion after an AskUserQuestion tool_use followed by end_turn (#4273)', () => {

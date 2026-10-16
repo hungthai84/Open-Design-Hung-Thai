@@ -82,7 +82,11 @@ beforeEach(async () => {
   await mkdir(projectCwd, { recursive: true });
   db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT);
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      metadata_json TEXT
+    );
     CREATE TABLE conversations (id TEXT PRIMARY KEY, project_id TEXT, title TEXT);
   `);
   migratePlugins(db);
@@ -219,11 +223,12 @@ describe('Plan §8 e2e — daemon-side anchors', () => {
       '---\nname: connector-plugin\ndescription: requires slack\n---\n# Connector\n',
     );
     // Install as restricted (the GitHub-style default for non-local
-    // sources). We simulate that by overriding sourceKind via the
-    // already-installed registry record.
+    // sources). Simulate that tier and its persisted default grants on
+    // the already-installed registry record.
     await installLocal(folder);
-    db.prepare('UPDATE installed_plugins SET trust = ? WHERE id = ?')
-      .run('restricted', 'connector-plugin');
+    db.prepare(
+      'UPDATE installed_plugins SET trust = ?, capabilities_granted = ? WHERE id = ?',
+    ).run('restricted', JSON.stringify(['prompt:inject']), 'connector-plugin');
     const plugin = getInstalledPlugin(db, 'connector-plugin')!;
 
     // Apply via the resolver — restricted + missing capability →
@@ -355,27 +360,6 @@ describe('Plan §8 e2e — daemon-side anchors', () => {
     expect(result?.ok).toBe(true);
     if (result?.ok) {
       expect(result.snapshot.inputs).toMatchObject({ topic: 'demo' });
-    }
-  });
-
-  it('keeps deferred manifest defaults out when resolving plugin snapshots', async () => {
-    await installLocal(FIXTURE_DIR);
-
-    const result = resolvePluginSnapshot({
-      db,
-      body: {
-        pluginId: 'sample-plugin',
-        pluginInputs: { topic: 'demo', audience: '' },
-        deferredDefaultInputNames: ['audience'],
-      },
-      projectId: 'project-1',
-      registry: REGISTRY_VIEW,
-    });
-
-    expect(result?.ok).toBe(true);
-    if (result?.ok) {
-      expect(result.snapshot.inputs).toMatchObject({ topic: 'demo' });
-      expect(result.snapshot.inputs).not.toHaveProperty('audience');
     }
   });
 

@@ -2,8 +2,8 @@
 // when the left nav rail's "Home" tab is active.
 //
 // Owns the prompt state + active plugin lifecycle and stitches
-// together the smaller pieces (HomeHero, RecentProjectsStrip,
-// PluginsHomeSection). Replaces the older left-side `PluginLoopHome`
+// together the smaller pieces (HomeHero, PluginsHomeSection; the recent
+// projects live in the entry rail, not here). Replaces the older left-side `PluginLoopHome`
 // surface by lifting its plugin orchestration up here so the prompt
 // textarea can live centered in the hero.
 
@@ -13,14 +13,20 @@ import type {
   ApplyResult,
   ChatSessionMode,
   ConnectorDetail,
+  CreateProjectExampleReference,
   InputFieldSpec,
   McpServerConfig,
   InstalledPluginRecord,
+  LocalCatalogScope,
   ProjectKind,
+  WorkspaceCollabContext,
   AudioVoiceOption,
+  WorkspaceContextItem,
 } from '@open-design/contracts';
-import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
-import { projectKindToTracking } from '@open-design/contracts/analytics';
+import {
+  automaticStrategyTaskProfileForRouteId,
+  DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
+} from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackCommunityGalleryClick,
@@ -32,16 +38,34 @@ import {
   trackPluginReplacementModalClick,
   trackPluginReplacementModalSurfaceView,
   trackPluginReplacementResult,
-  trackRecentProjectsClick,
 } from '../analytics/events';
 import {
   applyPlugin,
+  createProject,
+  duplicatePluginAsProject,
   listPlugins,
+  listPluginsFresh,
+  pluginCatalogCacheKey,
+  readCachedVisiblePlugins,
+  patchProject,
+  resolvedWorkspaceContextForWrite,
+  ProjectCreateError,
   renderPluginBriefTemplate,
   resolvePluginQueryFallback,
 } from '../state/projects';
+import {
+  HOME_COMPOSER_ATTACHMENTS_EVENT,
+  clearHomeComposerAttachments,
+  peekHomeComposerAttachments,
+} from '../state/home-composer-stash';
+import { FigmaImportModal } from './FigmaImportModal';
 import { fetchMcpServers } from '../state/mcp';
-import { useI18n, useT, type Locale } from '../i18n';
+import { takeHomeComposerAssetSeed } from '../state/libraryHandoff';
+import { useI18n, useT } from '../i18n';
+import {
+  formatModelWindowRetryAt,
+  modelWindowLimitCopy,
+} from '../runtime/amr-guidance';
 import {
   localizeSkillName,
   localizeSkillPrompt,
@@ -52,7 +76,13 @@ import {
   mergeAihubmixImageModels,
   useAIHubMixImageModels,
 } from '../media/aihubmix-image-models';
-import { openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir } from '../providers/registry';
+import {
+  daemonIsLive,
+  dirExists,
+  fetchRecentLinkedDirs,
+  openFolderDialog,
+  pushRecentLinkedDir,
+} from '../providers/registry';
 import { isOpenDesignHostAvailable, pickHostWorkingDir } from '@open-design/host';
 import type {
   DesignSystemSummary,
@@ -63,9 +93,32 @@ import type {
 } from '../types';
 import { inlineMentionToken, mentionTokenPresent } from '../utils/inlineMentions';
 import { smoothScrollToTop } from '../utils/smoothScrollToTop';
-import { missingRequiredInputs, pluginInputsAreValid } from '../utils/pluginRequiredInputs';
+import {
+  missingRequiredInputs,
+  pluginInputsAreValid,
+  requiredInputsAreUserFillable,
+} from '../utils/pluginRequiredInputs';
 import { HomeHero, type ExamplePromptInfo, type HomeHeroHandle } from './HomeHero';
 import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips';
+import {
+  legacyPrototypeSceneForChipId,
+  prototypeSceneProjectMetadata,
+  prototypeSubChipForSlug,
+  type HomeHeroSubChip,
+} from './home-hero/sub-chips';
+import { homeHeroChipLabel } from './home-hero/chip-labels';
+import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
+import { consumePendingHomeChip, hasPendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
+import { navigate } from '../router';
+import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
+import { workspaceContextLinkedDirs } from './workspace-context';
+import {
+  currentWorkspaceAccountGeneration,
+  useWorkspaceContext,
+  workspaceResourceReadContext,
+} from '../collab/useWorkspaceContext';
+import { useWorkspaceInvalidation } from '../collab/workspace-events';
+import { useWorkspaceSnapshotActivation } from '../collab/workspace-snapshot-activation';
 import {
   buildHomeMediaComposer,
   homeMediaSurfaceForChipId,
@@ -81,15 +134,23 @@ import {
   type HomePromptHandoff,
 } from './home-hero/plugin-authoring';
 import { PluginDetailsModal } from './PluginDetailsModal';
-import { HomeTemplatesReveal } from './HomeTemplatesReveal';
-import { PluginsHomeSection } from './PluginsHomeSection';
+import {
+  buildCommunityTemplates,
+  copyTemplatePrompt,
+  isPromptArtifact,
+  TemplatePreviewModal,
+} from './CommunityTemplatePreview';
+import { SkillDetailsModal } from './SkillDetailsModal';
 import type { PluginLoopSubmit } from './PluginLoopHome';
-import { localizePluginTitle } from './plugins-home/localization';
+import { localizeHomePresetTitle, localizePluginTitle } from './plugins-home/localization';
 import type { PluginUseAction } from './plugins-home/useActions';
 import { examplePresetSeedPrompt, firstPromptParagraph } from './plugins-home/presetSeedPrompt';
 import { localizePluginDescription } from './plugins-home/localization';
-import { RecentProjectsStrip } from './RecentProjectsStrip';
+import type { Recommendation } from '../onboarding/recommendation';
+import type { OnboardingEntry } from '../onboarding/onboarding-entry';
 import { AnimatePresence } from 'motion/react';
+import { DeepSeekV4FlashCampaign } from './DeepSeekV4FlashCampaign';
+import type { DeepSeekV4FlashCampaignAudience } from '../campaigns/deepseek-v4-flash';
 
 export interface ActivePlugin {
   record: InstalledPluginRecord;
@@ -101,8 +162,8 @@ export interface ActivePlugin {
   result: ApplyResult | null;
   inputs: Record<string, unknown>;
   inputFields: InputFieldSpec[];
-  inputsValid: boolean;
   confirmedInputNames: string[];
+  inputsValid: boolean;
   queryTemplate: string | null;
   // True when `queryTemplate` covers only a suffix of the prompt (the plugin
   // query appended after a user-owned draft), so input extraction must allow
@@ -117,6 +178,7 @@ export interface ActivePlugin {
   // kind defaults to the historical 'prototype' value.
   projectKind: ProjectKind | null;
   chipId: string | null;
+  prototypeSubtypeId: string | null;
   mediaSurface: HomeComposerMediaSurface | null;
   projectMetadata: ProjectMetadata | null;
   editableInputNames: string[];
@@ -138,6 +200,17 @@ export interface ActivePlugin {
   // legitimately equal the chip's default plugin id (e.g. the prototype rail's
   // `example-web-prototype`).
   explicitPick: boolean;
+  // True when this pick came from an OFFICIAL EXAMPLE CARD on a task type's
+  // example rail, as opposed to the Community grid / details modal / plugins-
+  // page hand-off. Always accompanies `explicitPick` — an example card is an
+  // explicit pick for every UI purpose — and narrows it for exactly one
+  // decision: routing. See `examplePickReference`.
+  //
+  // The discriminator has to be the CALL SITE, not the record: the very same
+  // `InstalledPluginRecord` (`example-web-prototype`) is simultaneously an
+  // example card, a chip's default scenario plugin, and a Community entry, and
+  // nothing in its data tells the three apart.
+  examplePick: boolean;
 }
 
 // `inlineBacked` distinguishes a context inserted as an inline `@mention` pill
@@ -182,12 +255,16 @@ interface PendingPluginUseHandoff {
   pluginId: string;
   action: PluginUseAction;
   inputs?: Record<string, unknown>;
+  chipId?: string;
+  projectKind?: ProjectKind;
+  asExample?: boolean;
+  useTracked?: boolean;
 }
 
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
-  artifactKind: 'Open Design plugin',
-  audience: 'Open Design plugin authors',
-  topic: 'packaging a reusable workflow as an Open Design plugin',
+  artifactKind: 'OpenDesign plugin',
+  audience: 'OpenDesign plugin authors',
+  topic: 'packaging a reusable workflow as an OpenDesign plugin',
 };
 
 
@@ -196,13 +273,14 @@ interface Props {
   projects: Project[];
   projectsLoading?: boolean;
   designSystems?: DesignSystemSummary[];
+  designSystemsLoading?: boolean;
   defaultDesignSystemId?: string | null;
-  // Resolves false when the project/conversation creation was rejected —
-  // the composer uses that to leave the sending state and let the user
-  // retry (#4082). Plain-void handlers keep working (treated as accepted).
-  onSubmit: (payload: PluginLoopSubmit) => Promise<boolean> | boolean | void;
-  onOpenProject: (id: string) => void;
-  onViewAllProjects: () => void;
+  // `'blocked'` means the shell refused the submit but already surfaced its
+  // own UI (e.g. the AMR balance gate dialog): keep the draft, show no error.
+  onSubmit: (
+    payload: PluginLoopSubmit,
+  ) => Promise<boolean | 'blocked' | void> | boolean | 'blocked' | void;
+  onOpenProject: (id: string, fileName?: string) => void;
   onBrowseRegistry?: () => void;
   onOpenIntegrations?: () => void;
   onOpenMcp?: () => void;
@@ -210,12 +288,48 @@ interface Props {
   // HomeView itself never imports them; EntryShell threads them
   // through so the dispatcher can stay declarative.
   onOpenNewProject?: (tab: 'template') => void;
+  onStartBlankProject?: () => Promise<void> | void;
   promptHandoff?: HomePromptHandoff | null;
+  /** Dock only, straight through to HomeHero: bump to fold the docked composer
+   *  back to its collapsed default (the community view raises it on every tab
+   *  change). */
+  collapseSignal?: number;
   skills?: SkillSummary[];
   skillsLoading?: boolean;
   connectors?: ConnectorDetail[];
   promptTemplates?: PromptTemplateSummary[];
+  // Personalized first-run starting point (spec §7). Null unless the user just
+  // finished the About-you survey this session; EntryShell owns the state.
+  // Accepted for API compatibility but no longer rendered — see
+  // `recommendationSlot` below for why the strip was removed from Home.
+  recommendation?: Recommendation | null;
+  onRecommendationStart?: (input: {
+    name: string;
+    prompt: string;
+    metadata: ProjectMetadata;
+    onboardingEntry: OnboardingEntry;
+  }) => boolean | void | Promise<boolean | void>;
+  onRecommendationDismiss?: () => void;
   executionSwitcher?: ReactNode;
+  artifactUpgradeSlot?: ReactNode;
+  deepSeekV4FlashCampaignAudience?: DeepSeekV4FlashCampaignAudience;
+  /** Real model switch for the campaign modal's paid 立即使用 CTA (D5).
+   *  EntryShell owns the agent/model persistence callbacks; HomeView only
+   *  threads them through, like the audience above. */
+  onDeepSeekV4FlashCampaignUseNow?: (agentId: string, modelId: string) => void;
+  /** Telemetry opt-in + install id for the modal's consent-gated AMR
+   *  attribution — EntryShell reads them off config, HomeView threads. */
+  deepSeekV4FlashCampaignMetricsConsent?: boolean;
+  deepSeekV4FlashCampaignInstallationId?: string | null;
+  /**
+   * `page` is Home itself. `dock` renders the composer ALONE — no campaign
+   * modal, no recent-projects strip — for hosts that want Home's input bar
+   * somewhere else (the community view docks one at the bottom). The submit
+   * path, the mention pickers and every prop below are shared: a docked
+   * instance is a second HomeView, so it keeps its own draft rather than
+   * fighting Home's over one piece of state.
+   */
+  variant?: 'page' | 'dock';
 }
 
 const EMPTY_DESIGN_SYSTEMS: DesignSystemSummary[] = [];
@@ -223,28 +337,227 @@ const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_CONNECTORS: ConnectorDetail[] = [];
 const EMPTY_PROMPT_TEMPLATES: PromptTemplateSummary[] = [];
 
+// The Home composer lives inside EntryView, which App.tsx fully UNMOUNTS the
+// moment the user opens a project tab (the single `appMain` slot swaps
+// EntryView → ProjectView), and Settings — a standalone page, not a dialog —
+// swaps `appMain` again the same way. Plain useState would therefore be
+// discarded on every tab switch, so a half-typed prompt and the chosen design
+// system vanish when the user steps away and comes back. Persist those two
+// serializable, user-visible fields to localStorage so they survive the
+// unmount/remount, mirroring ChatComposer's draft persistence. Object-valued
+// selections (active template, skill, staged files, working directory) are
+// intentionally NOT persisted here — they reference live catalogue records /
+// File handles / a desktop auth token that cannot round-trip through JSON
+// safely.
+const HOME_COMPOSER_PROMPT_KEY = 'open-design:home-composer:prompt';
+const HOME_COMPOSER_DESIGN_SYSTEM_KEY = 'open-design:home-composer:design-system';
+const HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY = 'open-design:home-composer:design-system-scope';
+// The active type-chip + bound plugin (the "创作类型" + "示例提示词" pick) is a
+// third piece of composer state that used to fall through this same crack:
+// `active` (below) held only a live `InstalledPluginRecord` + resolved apply
+// result, neither of which survives JSON, so it was never persisted at all —
+// a Settings round trip silently cleared the chip/example-prompt selection
+// even though the prompt text and design system correctly came back. Persist
+// only the serializable identity fields (chip id, Prototype subtype, plugin id,
+// project kind) and re-resolve the full `ActivePlugin` from the live plugin catalog
+// on remount (see `pendingChipRestore` below), the same way a cross-surface
+// "use this plugin" hand-off resolves `pendingPluginUseHandoff`.
+const HOME_COMPOSER_CHIP_KEY = 'open-design:home-composer:chip';
+
+interface HomeComposerChipDraft {
+  chipId: string | null;
+  pluginId: string;
+  projectKind: ProjectKind | null;
+  prototypeSubtypeId?: string | null;
+  // How the pick was made, not just what was picked. Without these two the
+  // restore below rebuilds every pick as a bare type-chip binding, which
+  // silently drops an official example's `exampleReference` and turns its
+  // dismiss (×) into a full composer reset. Provenance is part of the pick's
+  // identity, so it is persisted with it.
+  explicitPick?: boolean;
+  examplePick?: boolean;
+}
+// `EntryShell` keeps `HomeView` permanently mounted and toggles it with CSS
+// visibility instead of unmounting it on every Home/Community/... view
+// switch (unlike the EntryView<->ProjectView swap described above, which
+// still does a real unmount). The localStorage draft above is therefore
+// read only once, on the very first mount, and a later `seedHomeComposerPrompt`
+// call (from e.g. Community's "使用提示词"/Prompt button) has nothing left to
+// remount into — it writes the draft key but nobody re-reads it. Dispatch a
+// live event too so an already-mounted HomeView can pick up the seed
+// directly; the draft key stays as the true-cold-mount fallback.
+const HOME_COMPOSER_SEED_EVENT = 'open-design:home-composer:seed';
+
+function readHomeComposerDraft(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeHomeComposerDraft(key: string, value: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable (private mode / quota exceeded) — degrade silently to
+    // in-memory-only state; the composer still works for this session.
+  }
+}
+
+function localCatalogScopeFromWorkspaceContext(
+  context: WorkspaceCollabContext | null,
+): LocalCatalogScope | null {
+  if (!context?.workspaceId?.trim() || !context.workspaceMemberId?.trim()) return null;
+  return {
+    workspaceId: context.workspaceId.trim(),
+    workspaceMemberId: context.workspaceMemberId.trim(),
+  };
+}
+
+function readLocalCatalogScopeDraft(key: string): LocalCatalogScope | null {
+  const raw = readHomeComposerDraft(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<LocalCatalogScope> | null;
+    if (!parsed?.workspaceId?.trim() || !parsed.workspaceMemberId?.trim()) return null;
+    return {
+      workspaceId: parsed.workspaceId.trim(),
+      workspaceMemberId: parsed.workspaceMemberId.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readHomeComposerChipDraft(): HomeComposerChipDraft | null {
+  const raw = readHomeComposerDraft(HOME_COMPOSER_CHIP_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<HomeComposerChipDraft> | null;
+    if (!parsed || typeof parsed.pluginId !== 'string' || !parsed.pluginId) return null;
+    const parsedChipId = typeof parsed.chipId === 'string' ? parsed.chipId : null;
+    // Drafts written before the creation hierarchy moved Mobile app and
+    // Wireframe under Prototype persist their retired top-level chip ids, and
+    // they outlive the release that removed those chips. Fold them onto the
+    // scene each became so a returning user's saved pick still restores.
+    const legacyPrototypeSubtype = legacyPrototypeSceneForChipId(parsedChipId);
+    const parsedPrototypeSubtype =
+      typeof parsed.prototypeSubtypeId === 'string'
+        ? prototypeSubChipForSlug(parsed.prototypeSubtypeId)
+        : null;
+    return {
+      chipId: legacyPrototypeSubtype ? 'prototype' : parsedChipId,
+      pluginId: parsed.pluginId,
+      projectKind: typeof parsed.projectKind === 'string' ? (parsed.projectKind as ProjectKind) : null,
+      prototypeSubtypeId: parsedPrototypeSubtype?.slug ?? legacyPrototypeSubtype?.slug ?? null,
+      // Drafts written before provenance was persisted carry neither flag;
+      // they restore as the plain type-chip binding they always did.
+      explicitPick: parsed.explicitPick === true,
+      examplePick: parsed.examplePick === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeHomeComposerChipDraft(draft: HomeComposerChipDraft | null): void {
+  writeHomeComposerDraft(HOME_COMPOSER_CHIP_KEY, draft ? JSON.stringify(draft) : null);
+}
+
+// Drop the persisted draft once a run is actually created, so the just-sent
+// prompt and pick don't resurrect the next time the Home tab mounts.
+function clearHomeComposerDraft(): void {
+  writeHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY, null);
+  writeHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_KEY, null);
+  writeHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY, null);
+  writeHomeComposerChipDraft(null);
+}
+
+/**
+ * Seed the Home composer's prompt — used when another surface hands the user
+ * into Home with a starting prompt (e.g. Community's "使用提示词"/Prompt
+ * button). Writes the draft key (covers a true cold mount) AND dispatches a
+ * live event (covers the common case where `HomeView` is already mounted and
+ * just gets toggled visible — see the `HOME_COMPOSER_SEED_EVENT` note above).
+ */
+export function seedHomeComposerPrompt(
+  prompt: string,
+  target: 'page' | 'dock' = 'page',
+): void {
+  if (target === 'page') writeHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY, prompt);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent(HOME_COMPOSER_SEED_EVENT, { detail: { prompt, target } }),
+    );
+  }
+}
+
 export function HomeView({
   isActive = true,
   projects,
   projectsLoading,
   designSystems = EMPTY_DESIGN_SYSTEMS,
+  designSystemsLoading = false,
   defaultDesignSystemId = null,
   onSubmit,
   onOpenProject,
-  onViewAllProjects,
   onBrowseRegistry,
   onOpenIntegrations,
   onOpenMcp,
   onOpenNewProject,
+  onStartBlankProject,
   promptHandoff,
+  collapseSignal,
   skills = EMPTY_SKILLS,
   skillsLoading = false,
   connectors = EMPTY_CONNECTORS,
   promptTemplates = EMPTY_PROMPT_TEMPLATES,
+  recommendation = null,
+  onRecommendationStart,
+  onRecommendationDismiss,
   executionSwitcher,
+  artifactUpgradeSlot,
+  deepSeekV4FlashCampaignAudience = 'unknown',
+  onDeepSeekV4FlashCampaignUseNow,
+  deepSeekV4FlashCampaignMetricsConsent = false,
+  deepSeekV4FlashCampaignInstallationId = null,
+  variant = 'page',
 }: Props) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
+  // The localStorage draft is keyed per surface, not per instance, so only ONE
+  // HomeView may own it. Home does; a docked composer keeps its text in memory
+  // for as long as its host view is up. Sharing the key would have the two
+  // clobbering each other on every keystroke, and a send from either would
+  // wipe the other's half-written prompt.
+  const ownsComposerDraft = variant === 'page';
+  const workspaceContextState = useWorkspaceContext();
+  const { context: workspaceContext } = workspaceContextState;
+  const pluginCatalogWorkspaceContext = workspaceResourceReadContext(workspaceContextState);
+  const lastSettledLocalCatalogScopeRef = useRef<LocalCatalogScope | null>(
+    localCatalogScopeFromWorkspaceContext(workspaceContext),
+  );
+  if (!workspaceContextState.identityChangePending) {
+    lastSettledLocalCatalogScopeRef.current =
+      localCatalogScopeFromWorkspaceContext(workspaceContext);
+  }
+  const pluginAccountGeneration = currentWorkspaceAccountGeneration();
+  const pluginCatalogOptions = {
+    workspaceContext: pluginCatalogWorkspaceContext,
+    accountGeneration: pluginAccountGeneration,
+  };
+  // Keep the provisional local catalogue available for default-template
+  // routing while Workspace discovery runs, but never expose that provisional
+  // projection in HomeHero. The prop below keeps the Examples rail in its
+  // stable loading shell until the Workspace identity and its exact cache
+  // partition have both settled.
+  const desiredPluginCatalogKey = workspaceContextState.identityChangePending
+    ? null
+    : pluginCatalogCacheKey(pluginCatalogOptions);
   // P0 page_view page_name=home — fire once on mount. ref-keyed to survive
   // re-renders that flip parent state without remounting HomeView.
   const homePageViewFiredRef = useRef(false);
@@ -253,8 +566,35 @@ export function HomeView({
     homePageViewFiredRef.current = true;
     trackPageView(analytics.track, { page_name: 'home' });
   }, [analytics.track]);
-  const [plugins, setPlugins] = useState<InstalledPluginRecord[]>([]);
-  const [pluginsLoading, setPluginsLoading] = useState(true);
+  // A project route fully unmounts HomeView. Restore the last successful
+  // catalog synchronously when Home mounts again so known creation actions do
+  // not become disabled merely because the 10-second refresh TTL elapsed while
+  // the user was in a project. The effect below still revalidates an expired
+  // catalog; only a true cold start (no successful catalog yet) stays guarded.
+  const initialPluginsRef = useRef<InstalledPluginRecord[] | null>(
+    desiredPluginCatalogKey ? readCachedVisiblePlugins(pluginCatalogOptions) : null,
+  );
+  const [pluginCatalogKey, setPluginCatalogKey] = useState<string | null>(
+    desiredPluginCatalogKey,
+  );
+  const [plugins, setPlugins] = useState<InstalledPluginRecord[]>(
+    () => initialPluginsRef.current ?? [],
+  );
+  const [pluginsLoading, setPluginsLoading] = useState(
+    () => initialPluginsRef.current === null,
+  );
+  // Home stays mounted while entry-shell views and Workspaces change. Never
+  // commit one render with the previous identity's plugin catalogue: switch to
+  // the exact new cache partition synchronously, or mask the old rows while a
+  // deliberate identity change is unresolved.
+  if (pluginCatalogKey !== desiredPluginCatalogKey) {
+    const cached = desiredPluginCatalogKey
+      ? readCachedVisiblePlugins(pluginCatalogOptions)
+      : null;
+    setPluginCatalogKey(desiredPluginCatalogKey);
+    setPlugins(cached ?? []);
+    setPluginsLoading(cached === null);
+  }
   const [pendingApplyId, setPendingApplyId] = useState<string | null>(null);
   const [pendingChipId, setPendingChipId] = useState<string | null>(null);
   const [pendingAuthoringChipId, setPendingAuthoringChipId] = useState<string | null>(null);
@@ -264,21 +604,99 @@ export function HomeView({
   );
   const [pendingPluginUseHandoff, setPendingPluginUseHandoff] =
     useState<PendingPluginUseHandoff | null>(null);
+  // The persisted chip/plugin identity, read exactly once on mount (lazy
+  // initializer — mirrors `restoredDraftRef` below for the prompt/design
+  // system draft). Resolved into a full `active` binding by the restore
+  // effect further down once the plugin catalog has loaded, then cleared.
+  const [pendingChipRestore, setPendingChipRestore] = useState<HomeComposerChipDraft | null>(
+    () => (ownsComposerDraft ? readHomeComposerChipDraft() : null),
+  );
   const [fallbackProjectKind, setFallbackProjectKind] = useState<ProjectKind | null>(null);
   const [fallbackProjectMetadata, setFallbackProjectMetadata] =
     useState<ProjectMetadata | null>(null);
   const [active, setActive] = useState<ActivePlugin | null>(null);
-  const [sessionMode, setSessionMode] = useState<ChatSessionMode>('design');
+  const reconciledPluginCatalogKeyRef = useRef<string | null>(null);
+  const previousWorkspaceNameRef = useRef<string | null>(null);
+  // A placeholder-carousel scenario the user submitted on an empty composer.
+  // We seed the prompt + bind the template synchronously, then let an effect
+  // fire submit() once both have committed (submit() reads state, not args).
+  const [pendingCarouselSubmit, setPendingCarouselSubmit] = useState<{
+    text: string;
+    chipId: string | null;
+  } | null>(null);
+  // The Home composer no longer exposes a mode picker (the 「设计」 pill was
+  // removed), so every Home create runs in the default design mode; the
+  // per-conversation picker still lives in the project chat composer.
+  const sessionMode: ChatSessionMode = 'design';
+  // Automatic task routes do not apply the placeholder plugin. Its legacy
+  // required fields must not block the free-form brief that the route owns.
+  const activeAutomaticStrategyTaskProfile = sessionMode === 'design'
+    && !pinsPluginOverAutomaticRoute(active, active?.chipId ?? null)
+    ? automaticStrategyTaskProfileForRouteId(active?.chipId ?? null)
+    : null;
   const [activeSkill, setActiveSkill] = useState<SkillSummary | null>(null);
+  const [activeSkillCatalogScope, setActiveSkillCatalogScope] =
+    useState<LocalCatalogScope | null>(null);
   const [selectedPluginContexts, setSelectedPluginContexts] = useState<SelectedPluginContext[]>([]);
   const [selectedMcpContexts, setSelectedMcpContexts] = useState<SelectedMcpContext[]>([]);
   const [selectedConnectorContexts, setSelectedConnectorContexts] = useState<SelectedConnectorContext[]>([]);
-  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [contextWorkspaceItems, setContextWorkspaceItems] = useState<WorkspaceContextItem[]>([]);
+  // A failed optimistic create hands the staged attachments back through the
+  // stash (App owns the rollback); a plain mount starts empty. `peek` is
+  // side-effect free on purpose: StrictMode invokes this initializer twice and
+  // keeps only one result, so consuming here would hand the files to the
+  // discarded call. The effect below clears the slot once they are in state.
+  const [stagedFiles, setStagedFiles] = useState<File[]>(() =>
+    ownsComposerDraft ? peekHomeComposerAttachments() : [],
+  );
+  useEffect(() => {
+    if (ownsComposerDraft) clearHomeComposerAttachments();
+  }, [ownsComposerDraft]);
   const [workingDir, setWorkingDir] = useState<string | null>(null);
   // Token paired with `workingDir` when picked through the desktop host's
   // native dialog. Spent on the post-creation working-dir POST so the
   // daemon's desktop-auth gate accepts the path. Null for web picks.
   const [workingDirToken, setWorkingDirToken] = useState<string | null>(null);
+  // Global design-system selection for the home composer. Persistent and
+  // independent of the active plugin / type chip so EVERY product kind (not
+  // just prototype/deck) can pick a design system; the choice is forwarded as
+  // the new project's `designSystemId`. Seeded from the user's published
+  // Personal default and re-seeded if that resolves async, until the user picks
+  // one explicitly (tracked by `designSystemTouchedRef` so a later default
+  // change never clobbers an explicit selection).
+  // Read the persisted composer draft exactly once per mount (see the module
+  // note above). Restoring here is what makes the prompt + design-system pick
+  // survive a tab switch, since the whole view is torn down on every switch.
+  const restoredDraftRef = useRef<{
+    prompt: string;
+    designSystemId: string | null;
+    designSystemCatalogScope: LocalCatalogScope | null;
+  } | null>(null);
+  if (restoredDraftRef.current === null) {
+    restoredDraftRef.current = ownsComposerDraft
+      ? {
+          prompt: readHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY) ?? '',
+          designSystemId: readHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_KEY),
+          designSystemCatalogScope: readLocalCatalogScopeDraft(
+            HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY,
+          ),
+        }
+      : { prompt: '', designSystemId: null, designSystemCatalogScope: null };
+  }
+  const restoredDraft = restoredDraftRef.current;
+  const [designSystemId, setDesignSystemId] = useState<string | null>(() =>
+    restoredDraft.designSystemId ??
+    homeDefaultDesignSystemId(designSystems, defaultDesignSystemId),
+  );
+  const [designSystemCatalogScope, setDesignSystemCatalogScope] =
+    useState<LocalCatalogScope | null>(() =>
+      restoredDraft.designSystemId
+        ? restoredDraft.designSystemCatalogScope
+        : localCatalogScopeFromWorkspaceContext(workspaceContext),
+    );
+  // A restored pick counts as user-touched so the async default re-seed effect
+  // below does not overwrite it once the catalogue resolves.
+  const designSystemTouchedRef = useRef(restoredDraft.designSystemId != null);
   // Global most-recently-used working directories, surfaced in the picker's
   // "Recent folders" submenu. Loaded from the daemon's app-config and bumped
   // whenever the user picks a folder.
@@ -301,16 +719,122 @@ export function HomeView({
   }, []);
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
-  const [prompt, setPrompt] = useState('');
-  const [promptEditedByUser, setPromptEditedByUser] = useState(false);
+  const [prompt, setPrompt] = useState(() => restoredDraft.prompt);
+  // Treat a restored non-empty prompt as user-edited so the plugin/skill
+  // replacement guard still asks before clobbering it.
+  const [promptEditedByUser, setPromptEditedByUser] = useState(
+    () => restoredDraft.prompt.trim().length > 0,
+  );
+  // The exact Website-clone scaffold currently sitting in the composer, or null.
+  // Storing the string we wrote — rather than re-deriving it from `t()` when we
+  // need to compare — keeps the release below correct across a locale switch,
+  // which would otherwise translate the scaffold out from under the check and
+  // leave it stranded in the composer.
+  const webCloneScaffoldRef = useRef<string | null>(null);
+  // Persist the composer draft on every change so it survives the unmount that
+  // a tab switch triggers (see the module note above). Empty values clear the
+  // key rather than storing "".
+  useEffect(() => {
+    if (!ownsComposerDraft) return;
+    writeHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY, prompt);
+  }, [ownsComposerDraft, prompt]);
+  useEffect(() => {
+    if (!ownsComposerDraft) return;
+    writeHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_KEY, designSystemId);
+  }, [designSystemId, ownsComposerDraft]);
+  useEffect(() => {
+    if (!ownsComposerDraft) return;
+    writeHomeComposerDraft(
+      HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY,
+      designSystemId && designSystemCatalogScope
+        ? JSON.stringify(designSystemCatalogScope)
+        : null,
+    );
+  }, [designSystemCatalogScope, designSystemId, ownsComposerDraft]);
+  // Persist the active chip/plugin identity the same way — only the
+  // serializable fields, not `active` itself (see the module note above).
+  // Clearing on `active === null` covers the explicit-clear (×) and the
+  // Ask-mode / skill-pick paths that reset `active` to null directly.
+  useEffect(() => {
+    if (!ownsComposerDraft) return;
+    writeHomeComposerChipDraft(
+      active
+        ? {
+            chipId: active.chipId,
+            pluginId: active.record.id,
+            projectKind: active.projectKind,
+            ...(active.prototypeSubtypeId
+              ? { prototypeSubtypeId: active.prototypeSubtypeId }
+              : {}),
+            ...(active.explicitPick ? { explicitPick: true } : {}),
+            ...(active.examplePick ? { examplePick: true } : {}),
+          }
+        : null,
+    );
+  }, [active, ownsComposerDraft]);
+  // Live counterpart to the draft-key restore above (see the
+  // `HOME_COMPOSER_SEED_EVENT` module note) — picks up a `seedHomeComposerPrompt`
+  // call that fires while this HomeView instance is already mounted, which is
+  // the common case now that EntryShell keeps Home mounted across view
+  // switches instead of tearing it down.
+  useEffect(() => {
+    function onSeed(event: Event) {
+      const detail = (event as CustomEvent<{ prompt: string; target?: 'page' | 'dock' }>)
+        .detail;
+      // Addressed, not broadcast: with a docked composer on screen alongside
+      // Home's, an unaddressed seed would land the same text in both.
+      if ((detail?.target ?? 'page') !== variant) return;
+      if (typeof detail?.prompt !== 'string') return;
+      setPrompt(detail.prompt);
+      setPromptEditedByUser(detail.prompt.trim().length > 0);
+    }
+    window.addEventListener(HOME_COMPOSER_SEED_EVENT, onSeed);
+    return () => window.removeEventListener(HOME_COMPOSER_SEED_EVENT, onSeed);
+  }, [variant]);
+  // The attachment hand-off's second consumer: a failed optimistic create that
+  // lands while this page composer is already mounted (the user pressed Back on
+  // the pending frame mid-create) cannot rely on the mount initializer above,
+  // so take the stash on the event instead. Page variant only, like the draft.
+  useEffect(() => {
+    if (!ownsComposerDraft) return;
+    function onAttachmentsHandedBack() {
+      const files = peekHomeComposerAttachments();
+      if (files.length === 0) return;
+      clearHomeComposerAttachments();
+      setStagedFiles((current) => [...current, ...files]);
+    }
+    window.addEventListener(HOME_COMPOSER_ATTACHMENTS_EVENT, onAttachmentsHandedBack);
+    return () => window.removeEventListener(HOME_COMPOSER_ATTACHMENTS_EVENT, onAttachmentsHandedBack);
+  }, [ownsComposerDraft]);
+  const [figmaModalOpen, setFigmaModalOpen] = useState(false);
   const examplePromptInfoRef = useRef<ExamplePromptInfo | null>(null);
   const handleExamplePromptStatusChange = useCallback((info: ExamplePromptInfo | null) => {
     examplePromptInfoRef.current = info;
   }, []);
   const [error, setError] = useState<string | null>(null);
-  // In-flight window between Send and the run starting (or failing) — the
-  // project-creation roundtrip happens upstream of this component, so the
-  // submit handler's promise is the only signal that it settled (#4082).
+  const [daemonRecoveryActive, setDaemonRecoveryActive] = useState(false);
+  useEffect(() => {
+    if (!daemonRecoveryActive) return;
+    let cancelled = false;
+    let timeout: number | null = null;
+    const probe = async () => {
+      const alive = await daemonIsLive();
+      if (cancelled) return;
+      if (alive) {
+        setDaemonRecoveryActive(false);
+        setError((current) => current === t('home.daemonRecovering') ? null : current);
+        return;
+      }
+      timeout = window.setTimeout(() => void probe(), 1_500);
+    };
+    void probe();
+    return () => {
+      cancelled = true;
+      if (timeout !== null) window.clearTimeout(timeout);
+    };
+  }, [daemonRecoveryActive, t]);
+  // Composer in-flight guard: disables the send button, shows Sending…, and
+  // swallows repeat clicks across the whole async create tail.
   const [sending, setSending] = useState(false);
   const [elevenLabsVoices, setElevenLabsVoices] = useState<AudioVoiceOption[]>([]);
   const [elevenLabsVoicesLoading, setElevenLabsVoicesLoading] = useState(false);
@@ -324,6 +848,27 @@ export function HomeView({
   const [elevenLabsVoicesLoaded, setElevenLabsVoicesLoaded] = useState(false);
   const [elevenLabsVoicesError, setElevenLabsVoicesError] = useState<string | null>(null);
   const [detailsRecord, setDetailsRecord] = useState<InstalledPluginRecord | null>(null);
+  // 飞书 recvqxDuYM6Uxk: the creation page's template detail entries (the
+  // active plugin chip, the @-mention hover card's Details) open the
+  // LIGHTWEIGHT community template preview — header title/category + close,
+  // footer category + Remix — for records that project into the template
+  // catalogue. Plugins outside that projection (design systems, utilities)
+  // keep the full PluginDetailsModal. The Community gallery card owns the
+  // full modal now, so the two surfaces are swapped, not duplicated.
+  const detailsTemplate = useMemo(() => {
+    if (!detailsRecord) return null;
+    return (
+      buildCommunityTemplates(plugins, locale, t, workspaceContext)
+        .find((template) => template.id === detailsRecord.id) ?? null
+    );
+  }, [detailsRecord, plugins, locale, t, workspaceContext]);
+  // Same synchronous single-flight gate the Community remix path uses: the
+  // lightweight preview's Remix kicks off one project create; clicks landing
+  // before React re-renders must all see the lock immediately, so a plain
+  // state flag is not enough (see CommunityView's remixingIdRef note).
+  const templateRemixInFlightRef = useRef(false);
+  const [templateRemixBusy, setTemplateRemixBusy] = useState(false);
+  const [detailsSkill, setDetailsSkill] = useState<SkillSummary | null>(null);
   const [pendingReplacement, setPendingReplacement] = useState<PendingReplacement | null>(null);
   // Surface_view fires when the replacement modal becomes visible. Tied
   // to the {before, after} pair so reopening with the same pair after a
@@ -374,29 +919,119 @@ export function HomeView({
   const consumedHandoffIdRef = useRef<number | null>(null);
   const pendingPromptFocusEndRef = useRef(false);
   const activePluginApplyRequestRef = useRef(0);
+  const pluginCatalogRequestGenerationRef = useRef(0);
+  const pluginCatalogReloadRef = useRef<(
+    force?: boolean,
+    supersede?: boolean,
+  ) => Promise<void>>(
+    async () => {},
+  );
+  const pluginCatalogReloadInFlightRef = useRef<{
+    key: string;
+    promise: Promise<void>;
+  } | null>(null);
+  const pluginCatalogStaleRef = useRef(false);
+  const homeActiveRef = useRef(isActive);
+  homeActiveRef.current = isActive;
+  const desiredPluginCatalogKeyRef = useRef(desiredPluginCatalogKey);
+  desiredPluginCatalogKeyRef.current = desiredPluginCatalogKey;
   const scrollHomeToTop = useCallback(() => {
+    // Only the page composer lives at the top of its column. A docked one is
+    // pinned in view already, so scrolling its host would yank the grid the
+    // user is reading out from under them for no gain.
+    if (variant === 'dock') return;
     requestAnimationFrame(() => {
       const scrollContainer = homeViewRef.current?.closest('.entry-main--scroll');
       if (!(scrollContainer instanceof HTMLElement)) return;
       smoothScrollToTop(scrollContainer);
     });
-  }, []);
+  }, [variant]);
   useEffect(() => {
+    if (!desiredPluginCatalogKey) return;
     let cancelled = false;
-    const load = () => {
-      void listPlugins().then((rows) => {
-        if (cancelled) return;
+    let ownedPromise: Promise<void> | null = null;
+    const issuedCatalogKey = desiredPluginCatalogKey;
+    // On mount use the cache-aware loader (skips the network when warm); an
+    // explicit plugins-changed event forces a fresh fetch.
+    const load = (force = false, supersede = false): Promise<void> => {
+      const current = pluginCatalogReloadInFlightRef.current;
+      if (!supersede && current?.key === issuedCatalogKey) return current.promise;
+      const requestGeneration = ++pluginCatalogRequestGenerationRef.current;
+      const promise = (force
+        ? listPlugins(pluginCatalogOptions)
+        : listPluginsFresh(pluginCatalogOptions)).then((rows) => {
+        if (
+          cancelled
+          || requestGeneration !== pluginCatalogRequestGenerationRef.current
+          || desiredPluginCatalogKeyRef.current !== issuedCatalogKey
+        ) return;
+        setPluginCatalogKey(issuedCatalogKey);
         setPlugins(rows);
         setPluginsLoading(false);
+      }).finally(() => {
+        if (pluginCatalogReloadInFlightRef.current?.promise === promise) {
+          pluginCatalogReloadInFlightRef.current = null;
+        }
       });
+      pluginCatalogReloadInFlightRef.current = { key: issuedCatalogKey, promise };
+      ownedPromise = promise;
+      return promise;
     };
-    load();
-    window.addEventListener('open-design:plugins-changed', load);
+    pluginCatalogReloadRef.current = load;
+    if (homeActiveRef.current && pluginCatalogWorkspaceContext?.workspaceType !== 'team') load();
+    else pluginCatalogStaleRef.current = true;
+    const onChanged = () => {
+      // A mutation event is newer than any pending snapshot and must supersede
+      // it; only lifecycle catch-up joins the initial read.
+      if (homeActiveRef.current) load(true, true);
+      else pluginCatalogStaleRef.current = true;
+    };
+    window.addEventListener('open-design:plugins-changed', onChanged);
     return () => {
       cancelled = true;
-      window.removeEventListener('open-design:plugins-changed', load);
+      // A Workspace-directory refresh can briefly mask the catalog identity
+      // (K -> null -> K). Do not let the remounted K effect join this effect's
+      // cancelled promise: its response is intentionally prevented from
+      // committing, so reusing it would leave the new surface in the cold
+      // `pluginsLoading` state forever even though `/api/plugins` succeeded.
+      // A newer request has a different promise and must remain registered.
+      const inFlight = pluginCatalogReloadInFlightRef.current;
+      if (ownedPromise && inFlight?.promise === ownedPromise) {
+        pluginCatalogReloadInFlightRef.current = null;
+      }
+      if (pluginCatalogReloadRef.current === load) {
+        pluginCatalogReloadRef.current = async () => {};
+      }
+      window.removeEventListener('open-design:plugins-changed', onChanged);
     };
-  }, []);
+  }, [desiredPluginCatalogKey, pluginCatalogWorkspaceContext?.workspaceType]);
+
+  useEffect(() => {
+    if (!isActive || !desiredPluginCatalogKey || !pluginCatalogStaleRef.current) return;
+    if (pluginCatalogWorkspaceContext?.workspaceType === 'team') return;
+    pluginCatalogStaleRef.current = false;
+    pluginCatalogReloadRef.current(true);
+  }, [desiredPluginCatalogKey, isActive, pluginCatalogWorkspaceContext?.workspaceType]);
+
+  const handlePluginStreamActive = useWorkspaceSnapshotActivation({
+    enabled: isActive && pluginCatalogWorkspaceContext?.workspaceType === 'team',
+    identity: desiredPluginCatalogKey ?? 'no-plugin-catalog',
+    refresh: () => { void pluginCatalogReloadRef.current(true, true); },
+  });
+
+  useWorkspaceInvalidation({}, {
+    workspaceContext:
+      isActive && pluginCatalogWorkspaceContext?.workspaceType === 'team'
+        ? pluginCatalogWorkspaceContext
+        : null,
+    enabled: isActive && pluginCatalogWorkspaceContext?.workspaceType === 'team',
+    // App owns the global Skill/Design System catch-up. Home only refreshes
+    // its plugin projection.
+    onActive: () => {
+      pluginCatalogStaleRef.current = false;
+      handlePluginStreamActive();
+    },
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -509,6 +1144,10 @@ export function HomeView({
         pluginId: promptHandoff.pluginId,
         action: promptHandoff.action ?? 'use',
         ...(promptHandoff.inputs ? { inputs: promptHandoff.inputs } : {}),
+        ...(promptHandoff.chipId ? { chipId: promptHandoff.chipId } : {}),
+        ...(promptHandoff.projectKind ? { projectKind: promptHandoff.projectKind } : {}),
+        ...(promptHandoff.asExample ? { asExample: true } : {}),
+        ...(promptHandoff.useTracked ? { useTracked: true } : {}),
       });
       if (promptHandoff.focus) {
         focusPromptAtEnd();
@@ -517,8 +1156,17 @@ export function HomeView({
       return;
     }
 
+    if (promptHandoff.source === 'skill-use') {
+      // Same destination as picking the skill from the composer's own picker:
+      // the skill becomes the run's active skill and seeds its example prompt.
+      useSkill(promptHandoff.skill, null);
+      scrollHomeToTop();
+      return;
+    }
+
     setActive(null);
     setActiveSkill(null);
+    setActiveSkillCatalogScope(null);
     setSelectedPluginContexts([]);
     setSelectedMcpContexts([]);
     setSelectedConnectorContexts([]);
@@ -535,6 +1183,17 @@ export function HomeView({
     setPendingChipId('create-plugin');
     scrollHomeToTop();
   }, [promptHandoff, scrollHomeToTop]);
+
+  // "Chat to design" hand-off from the Library multi-select bar: the chosen
+  // assets are parked as File objects in a single-shot store, then we navigate
+  // here. When this view becomes active, drain the seed and stage the files so
+  // they ride the normal upload-on-Run path into the new project. The store is
+  // single-shot, so later activations with no pending seed are no-ops.
+  useEffect(() => {
+    if (!isActive) return;
+    const seed = takeHomeComposerAssetSeed();
+    if (seed && seed.files.length > 0) stageFiles(seed.files);
+  }, [isActive]);
 
   const activeContextItemCount = useMemo(
     () =>
@@ -565,10 +1224,12 @@ export function HomeView({
       contextOnlyPlugins +
       contextOnlyMcp +
       contextOnlyConnectors +
+      contextWorkspaceItems.length +
       stagedFiles.length
     );
   }, [
     activeContextItemCount,
+    contextWorkspaceItems.length,
     selectedConnectorContexts,
     selectedMcpContexts,
     selectedPluginContexts,
@@ -591,11 +1252,11 @@ export function HomeView({
       const defaultPluginId = defaultPluginIdForChip(active.chipId);
       const chip = findChip(active.chipId);
       if (chip && (defaultPluginId === null || defaultPluginId === active.record.id)) {
-        return { title: homeHeroChipLabelForId(chip.id, t), isExplicitPlugin: false };
+        return { title: homeHeroChipLabel(chip.id, t), isExplicitPlugin: false };
       }
     }
     return {
-      title: localizePluginTitle(locale, active.record),
+      title: localizeHomePresetTitle(locale, active.record),
       isExplicitPlugin: true,
     };
   }, [active, locale, t]);
@@ -620,12 +1281,164 @@ export function HomeView({
     () => selectableHomeDesignSystems(designSystems, defaultDesignSystemId),
     [defaultDesignSystemId, designSystems],
   );
-  const defaultDesignSystemTitle = useMemo(
-    () => homeDefaultDesignSystemTitle(designSystems, defaultDesignSystemId, t),
-    [defaultDesignSystemId, designSystems, t],
+  useEffect(() => {
+    if (pluginsLoading) return;
+    const pluginById = new Map(plugins.map((record) => [record.id, record]));
+
+    // Catalogue reads are already partitioned by Workspace. Reconcile staged
+    // choices here when that partition settles: same ids bind to the CURRENT
+    // catalogue record; missing ids lose only their selection. Keep the prompt,
+    // attachments and the rest of the draft intact. Do not move this policy to
+    // project creation or turn it into remote authorization — local catalogue
+    // refresh/SSE is the product boundary for plugin availability.
+    if (reconciledPluginCatalogKeyRef.current !== pluginCatalogKey) {
+      // An apply started against the prior Workspace must not commit after the
+      // catalogue partition changes. Ordinary same-Workspace SSE refreshes do
+      // not cancel an in-flight local apply.
+      activePluginApplyRequestRef.current += 1;
+      reconciledPluginCatalogKeyRef.current = pluginCatalogKey;
+    }
+    setActive((current) => {
+      if (!current) return current;
+      const nextRecord = pluginById.get(current.record.id);
+      if (!nextRecord) return null;
+      if (nextRecord === current.record) return current;
+      return {
+        ...current,
+        record: nextRecord,
+        // An apply snapshot belongs to the old catalogue record. Preserve the
+        // user's inputs, but force submit to resolve against the rebound record.
+        result: null,
+      };
+    });
+    setSelectedPluginContexts((current) => {
+      let changed = false;
+      const next = current.flatMap((selection) => {
+        const nextRecord = pluginById.get(selection.record.id);
+        if (!nextRecord) {
+          changed = true;
+          return [];
+        }
+        if (nextRecord === selection.record) return [selection];
+        changed = true;
+        return [{ ...selection, record: nextRecord }];
+      });
+      return changed ? next : current;
+    });
+    setDetailsRecord((current) => {
+      if (!current) return current;
+      return pluginById.get(current.id) ?? null;
+    });
+  }, [pluginCatalogKey, plugins, pluginsLoading]);
+
+  useEffect(() => {
+    if (skillsLoading) return;
+    setActiveSkill((current) => {
+      if (!current) return current;
+      const rebound = selectableSkills.find((skill) => skill.id === current.id) ?? null;
+      setActiveSkillCatalogScope(
+        rebound ? localCatalogScopeFromWorkspaceContext(workspaceContext) : null,
+      );
+      return rebound;
+    });
+    setDetailsSkill((current) => {
+      if (!current) return current;
+      return selectableSkills.find((skill) => skill.id === current.id) ?? null;
+    });
+  }, [selectableSkills, skillsLoading, workspaceContext]);
+
+  useEffect(() => {
+    if (designSystemsLoading || !designSystemId) return;
+    if (designSystemPickerSystems.some((system) => system.id === designSystemId)) {
+      setDesignSystemCatalogScope(localCatalogScopeFromWorkspaceContext(workspaceContext));
+      return;
+    }
+    setDesignSystemId(null);
+    setDesignSystemCatalogScope(null);
+  }, [designSystemId, designSystemPickerSystems, designSystemsLoading, workspaceContext]);
+
+  // Re-seed the default selection when the catalogue or the user's default
+  // resolves after mount (async load), unless the user already picked one.
+  useEffect(() => {
+    if (designSystemTouchedRef.current) return;
+    const nextId = homeDefaultDesignSystemId(designSystems, defaultDesignSystemId);
+    setDesignSystemId(nextId);
+    setDesignSystemCatalogScope(
+      nextId ? localCatalogScopeFromWorkspaceContext(workspaceContext) : null,
+    );
+  }, [designSystems, defaultDesignSystemId, workspaceContext]);
+  // Title of the globally-selected design system (or the "No design system"
+  // label). Seeds the active plugin's `designSystem` input — the apply-template
+  // hint the rendered brief references — so it mirrors the persistent picker.
+  const selectedDesignSystemTitle = useMemo(
+    () =>
+      designSystemId
+        ? designSystemPickerSystems.find((system) => system.id === designSystemId)?.title
+            ?? t('designSystemPicker.noneTitle')
+        : t('designSystemPicker.noneTitle'),
+    [designSystemId, designSystemPickerSystems, t],
   );
 
+  // A preset can bind while one Workspace is selected, then remain mounted as
+  // this tab switches to another Workspace. `usePlugin` seeds workspace_name
+  // at bind time, but that snapshot must not outlive the request-local
+  // Workspace context. Refresh only a missing value or the value previously
+  // supplied by context, preserving an explicit plugin input when one exists.
+  // This reads the exact context selected for this tab; it never consults or
+  // writes Vela/daemon account-level active-workspace state. That model cannot
+  // represent two clients of one account open in different Workspaces.
+  useEffect(() => {
+    const nextWorkspaceName = workspaceContext?.workspaceName?.trim() || null;
+    const previousWorkspaceName = previousWorkspaceNameRef.current;
+    previousWorkspaceNameRef.current = nextWorkspaceName;
+
+    setActive((currentActive) => {
+      if (!currentActive) return currentActive;
+      const workspaceField = currentActive.inputFields.find(
+        (field) => field.name === 'workspace_name',
+      );
+      if (!workspaceField || workspaceField.default !== undefined) return currentActive;
+
+      const currentValue = currentActive.inputs.workspace_name;
+      const currentWorkspaceName =
+        currentValue === undefined || currentValue === null
+          ? ''
+          : String(currentValue).trim();
+      const contextOwnsCurrentValue =
+        currentWorkspaceName.length === 0
+        || (previousWorkspaceName !== null
+          && currentWorkspaceName === previousWorkspaceName);
+      if (!contextOwnsCurrentValue || currentWorkspaceName === (nextWorkspaceName ?? '')) {
+        return currentActive;
+      }
+
+      const inputs = { ...currentActive.inputs };
+      if (nextWorkspaceName) inputs.workspace_name = nextWorkspaceName;
+      else delete inputs.workspace_name;
+      return {
+        ...currentActive,
+        inputs,
+        inputsValid: pluginInputsAreValid(currentActive.inputFields, inputs),
+        // The pinned apply snapshot belongs to the old inputs. Force submit to
+        // resolve a new snapshot for the newly selected Workspace.
+        result: null,
+      };
+    });
+  }, [workspaceContext?.workspaceName]);
+
+  /* Applying a chip focuses the composer — right for a chip the USER picked,
+     wrong for one the HOST bound. The community gallery binds a chip into the
+     docked composer on mount and on every type-tab change, and that focus
+     unfolded a bar that is supposed to be collapsed on entry to every tab (per
+     product: 用户进入每个 tab 的时候是收起来的): HomeHero clears its fold on
+     focus, so the caret arriving reads as the user opening the bar.
+     Set only around the host's own chip application below — `usePlugin`
+     reaches this function with no `await` in front of it, so a synchronous
+     bracket covers the whole apply. */
+  const hostChipApplyRef = useRef(false);
+
   function focusPromptAtEnd() {
+    if (hostChipApplyRef.current) return;
     requestAnimationFrame(() => {
       inputRef.current?.focusEnd();
     });
@@ -637,6 +1450,7 @@ export function HomeView({
     options?: {
       projectKind?: ProjectKind;
       chipId?: string;
+      prototypeSubtypeId?: string | null;
       inputs?: Record<string, unknown>;
       inputFields?: InputFieldSpec[];
       queryTemplate?: string | null;
@@ -662,10 +1476,15 @@ export function HomeView({
       // their apply deferred makes Prototype <-> Deck <-> Media changes
       // feel instant; submit() still resolves the snapshot before sending.
       deferApply?: boolean;
+      focusPrompt?: boolean;
       // True when the user explicitly picked this plugin (example-prompt preset
       // or Community card / detail modal) rather than a type chip's default
       // plugin. Stored on `active.explicitPick`; gates the chip's clear button.
       explicitPick?: boolean;
+      // True when the explicit pick came from a task type's official example
+      // rail rather than the Community grid / details modal. Stored on
+      // `active.examplePick`; narrows `explicitPick` for routing only.
+      examplePick?: boolean;
       confirmedInputNames?: string[];
     },
     // Resolves true when the bound plugin left the composer submittable
@@ -674,7 +1493,6 @@ export function HomeView({
   ): Promise<boolean> {
     const applyRequestId = activePluginApplyRequestRef.current + 1;
     activePluginApplyRequestRef.current = applyRequestId;
-    setActiveSkill(null);
     const shouldResolveImmediately = options?.deferApply !== true;
     const inputFields = options?.inputFields ?? record.manifest?.od?.inputs ?? [];
     const projectKind = options?.projectKind ?? null;
@@ -683,8 +1501,14 @@ export function HomeView({
       projectKind,
       hydratePluginInputs(
         inputFields,
-        withHomeDesignSystemDefault(options?.inputs, inputFields, defaultDesignSystemTitle),
+        withHomePluginContextDefaults(
+          options?.inputs,
+          inputFields,
+          selectedDesignSystemTitle,
+          workspaceContext?.workspaceName,
+        ),
       ),
+      inputFields,
       confirmedInputNames,
     );
     const inputsValid = pluginInputsAreValid(inputFields, optimisticInputs);
@@ -716,8 +1540,8 @@ export function HomeView({
       result: null,
       inputs: optimisticInputs,
       inputFields,
-      inputsValid,
       confirmedInputNames,
+      inputsValid,
       queryTemplate,
       queryTemplateAllowsPrefix: options?.queryTemplateAllowsPrefix === true,
       // When prompt updates are suppressed we leave lastRenderedPrompt
@@ -726,16 +1550,20 @@ export function HomeView({
       lastRenderedPrompt: suppressPromptUpdate ? null : optimisticPrompt,
       projectKind,
       chipId: options?.chipId ?? null,
+      prototypeSubtypeId: options?.prototypeSubtypeId ?? null,
       mediaSurface: options?.mediaSurface ?? null,
       projectMetadata: homeCreateProjectMetadata(
         projectKind,
         optimisticInputs,
         options?.projectMetadata ?? null,
+        confirmedInputNames,
+        inputFields,
       ),
       editableInputNames: options?.editableInputNames ?? [],
       preserveInputFields: options?.preserveInputFields === true,
       suppressPromptSync: suppressPromptUpdate,
       explicitPick: options?.explicitPick === true,
+      examplePick: options?.examplePick === true,
     });
     setFallbackProjectKind(null);
     setFallbackProjectMetadata(null);
@@ -744,7 +1572,7 @@ export function HomeView({
       setPrompt(optimisticPrompt);
       setPromptEditedByUser(false);
     }
-    focusPromptAtEnd();
+    if (options?.focusPrompt !== false) focusPromptAtEnd();
 
     if (!inputsValid) {
       setPendingChipId(null);
@@ -775,22 +1603,37 @@ export function HomeView({
       options?.preserveInputFields ? inputFields : result.inputs ?? inputFields,
       reconciledInputs,
     );
-    setActive((prev) =>
-      prev && prev.record.id === record.id
-        ? {
-            ...prev,
-            result,
-            inputs: reconciledInputs,
-            inputFields: options?.preserveInputFields ? inputFields : result.inputs ?? inputFields,
-            inputsValid: reconciledInputsValid,
-            projectMetadata: homeCreateProjectMetadata(
-              prev.projectKind,
-              reconciledInputs,
-              prev.projectMetadata,
-            ),
-          }
-        : prev,
-    );
+    setActive((prev) => {
+      if (!prev || prev.record.id !== record.id) return prev;
+      // Mirror the prompt-reconcile guard below for the extracted inputs: the
+      // user may have edited the prompt during the apply roundtrip, and
+      // handlePromptChange has already extracted those edits into
+      // prev.inputs. Rebuilding from the bind-time optimistic snapshot would
+      // silently revert them, so merge the apply result's defaults into
+      // prev.inputs instead.
+      const mergedInputs: Record<string, unknown> = { ...prev.inputs };
+      for (const field of result.inputs ?? []) {
+        if (field.default !== undefined && mergedInputs[field.name] === undefined) {
+          mergedInputs[field.name] = field.default;
+        }
+      }
+      const mergedFields = options?.preserveInputFields ? inputFields : result.inputs ?? inputFields;
+      return {
+        ...prev,
+        result,
+        inputs: mergedInputs,
+        inputFields: mergedFields,
+        confirmedInputNames: prev.confirmedInputNames,
+        inputsValid: pluginInputsAreValid(mergedFields, mergedInputs),
+        projectMetadata: homeCreateProjectMetadata(
+          prev.projectKind,
+          mergedInputs,
+          prev.projectMetadata,
+          prev.confirmedInputNames,
+          mergedFields,
+        ),
+      };
+    });
     // The daemon may have filled in `topic`/`audience` defaults the
     // optimistic render didn't know about (the manifest is inspected
     // client-side but field.default lives on the apply result). Re-
@@ -826,18 +1669,35 @@ export function HomeView({
     record: InstalledPluginRecord,
     inputs: Record<string, unknown>,
     applyRequestId?: number,
-    options?: { deferredDefaultInputNames?: string[] },
   ): Promise<ApplyResult | null> {
     setPendingApplyId(record.id);
+    function clearPendingApply() {
+      if (
+        applyRequestId === undefined
+        || activePluginApplyRequestRef.current === applyRequestId
+      ) {
+        setPendingApplyId(null);
+        setPendingChipId(null);
+      }
+    }
+    // Applying a record that the local, Workspace-scoped catalogue already
+    // returned is local composition work. Do not add a second identity wait or
+    // membership probe here: directory refresh/SSE owns catalogue freshness,
+    // while remote install/share/sync mutations enforce current authority.
+    // During an identity transition, omit attribution instead of blocking Send.
+    const writeWorkspaceContext = workspaceContextState.identityChangePending
+      ? null
+      : resolvedWorkspaceContextForWrite(
+          workspaceContextState,
+          { unavailablePolicy: 'unscoped' },
+        );
     const result = await applyPlugin(record.id, {
       locale,
       inputs,
-      deferredDefaultInputNames: options?.deferredDefaultInputNames,
+      pluginSource: record.source,
+      workspaceContext: writeWorkspaceContext,
     });
-    if (applyRequestId === undefined || activePluginApplyRequestRef.current === applyRequestId) {
-      setPendingApplyId(null);
-      setPendingChipId(null);
-    }
+    clearPendingApply();
     return result;
   }
 
@@ -847,6 +1707,7 @@ export function HomeView({
     options?: {
       projectKind?: ProjectKind;
       chipId?: string;
+      prototypeSubtypeId?: string | null;
       inputs?: Record<string, unknown>;
       inputFields?: InputFieldSpec[];
       queryTemplate?: string | null;
@@ -857,10 +1718,21 @@ export function HomeView({
       replaceWithoutConfirmation?: boolean;
       suppressPromptUpdate?: boolean;
       deferApply?: boolean;
+      // Forwarded verbatim to `usePlugin` — see its option docs. The restore
+      // path needs them so a re-resolved pick keeps the provenance it was
+      // made with.
+      explicitPick?: boolean;
+      examplePick?: boolean;
     },
   ) {
+    const inputFields = options?.inputFields ?? record.manifest?.od?.inputs ?? [];
     const replacement = previewPluginReplacement(record, nextPrompt, {
-      inputs: withHomeDesignSystemDefault(options?.inputs, options?.inputFields ?? record.manifest?.od?.inputs ?? [], defaultDesignSystemTitle),
+      inputs: withHomePluginContextDefaults(
+        options?.inputs,
+        inputFields,
+        selectedDesignSystemTitle,
+        workspaceContext?.workspaceName,
+      ),
       inputFields: options?.inputFields,
       queryTemplate: options?.queryTemplate,
     });
@@ -893,17 +1765,34 @@ export function HomeView({
     record: InstalledPluginRecord,
     action: PluginUseAction = 'use',
     inputs?: Record<string, unknown>,
+    homeType?: { chipId?: string; projectKind?: ProjectKind; asExample?: boolean; useTracked?: boolean },
   ) {
-    trackCommunityGalleryClick(analytics.track, {
-      page_name: 'home',
-      area: 'community_gallery',
-      element: 'use_plugin',
-      plugin_id: record.sourceMarketplaceEntryName ?? record.id,
-      plugin_type: record.marketplaceTrust ?? 'official',
-      action: action === 'use-with-query' ? 'use_with_query' : 'use',
-    });
+    // A hand-off whose surface already recorded the use click (Community)
+    // must not count again as a Home gallery click.
+    if (!homeType?.useTracked) {
+      trackCommunityGalleryClick(analytics.track, {
+        page_name: 'home',
+        area: 'community_gallery',
+        element: 'use_plugin',
+        plugin_id: record.sourceMarketplaceEntryName ?? record.id,
+        plugin_type: record.marketplaceTrust ?? 'official',
+        action: action === 'use-with-query' ? 'use_with_query' : 'use',
+      });
+    }
+    // An example picked elsewhere for its own task type binds as that type's
+    // example card, so it takes the same route as a pick from Home's list —
+    // including the type's own project metadata, which the route is
+    // re-derived from at create time.
+    const examplePick = homeType?.asExample === true;
+    const exampleChip = examplePick && homeType?.chipId ? findChip(homeType.chipId) : undefined;
+    const exampleProjectMetadata = exampleChip?.action.kind === 'apply-scenario'
+      ? exampleChip.action.projectMetadata ?? null
+      : null;
+    const exampleBinding = examplePick
+      ? { examplePick: true, ...(exampleProjectMetadata ? { projectMetadata: exampleProjectMetadata } : {}) }
+      : {};
     if (action === 'use-with-query') {
-      // "Replicate this content" seeds the composer with the SAME human-friendly
+      // Prompt-loading "Use" seeds the composer with the SAME human-friendly
       // text the Home example-prompt cards use (examplePresetSeedPrompt), NOT the
       // raw `od.useCase.query` — which for many plugins is a generator-facing
       // meta-instruction ("follow the en field verbatim; start from example.html")
@@ -935,6 +1824,8 @@ export function HomeView({
       const hasTemplate = Boolean(rawQueryTemplate && trimmedSeed);
       const submittable = await usePlugin(record, combined, {
         ...(inputs ? { inputs } : {}),
+        ...(homeType?.chipId ? { chipId: homeType.chipId } : {}),
+        ...(homeType?.projectKind ? { projectKind: homeType.projectKind } : {}),
         queryTemplate: hasTemplate ? rawQueryTemplate : null,
         // Allow an arbitrary prefix whenever we track the query template, so the
         // placeholder extractor matches the query as a suffix even when the user
@@ -943,6 +1834,7 @@ export function HomeView({
         // when there is no prefix at all.
         queryTemplateAllowsPrefix: hasTemplate,
         explicitPick: true,
+        ...exampleBinding,
       });
       scrollHomeToTop();
       // Plugins with required inputs and no defaults land on the inputs
@@ -954,8 +1846,11 @@ export function HomeView({
     }
     const submittable = await usePlugin(record, undefined, {
       ...(inputs ? { inputs } : {}),
+      ...(homeType?.chipId ? { chipId: homeType.chipId } : {}),
+      ...(homeType?.projectKind ? { projectKind: homeType.projectKind } : {}),
       suppressPromptUpdate: true,
       explicitPick: true,
+      ...exampleBinding,
     });
     scrollHomeToTop();
     // Plain Use doesn't seed the composer; with no draft and no staged
@@ -1022,9 +1917,110 @@ export function HomeView({
       record,
       pendingPluginUseHandoff.action,
       pendingPluginUseHandoff.inputs,
+      {
+        chipId: pendingPluginUseHandoff.chipId,
+        projectKind: pendingPluginUseHandoff.projectKind,
+        asExample: pendingPluginUseHandoff.asExample === true,
+        useTracked: pendingPluginUseHandoff.useTracked === true,
+      },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPluginUseHandoff, pluginsLoading, plugins]);
+
+  // Restore the chip/example-prompt selection persisted by the write effect
+  // above, the same way the hand-off effect just above resolves a live
+  // cross-surface "use this plugin" intent — wait for the plugin catalog,
+  // look the persisted id up, then re-bind through the same
+  // `requestActivePlugin` path a manual chip click uses. This is what makes
+  // recvqg21bqVuvE (selected creation type + example prompt lost after a
+  // Settings round trip) recoverable: Settings is a full `EntryView` unmount,
+  // so `active` itself cannot survive it, but its serializable identity can.
+  //
+  // `replaceWithoutConfirmation` skips the "replace your draft?" dialog —
+  // this is a silent background restore, not a user gesture. `suppressPromptUpdate`
+  // keeps it from overwriting the textarea, which the separate prompt draft
+  // (above) already restored correctly on its own.
+  //
+  // Guarded against a live intent winning the same mount: if a cross-surface
+  // hand-off is mid-flight (`pendingPluginUseHandoff`) or something already
+  // bound `active` before this effect got to run, drop the stale restore
+  // instead of stomping it.
+  useEffect(() => {
+    if (!pendingChipRestore || pluginsLoading) return;
+    const restore = pendingChipRestore;
+    setPendingChipRestore(null);
+    if (active || pendingPluginUseHandoff) return;
+    const record = plugins.find((plugin) => plugin.id === restore.pluginId);
+    if (!record) {
+      // The persisted plugin was uninstalled/removed since the last visit —
+      // drop the stale pointer rather than surfacing an error for a background
+      // restore the user never explicitly asked to retry.
+      if (ownsComposerDraft) writeHomeComposerChipDraft(null);
+      return;
+    }
+    // The draft reader already folded any retired top-level id onto its parent,
+    // so `restore.chipId` names a live task type and the scene is a refinement
+    // of it — never a chip of its own to look up instead.
+    const restoredChip = restore.chipId ? findChip(restore.chipId) : null;
+    const restoredSubtype = restoredChip?.id === 'prototype'
+      ? prototypeSubChipForSlug(restore.prototypeSubtypeId ?? null)
+      : null;
+    const restoredAction = restoredChip?.action;
+    requestActivePlugin(record, undefined, {
+      chipId: restore.chipId ?? undefined,
+      prototypeSubtypeId: restoredSubtype?.slug ?? null,
+      projectKind: restore.projectKind ?? undefined,
+      inputs:
+        restoredAction?.kind === 'apply-scenario' || restoredAction?.kind === 'apply-figma-migration'
+          ? restoredAction.inputs
+          : undefined,
+      projectMetadata: restoredChip
+        ? prototypeSceneProjectMetadata(restoredChip, restoredSubtype)
+        : null,
+      replaceWithoutConfirmation: true,
+      suppressPromptUpdate: true,
+      deferApply: true,
+      // A restored pick is the SAME pick: an official example card still hands
+      // its identity to the automatic route (`exampleReference`) and a
+      // Community pick still pins its plugin. Rebuilding it as a bare type-chip
+      // binding would quietly change what the next Send does.
+      explicitPick: restore.explicitPick === true,
+      examplePick: restore.examplePick === true,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingChipRestore, pluginsLoading, plugins, active, pendingPluginUseHandoff]);
+
+  // Seed only the page's first untouched visit. Restored drafts and host
+  // handoffs own their selection; a later clear must not re-run this default.
+  const [defaultTypeSettled, setDefaultTypeSettled] = useState(false);
+  const defaultTypePending = ownsComposerDraft && !defaultTypeSettled && !active;
+  useEffect(() => {
+    if (!ownsComposerDraft || defaultTypeSettled) return;
+    if (active || promptHandoff || pendingPluginUseHandoff || hasPendingHomeChip(variant)) {
+      setDefaultTypeSettled(true);
+      return;
+    }
+    if (pluginsLoading || pendingChipRestore) return;
+    setDefaultTypeSettled(true);
+    const chip = findChip('prototype');
+    if (chip?.action.kind !== 'apply-scenario') return;
+    const action = chip.action;
+    const record = plugins.find((plugin) => plugin.id === action.pluginId);
+    // A missing catalog entry must not lock the composer or invent a plugin.
+    // Explicit picks continue to report the normal missing-scenario error.
+    if (!record) return;
+    void usePlugin(record, undefined, {
+      chipId: chip.id,
+      projectKind: chip.action.projectKind,
+      inputs: chip.action.inputs,
+      projectMetadata: chip.action.projectMetadata ?? null,
+      suppressPromptUpdate: true,
+      focusPrompt: false,
+      deferApply: true,
+    });
+    // usePlugin reads this render's catalog/context; it is not an effect trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownsComposerDraft, defaultTypeSettled, active, promptHandoff, pendingPluginUseHandoff, variant, pluginsLoading, pendingChipRestore, plugins]);
 
   function addPluginContext(record: InstalledPluginRecord, nextPrompt: string | null) {
     setSelectedPluginContexts((prev) => {
@@ -1038,42 +2034,111 @@ export function HomeView({
 
   function useExamplePlugin(record: InstalledPluginRecord, chipId: string, promptText: string) {
     setError(null);
+    // P0 ui_click area=chat_composer element=example_prompt: the user picked a
+    // plugin-preset example card below the rail. `chip_id` is the active task
+    // type, `plugin_id` the preset so example usage breaks down per plugin. (The
+    // Website-clone rail uses plain text prompt cards instead — those fire the
+    // same event from HomeHero's usePromptExample.) Raw seed text is never sent
+    // (free-text / PII rule).
+    trackHomeChatComposerClick(analytics.track, {
+      page_name: 'home',
+      area: 'chat_composer',
+      element: 'example_prompt',
+      chip_id: chipId,
+      plugin_id: record.sourceMarketplaceEntryName ?? record.id,
+      plugin_type: record.marketplaceTrust ?? 'official',
+    });
     // Picking a preset card *binds* the plugin (not just a textarea fill):
     // active switches to this exact preset so submit resolves its snapshot and
     // injects the plugin's SKILL.md + example.html as generation context — the
     // output faithfully recreates the reference. `promptText` is the short,
     // editable seed; the full build spec rides along in the plugin context.
-    // deferApply mirrors the chip rail: bind now, resolve the snapshot on
-    // submit (submit() already re-resolves), so a preset click stays instant
-    // and doesn't fire an /apply roundtrip per card. The chip is already
-    // active when preset cards are visible, so reuse its project kind/metadata.
-    const carried = chipId === active?.chipId
-      ? inputsToCarryIntoPreset(active, record)
+    const carried = active?.chipId === chipId
+      ? inputsToCarryIntoPreset(active)
       : {};
-    const nextPrompt = promptTextWithCarriedPresetInputs(
-      record,
-      locale,
-      promptText,
-      carried.inputs,
-      active?.projectKind ?? null,
-      carried.confirmedInputNames ?? [],
-    );
     const seed = examplePresetSeedPrompt(record, locale, () => promptText);
-    const queryTemplate = seed.fromRenderedQuery
-      ? resolvePluginQueryFallback(record.manifest?.od?.useCase?.query, locale)
-      : null;
+    const nextPrompt = active?.projectKind === 'deck' && seed.fromRenderedQuery
+      ? promptTextWithCarriedDeckInputs(record, locale, promptText, carried)
+      : promptText;
     void usePlugin(record, nextPrompt, {
       ...carried,
       chipId,
+      prototypeSubtypeId: active?.prototypeSubtypeId ?? null,
       projectKind: active?.projectKind ?? undefined,
       projectMetadata: active?.projectMetadata ?? null,
       deferApply: true,
       explicitPick: true,
-      queryTemplate,
+      // An example card is the ONE explicit pick that is a choice of look
+      // rather than of strategy — see `examplePickReference`.
+      examplePick: true,
     }).then((submittable) => {
       if (submittable) inputRef.current?.pulseSend();
     });
     focusPromptAtEnd();
+  }
+
+  async function duplicateExamplePlugin(record: InstalledPluginRecord) {
+    setError(null);
+    // P0 ui_click area=chat_composer element=example_open_project: the
+    // "Remix" action on the plugin details modal (`PluginDetailsModal`'s
+    // `onDuplicate`) — creates and enters a project seeded from the example
+    // (for site-clone cards it drops the pre-built clone straight in as
+    // index.html) instead of only seeding the composer. Same chip_id/plugin_id
+    // attribution as `example_prompt`; `chip_id` from the active task type since
+    // preset cards only render under an active chip. The created project's own
+    // `project_kind` (web_clone) still rides project_create_result separately.
+    // (The Home preset rail's own hover Use/Remix overlay was removed in
+    // 2026-07 — this is the surviving Remix entry point, unrelated to that
+    // card.)
+    trackHomeChatComposerClick(analytics.track, {
+      page_name: 'home',
+      area: 'chat_composer',
+      element: 'example_open_project',
+      chip_id: active?.chipId ?? undefined,
+      plugin_id: record.sourceMarketplaceEntryName ?? record.id,
+      plugin_type: record.marketplaceTrust ?? 'official',
+    });
+    try {
+      const result = await duplicatePluginAsProject(record.id, {
+        name: localizePluginTitle(locale, record),
+      }, resolvedWorkspaceContextForWrite(workspaceContextState));
+      onOpenProject(result.projectId, result.relPath);
+    } catch {
+      setError(t('pluginCard.duplicateFailed'));
+    }
+  }
+
+  // "…or start a blank project": create an empty project directly — no dialog,
+  // no design system, template, prompt, or plugin — and enter it.
+  async function startBlankProject() {
+    setError(null);
+    try {
+      if (onStartBlankProject) {
+        await onStartBlankProject();
+        return;
+      }
+      const { project } = await createProject({
+        name: t('common.untitled'),
+        skillId: null,
+        designSystemId: null,
+        // Tag it `generated` like every other blank/no-name create path so
+        // `canAutoRenameProjectFromPrompt` stays eligible once a prompt or
+        // agent title arrives — see the matching note in
+        // EntryShell.startBlankProjectFromRail.
+        metadata: { kind: 'other', nameSource: 'generated' },
+        // Blank project creation is local too. During an identity transition,
+        // omit stale attribution instead of blocking on Workspace discovery.
+        workspaceContext: workspaceContextState.identityChangePending
+          ? null
+          : resolvedWorkspaceContextForWrite(
+              workspaceContextState,
+              { unavailablePolicy: 'unscoped' },
+            ),
+      });
+      onOpenProject(project.id);
+    } catch {
+      setError('Could not create a blank project. Make sure the daemon is reachable.');
+    }
   }
 
   function removePluginContext(pluginId: string) {
@@ -1110,7 +2175,13 @@ export function HomeView({
       inputsValid,
       projectMetadata: active.mediaSurface
         ? metadataForHomeMediaComposer(active.mediaSurface, normalizedInputs, promptTemplates)
-        : homeCreateProjectMetadata(active.projectKind, normalizedInputs, active.projectMetadata),
+        : homeCreateProjectMetadata(
+            active.projectKind,
+            normalizedInputs,
+            active.projectMetadata,
+            confirmedInputNames,
+            active.inputFields,
+          ),
       result:
         inputsChanged && !inputsEqual(active.result?.appliedPlugin?.inputs, normalizedInputs)
           ? null
@@ -1130,6 +2201,19 @@ export function HomeView({
     setStagedFiles((current) => current.filter((_, i) => i !== index));
   }
 
+  function addWorkspaceContext(item: WorkspaceContextItem) {
+    setContextWorkspaceItems((current) =>
+      current.some((candidate) => candidate.id === item.id)
+        ? current
+        : [...current, item],
+    );
+    setError(null);
+  }
+
+  function removeWorkspaceContext(id: string) {
+    setContextWorkspaceItems((current) => current.filter((item) => item.id !== id));
+  }
+
   async function handlePickWorkingDir() {
     // On desktop the working-dir POST is gated behind a host-minted token, so
     // pick through the host bridge to capture { baseDir, token } together.
@@ -1139,11 +2223,11 @@ export function HomeView({
         setWorkingDir(result.baseDir);
         setWorkingDirToken(result.token);
         void rememberRecentDir(result.baseDir);
-        return;
+        return result.baseDir;
       }
       // The user explicitly cancelled the host picker — respect that and do
       // not pop a second dialog.
-      if ('canceled' in result && result.canceled) return;
+      if ('canceled' in result && result.canceled) return null;
       // The host is present but could not service the pick (mixed-version
       // upgrade where the preload lacks `project.pickWorkingDir`, or a host
       // error). We must NOT fall back to openFolderDialog() here: the browser
@@ -1152,9 +2236,9 @@ export function HomeView({
       // auth gate and surface as a confusing late create-time failure.
       // Surface the host error instead and keep the existing working dir.
       setError(
-        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update Open Design and try again.`,
+        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update OpenDesign and try again.`,
       );
-      return;
+      return null;
     }
     // Pure web path: no desktop host, so there is no token gate — the raw
     // browser folder path is the expected, working input.
@@ -1163,7 +2247,30 @@ export function HomeView({
       setWorkingDir(picked);
       setWorkingDirToken(null);
       void rememberRecentDir(picked);
+      return picked;
     }
+    return null;
+  }
+
+  async function handlePickLocalCodeDir() {
+    if (isOpenDesignHostAvailable()) {
+      const result = await pickHostWorkingDir();
+      if (result.ok) {
+        void rememberRecentDir(result.baseDir);
+        return result.baseDir;
+      }
+      if ('canceled' in result && result.canceled) return null;
+      setError(
+        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update OpenDesign and try again.`,
+      );
+      return null;
+    }
+    const picked = await openFolderDialog();
+    if (picked) {
+      void rememberRecentDir(picked);
+      return picked;
+    }
+    return null;
   }
 
   function updateActiveInputs(next: Record<string, unknown>) {
@@ -1180,11 +2287,17 @@ export function HomeView({
       : null;
     const inputFields = mediaComposer?.fields ?? active.inputFields;
     const queryTemplate = mediaComposer?.queryTemplate ?? active.queryTemplate;
+    const confirmedInputNames = confirmedInputNamesForUpdate(active, normalized);
     const projectMetadata = active.mediaSurface
       ? metadataForHomeMediaComposer(active.mediaSurface, normalized, promptTemplates)
-      : homeCreateProjectMetadata(active.projectKind, normalized, active.projectMetadata);
+      : homeCreateProjectMetadata(
+          active.projectKind,
+          normalized,
+          active.projectMetadata,
+          confirmedInputNames,
+          inputFields,
+        );
     const inputsValid = pluginInputsAreValid(inputFields, normalized);
-    const confirmedInputNames = confirmedInputNamesForUpdate(active, normalized);
     const nextRendered =
       queryTemplate !== null
         ? renderPluginBriefTemplate(queryTemplate, normalized)
@@ -1212,7 +2325,104 @@ export function HomeView({
     });
   }
 
+  // Persistent design-system picker change. Records the explicit choice and
+  // keeps the active plugin's `designSystem` input (the apply-template hint) in
+  // sync so the rendered brief references the picked system even after the user
+  // switches design systems mid-compose.
+  function handleDesignSystemChange(id: string | null) {
+    designSystemTouchedRef.current = true;
+    setDesignSystemId(id);
+    setDesignSystemCatalogScope(
+      id ? localCatalogScopeFromWorkspaceContext(workspaceContext) : null,
+    );
+    if (active && active.inputFields.some((field) => field.name === 'designSystem')) {
+      const title = id
+        ? designSystemPickerSystems.find((system) => system.id === id)?.title
+            ?? t('designSystemPicker.noneTitle')
+        : t('designSystemPicker.noneTitle');
+      updateActiveInputs({ ...active.inputs, designSystem: title });
+    }
+  }
+
+  /**
+   * Dismiss the active pick (the × on the composer's plugin pill).
+   *
+   * INVARIANT: dismissing a picked skill/example returns the composer to its
+   * TASK TYPE. It drops the pick, never the session — the task type stays
+   * selected with its scene, its scenario binding, and the automatic OD Next
+   * route that task type owns, and the user's draft is left exactly as typed.
+   * Dropping a look the user no longer wants must never cost them the route.
+   *
+   * The fallback is therefore keyed on `active.chipId` — the task type there is
+   * to return to — and NOT on `explicitPick`. `explicitPick` records how the
+   * pick was made; it is reconstructed state that a round trip through the
+   * persisted composer draft can degrade, and a product route may not depend on
+   * that. Only a pick that never named a task type (a Community / plugins-page
+   * hand-off) has nothing to fall back to, and only that case resets the
+   * composer — including the plugin-seeded prompt that came with it.
+   */
   function clearActivePlugin() {
+    if (active?.chipId) {
+      // Dropping the pick falls back to the task type the user chose, with its
+      // scene still selected — the scene refines that chip's action, it never
+      // stands in for a different one.
+      const chip = findChip(active.chipId);
+      const prototypeSubtype = chip?.id === 'prototype'
+        ? prototypeSubChipForSlug(active.prototypeSubtypeId)
+        : null;
+      const action = chip?.action;
+      if (
+        chip &&
+        (
+          action?.kind === 'apply-scenario' ||
+          action?.kind === 'apply-figma-migration'
+        )
+      ) {
+        const record = plugins.find((p) => p.id === action.pluginId);
+        if (record) {
+          const mediaSurface = homeMediaSurfaceForChipId(chip.id);
+          setPromptEditedByUser(prompt.trim().length > 0);
+          if (mediaSurface) {
+            const composer = buildHomeMediaComposer(
+              mediaSurface,
+              promptTemplates,
+              action.inputs,
+              elevenLabsVoices,
+              {
+                elevenLabsVoiceWarning,
+                elevenLabsVoicesLoading,
+                imageModels: composerImageModels,
+              },
+            );
+            void usePlugin(record, undefined, {
+              projectKind: composer.projectKind,
+              chipId: active.chipId,
+              prototypeSubtypeId: active.prototypeSubtypeId,
+              inputs: composer.inputs,
+              inputFields: composer.fields,
+              queryTemplate: composer.queryTemplate,
+              mediaSurface,
+              projectMetadata: metadataForHomeMediaComposer(mediaSurface, composer.inputs, promptTemplates),
+              editableInputNames: composer.editableFieldNames,
+              preserveInputFields: true,
+              suppressPromptUpdate: true,
+              deferApply: true,
+            });
+            return;
+          }
+          void usePlugin(record, undefined, {
+            projectKind: action.projectKind,
+            chipId: active.chipId,
+            prototypeSubtypeId: active.prototypeSubtypeId,
+            inputs: action.inputs,
+            projectMetadata: prototypeSceneProjectMetadata(chip, prototypeSubtype),
+            suppressPromptUpdate: true,
+            deferApply: true,
+          });
+          return;
+        }
+      }
+    }
     activePluginApplyRequestRef.current += 1;
     setActive(null);
     setFallbackProjectKind(null);
@@ -1235,14 +2445,20 @@ export function HomeView({
     focusPromptAtEnd();
   }
 
+  // Mentioning a Skill leaves the task type alone.
+  //
+  // #2972 asked for a defined rule when the prompt's intent and the picked card
+  // disagree, and the rule used to be "the Skill wins, drop the card" — which
+  // satisfies "defined" but not "users are not silently routed into the wrong
+  // workflow": picking 幻灯片 and then mentioning a prototype-mode Skill
+  // created a prototype project. The task type now owns the route and the
+  // Skill is material carried inside it (the daemon freezes it into
+  // `session_skills/user_selected_skills`, where the strategy's own conflict
+  // order already ranks a user-selected Skill above its own), so nothing has
+  // to be discarded to keep the rule defined.
   function useSkill(skill: SkillSummary, nextPrompt: string | null) {
-    activePluginApplyRequestRef.current += 1;
-    setActive(null);
-    setPendingChipId(null);
-    setPendingApplyId(null);
-    setFallbackProjectKind(null);
-    setFallbackProjectMetadata(null);
     setActiveSkill(skill);
+    setActiveSkillCatalogScope(localCatalogScopeFromWorkspaceContext(workspaceContext));
     setError(null);
     const replacement = nextPrompt ?? localizeSkillPrompt(locale, skill) ?? '';
     if (replacement.trim().length > 0) {
@@ -1305,6 +2521,7 @@ export function HomeView({
     runWithReplacementConfirmation('Plugin authoring', nextPrompt, async () => {
       setActive(null);
       setActiveSkill(null);
+      setActiveSkillCatalogScope(null);
       setFallbackProjectKind('other');
       setFallbackProjectMetadata(null);
       setError(null);
@@ -1344,12 +2561,44 @@ export function HomeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAuthoringChipId, pendingAuthoringPrompt, pendingAuthoringInputs, pluginsLoading, plugins]);
 
+  /**
+   * Website clone is the only create chip that writes into the composer, and
+   * what it writes is host-authored scaffolding standing in for an empty
+   * composer — not something the user typed. Every other create chip preserves
+   * the draft on switch, so a scaffold left behind rides along into Slide deck,
+   * Image, Document and every other type it means nothing in.
+   *
+   * Leaving the chip hands the composer back the empty state the scaffold
+   * replaced. The moment the user types into it, it stops being ours and the
+   * draft-preserving rule that governs every other chip takes over.
+   */
+  function releaseWebCloneScaffold(nextChipId: string) {
+    const scaffold = webCloneScaffoldRef.current;
+    if (scaffold === null || nextChipId === 'web-clone') return;
+    webCloneScaffoldRef.current = null;
+    if (prompt !== scaffold) return;
+    setPrompt('');
+    setPromptEditedByUser(false);
+  }
+
   // Stage B of plugin-driven-flow-plan: the chip rail dispatcher.
   // Pure UI-state mapping — the heavy lifting is delegated back to
   // existing handlers. Migration chips that don't have a bound plugin
   // (`open-template-picker`) forward to callbacks threaded in from EntryShell.
-  function pickChip(chip: HomeHeroChip) {
+  function pickChip(
+    chip: HomeHeroChip,
+    // A second-level scene under `chip`, when one is selected. The chip is
+    // always the task type the composer binds — a scene refines it and never
+    // substitutes another chip — so `activeChipId` is simply `chip.id`.
+    selection?: {
+      prototypeSubtypeId?: string | null;
+      projectMetadata?: ProjectMetadata | null;
+    },
+  ) {
     setError(null);
+    releaseWebCloneScaffold(chip.id);
+    const activeChipId = chip.id;
+    const prototypeSubtypeId = selection?.prototypeSubtypeId ?? null;
     // P0 ui_click area=chat_composer element=plugin_chip|action_chip. The
     // chip's `action.kind` discriminates: plugin-bound chips
     // (apply-scenario / apply-figma-migration) route to a plugin; the rest
@@ -1372,9 +2621,7 @@ export function HomeView({
         const targetId = chip.action.pluginId;
         const record = plugins.find((p) => p.id === targetId);
         if (!record) {
-          setError(
-            `Bundled scenario "${targetId}" is not installed. Reinstall the daemon to restore the default plugin set.`,
-          );
+          setError(t('home.bundledScenarioMissing', { scenarioId: targetId }));
           return;
         }
         const mediaSurface = homeMediaSurfaceForChipId(chip.id);
@@ -1392,7 +2639,8 @@ export function HomeView({
           );
           requestActivePlugin(record, undefined, {
             projectKind: composer.projectKind,
-            chipId: chip.id,
+            chipId: activeChipId,
+            prototypeSubtypeId,
             inputs: composer.inputs,
             inputFields: composer.fields,
             queryTemplate: composer.queryTemplate,
@@ -1407,14 +2655,19 @@ export function HomeView({
             // template/preset or types their own prompt.
             suppressPromptUpdate: true,
             replaceWithoutConfirmation: true,
+            deferApply: true,
           });
           return;
         }
         const pluginOptions = {
           projectKind: chip.action.projectKind,
-          chipId: chip.id,
+          chipId: activeChipId,
+          prototypeSubtypeId,
           inputs: chip.action.inputs,
-          projectMetadata: chip.action.projectMetadata ?? null,
+          projectMetadata:
+            selection?.projectMetadata !== undefined
+              ? selection.projectMetadata
+              : chip.action.projectMetadata ?? null,
         };
         // Output-type tabs (create group) are mode-selection gestures:
         // switching between them should never prompt for confirmation,
@@ -1423,10 +2676,25 @@ export function HomeView({
         // for that. Migrate-group chips (From Figma, etc.) still carry
         // a meaningful prompt the user wants dropped in, so they keep
         // the historical behavior.
+        //
+        // Website clone is the one create chip that seeds the composer: the
+        // scenario is meaningless without a target URL, so an empty composer
+        // gets the localized "clone this site: <url>" scaffold instead of
+        // staying blank. A non-empty draft is the user's — leave it alone.
+        const promptSeed =
+          chip.id === 'web-clone' && prompt.trim().length === 0
+            ? t('homeHero.chip.webClonePromptSeed')
+            : null;
         if (chip.group === 'create') {
-          void usePlugin(record, undefined, {
+          // Only claim ownership when we actually wrote the scaffold. Re-picking
+          // Website clone while the scaffold is already there produces no seed
+          // (the composer is not empty), and clearing the ref on that pass would
+          // orphan the scaffold — leaving it to ride into the next chip after
+          // all. Releasing is the release path's job, not this one's.
+          if (promptSeed !== null) webCloneScaffoldRef.current = promptSeed;
+          void usePlugin(record, promptSeed ?? undefined, {
             ...pluginOptions,
-            suppressPromptUpdate: true,
+            suppressPromptUpdate: promptSeed === null,
             deferApply: true,
           });
         } else {
@@ -1436,6 +2704,14 @@ export function HomeView({
       }
       case 'create-plugin': {
         queuePluginAuthoring(chip.id);
+        return;
+      }
+      case 'create-brand-kit': {
+        // Brands merged into Design systems: brand extraction now starts from
+        // the unified design-system create wizard (which carries the
+        // "start from a brand" picker), rather than a separate Brand Kit tab.
+        setPendingDesignSystemCreateEntry('home_card');
+        navigate({ kind: 'design-system-create' });
         return;
       }
       case 'open-template-picker': {
@@ -1449,10 +2725,136 @@ export function HomeView({
     }
   }
 
+  // A second-level Prototype scene is the Prototype task type with the scene's
+  // metadata refinement merged in — never a chip of its own. Binding the parent
+  // chip here is what keeps the scene on 原型's plugin, project kind and OD Next
+  // route while still stamping the platform targets / lo-fi fidelity it adds.
+  function pickPrototypeSubtype(sub: HomeHeroSubChip | null) {
+    const prototypeChip = findChip('prototype');
+    if (!prototypeChip) return;
+    pickChip(prototypeChip, {
+      prototypeSubtypeId: sub?.slug ?? null,
+      projectMetadata: prototypeSceneProjectMetadata(prototypeChip, sub),
+    });
+  }
+
+  // Consume a one-shot Home composer chip intent (e.g. "Use in new chat" on the
+  // Brands tab requesting the Prototype scenario). The entry shell keeps
+  // HomeView mounted across view switches, so we react to the intent event
+  // rather than to mount.
+  //
+  // The producer (Brands tab) applies the brand's design system as the default
+  // and fires the intent in the same synchronous click handler. Consuming the
+  // chip inside the event listener would run `pickChip` before React commits
+  // that config change, so the composer would seed its design-system field from
+  // the stale (empty) default — showing "No design system" for the brand. We
+  // therefore only bump a tick from the listener and consume the chip in a
+  // separate effect: by the time that effect runs, the re-render has landed and
+  // `selectedDesignSystemTitle` reflects the freshly-applied brand.
+  const [chipIntentTick, setChipIntentTick] = useState(0);
+  useEffect(() => {
+    function bumpChipIntent() {
+      setChipIntentTick((tick) => tick + 1);
+    }
+    window.addEventListener(HOME_CHIP_INTENT_EVENT, bumpChipIntent);
+    return () => window.removeEventListener(HOME_CHIP_INTENT_EVENT, bumpChipIntent);
+  }, []);
+  useEffect(() => {
+    // Guard on the plugin catalog being loaded — chip dispatch resolves a
+    // bundled plugin — and re-run when `plugins` arrives so an intent queued
+    // before the catalog loaded is still honored once it does.
+    if (plugins.length === 0) return;
+    // Only this composer's own queue — the community type tabs address the
+    // dock, the Brands tab addresses the page.
+    const chipId = consumePendingHomeChip(variant);
+    if (!chipId) return;
+    // Docked only: Home's composer IS its page's subject, so a chip routed
+    // there (the Brands tab's "use in new chat") still earns the caret.
+    hostChipApplyRef.current = variant === 'dock';
+    try {
+      // A queued intent is a bare string from another surface, so it can still
+      // name a retired top-level id; select the scene it became instead of
+      // failing the lookup and silently dropping the hand-off.
+      const legacyScene = legacyPrototypeSceneForChipId(chipId);
+      if (legacyScene) {
+        pickPrototypeSubtype(legacyScene);
+        return;
+      }
+      const chip = findChip(chipId);
+      if (chip) pickChip(chip);
+    } finally {
+      hostChipApplyRef.current = false;
+    }
+    // pickChip / selectedDesignSystemTitle are recreated each render; this effect
+    // runs after the commit that bumped the tick, so the closure it captures
+    // already reflects the latest default design system.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plugins, chipIntentTick]);
+
+  // Send pressed on an empty composer while the placeholder carousel showed a
+  // scenario. Bind that scenario's template exactly as a rail pick would and
+  // seed its text, then defer the create to submit() (which resolves the
+  // snapshot and builds the same payload the manual flow does).
+  function submitScenario(scenario: PlaceholderScenario) {
+    if (sending) return;
+    setError(null);
+    if (pluginsLoading) return;
+    const chip = scenario.chipId ? findChip(scenario.chipId) : null;
+    const action = chip?.action ?? null;
+    const record =
+      action?.kind === 'apply-scenario'
+        ? plugins.find((plugin) => plugin.id === action.pluginId) ?? null
+        : null;
+    // A line curated for a second-level scene (Mobile app, Wireframe) binds its
+    // parent template with that scene selected — the scene refines the brief,
+    // it is not a template of its own.
+    const scenarioScene = chip?.id === 'prototype'
+      ? prototypeSubChipForSlug(scenario.prototypeSubtypeId ?? null)
+      : null;
+    const activeScenarioChipId = chip?.id ?? null;
+    // When the user already picked this template (the carousel-over-a-selected-
+    // template case), its binding is live -- reuse it instead of re-applying,
+    // which would reset the resolved snapshot and re-fire chip analytics.
+    const alreadyBound = Boolean(
+      chip &&
+      active?.chipId === activeScenarioChipId &&
+      active?.prototypeSubtypeId === (scenarioScene?.slug ?? null) &&
+      !active.explicitPick,
+    );
+    if (chip && record && !alreadyBound) {
+      if (scenarioScene) pickPrototypeSubtype(scenarioScene);
+      else pickChip(chip);
+    } else if (!chip || !record) {
+      // Template unavailable (bundle missing / catalog still loading) -- fall
+      // back to a free-form create from the line alone rather than dead-ending.
+      setActive(null);
+    }
+    setPrompt(scenario.text);
+    setPromptEditedByUser(true);
+    setPendingCarouselSubmit({
+      text: scenario.text,
+      chipId: chip && (record || alreadyBound) ? activeScenarioChipId : null,
+    });
+  }
+
+  // Fire the deferred carousel submit once the seeded prompt AND the bound
+  // chip have landed in state, so submit()'s closure reads the real values.
+  useEffect(() => {
+    const pending = pendingCarouselSubmit;
+    if (!pending || sending) return;
+    if (prompt.trim() !== pending.text.trim()) return;
+    if (pending.chipId !== null && active?.chipId !== pending.chipId) return;
+    setPendingCarouselSubmit(null);
+    void submit();
+    // submit() is a stable in-component declaration; depending on it would add
+    // churn without changing behavior (mirrors the chip-intent effect above).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCarouselSubmit, prompt, active, sending]);
+
   async function submit() {
     // The send button disables itself while sending, but the Enter-to-send
     // path lands here directly — swallow re-entry during the in-flight window.
-    if (sending) return;
+    if (sending || defaultTypePending) return;
     const trimmed = prompt.trim();
     if (!trimmed && stagedFiles.length === 0) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
@@ -1465,15 +2867,33 @@ export function HomeView({
       element: 'send_button',
     });
     let submittedActive = active;
-    if (submittedActive && !submittedActive.inputsValid) {
-      const missing = missingRequiredInputs(
-        submittedActive.inputFields,
-        submittedActive.inputs,
-      );
+    // The OD Next automatic route is owned by the first-level task type, and
+    // `chipId` IS that task type: a second-level scene refines the brief it
+    // hands the agent — platform targets, lo-fi fidelity, both of which the
+    // Prototype task profile already branches on — and carries no chip id of
+    // its own, so it has nothing to swap the route its parent chose for.
+    const submittedRouteChipId = submittedActive?.chipId ?? null;
+    const automaticStrategyTaskProfile = activeAutomaticStrategyTaskProfile;
+    // The example's identity, sent in place of a plugin pin. Non-null only on
+    // the same picks the gate above releases to the automatic route, so it can
+    // never accompany a pinned plugin.
+    const submittedExampleReference = examplePickReference(
+      submittedActive,
+      submittedRouteChipId,
+    );
+    // Pre-empt the run only when the user could actually fix it here. On the
+    // seeded-brief 「使用」 path there is no field to fill, so we let the send
+    // through and report whatever the daemon decides (below).
+    if (
+      submittedActive &&
+      !automaticStrategyTaskProfile &&
+      !submittedActive.inputsValid &&
+      requiredInputsAreUserFillable(submittedActive)
+    ) {
       setError(
-        missing.length > 0
-          ? `Fill the required plugin ${missing.length === 1 ? 'parameter' : 'parameters'} before running: ${missing.join(', ')}.`
-          : 'Fill the required plugin parameters before running.',
+        missingRequiredInputsMessage(
+          missingRequiredInputs(submittedActive.inputFields, submittedActive.inputs),
+        ),
       );
       return;
     }
@@ -1484,37 +2904,35 @@ export function HomeView({
     setSending(true);
     try {
       const defaultInputs = { prompt: trimmed };
-      const submittedDesignSystemId = homeDesignSystemSelectionForInputs(
-        submittedActive?.inputs ?? null,
-        designSystemPickerSystems,
-        t('designSystemPicker.noneTitle'),
-      );
-      // Composer inputs are forwarded as-is; footer/media fields are stripped
-      // from this set just below to form the run-facing inputs.
+      // The persistent picker is the single source of truth for the new project's
+      // design system, so every product kind (not just prototype/deck) carries
+      // the user's selection — the plugin's `designSystem` input is only the
+      // apply-template hint and is kept in sync via handleDesignSystemChange.
+      const submittedDesignSystemId = designSystemId;
       const submittedApplyInputs = submittedActive ? submittedActive.inputs : defaultInputs;
-      // Inputs forwarded to the run and used to build the run-facing snapshot.
-      // This PR only marks neutral deck page quantity as a deferred manifest
-      // default. Other hidden footer/media defaults need a separate scoped pass.
       const submittedPluginInputs = submittedActive
-        ? stripArtifactFooterInputs(submittedApplyInputs, {
-            keepDeckSlideCount:
-              submittedActive.projectKind === 'deck' &&
-              submittedActive.confirmedInputNames.includes('slideCount'),
-            keepDeckSpeakerNotes: submittedActive.projectKind === 'deck',
-          })
+        ? stripArtifactFooterInputs(submittedApplyInputs)
         : defaultInputs;
       const activeInputsChangedForSubmit = submittedActive
         ? !inputsEqual(submittedActive.result?.appliedPlugin?.inputs ?? submittedActive.inputs, submittedPluginInputs)
         : false;
-      if (submittedActive && (!submittedActive.result || activeInputsChangedForSubmit)) {
-        const result = await resolveActivePlugin(
-          submittedActive.record,
-          submittedPluginInputs,
-          undefined,
-          { deferredDefaultInputNames: deferredDefaultInputNamesForSubmit(submittedActive) },
-        );
+      if (
+        submittedActive
+        && !automaticStrategyTaskProfile
+        && (!submittedActive.result || activeInputsChangedForSubmit)
+      ) {
+        const result = await resolveActivePlugin(submittedActive.record, submittedPluginInputs);
         if (!result) {
-          setError(`Failed to apply ${submittedActive.record.title}. Check the plugin parameters and try again.`);
+          // The daemon is the authority on required inputs, and it rejects a
+          // missing one with MissingInputError. Name the fields it would have
+          // named instead of the generic apply failure, so the seeded-brief path
+          // (which no longer pre-empts the send) fails legibly.
+          const missing = missingRequiredInputs(submittedActive.inputFields, submittedPluginInputs);
+          setError(
+            missing.length > 0
+              ? missingRequiredInputsMessage(missing)
+              : `Failed to apply ${submittedActive.record.title}. Check the plugin parameters and try again.`,
+          );
           return;
         }
         submittedActive = { ...submittedActive, result, inputs: submittedPluginInputs };
@@ -1555,6 +2973,23 @@ export function HomeView({
           status: item.connector.status,
           ...(item.connector.accountLabel ? { accountLabel: item.connector.accountLabel } : {}),
         }));
+      // Referenced project / local-code folders are required user-selected
+      // inputs. If one disappears before submit, fail loudly instead of sending
+      // workspace text the daemon cannot back with `--add-dir` access.
+      const contextLinkedDirCandidates = workspaceContextLinkedDirs(contextWorkspaceItems);
+      const missingContextLinkedDirs =
+        contextLinkedDirCandidates.length === 0
+          ? []
+          : (
+              await Promise.all(
+                contextLinkedDirCandidates.map(async (dir) => ((await dirExists(dir)) ? null : dir)),
+              )
+            ).filter((dir): dir is string => Boolean(dir));
+      if (missingContextLinkedDirs.length > 0) {
+        setError('A selected reference folder is no longer available. Remove or re-pick it before starting the run.');
+        return;
+      }
+      const contextLinkedDirs = contextLinkedDirCandidates;
       const submittedProjectKind =
         submittedActive?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
       const submittedProjectMetadata = submittedActive?.mediaSurface
@@ -1563,120 +2998,244 @@ export function HomeView({
             submittedProjectKind,
             submittedActive?.inputs ?? null,
             submittedActive?.projectMetadata ?? fallbackProjectMetadata ?? null,
+            submittedActive?.confirmedInputNames ?? [],
+            submittedActive?.inputFields ?? [],
           );
-      // Scenario plugins (chips / preset cards) and explicit skill picks are
-      // mutually exclusive routing sources — never send both (#2972).
-      const resolvedSkillId = submittedActive ? null : activeSkill?.id ?? null;
+      // A mentioned Skill travels with whatever the composer selected, rather
+      // than replacing it: the pick decides the route, the Skill is material
+      // inside it. In Design mode, free-form prompts route through the default
+      // design router; in Ask mode they stay plain chat conversations with no
+      // hidden router plugin.
+      const resolvedSkillId = activeSkill?.id ?? null;
+      const submittedChip = submittedRouteChipId
+        ? findChip(submittedRouteChipId)
+        : null;
+      const productAutomaticScenario = submittedChip?.action.kind === 'apply-scenario'
+        && submittedChip.action.automaticDefault === true
+        && !pinsPluginOverAutomaticRoute(submittedActive, submittedRouteChipId);
       const routedPluginId =
-        sessionMode === 'design'
+        automaticStrategyTaskProfile
+          ? null
+          : sessionMode === 'design'
           ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
           : submittedActive?.record.id ?? null;
-      const appliedPluginSnapshotId = submittedActive?.result?.appliedPlugin?.snapshotId;
+      const pluginSelectionProvenance = sessionMode === 'design'
+        && (!submittedActive || productAutomaticScenario)
+        ? 'automatic-default' as const
+        : null;
       // The example-prompt override is a one-shot marker. Decide whether to
       // send it now, but defer spending the marker until the create is
       // accepted — a rejected attempt stays retryable and must resend it.
       const examplePromptKey = 'od:example-prompt-used';
-      const examplePromptStorage = getOptionalLocalStorage();
       const examplePromptToSend =
-        examplePromptInfoRef.current != null && examplePromptStorage?.getItem(examplePromptKey) == null
+        examplePromptInfoRef.current != null && localStorage.getItem(examplePromptKey) == null
           ? examplePromptInfoRef.current
           : null;
       const accepted = await onSubmit({
         prompt: trimmed,
         pluginId: routedPluginId,
-        pluginType: submittedActive?.record.marketplaceTrust ?? (routedPluginId ? 'official' : null),
+        ...(pluginSelectionProvenance ? { pluginSelectionProvenance } : {}),
+        ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
+        // Rides only where the automatic route is actually claimed: an example
+        // reference is meaningless without the route it belongs to.
+        ...(automaticStrategyTaskProfile && submittedExampleReference
+          ? { exampleReference: submittedExampleReference }
+          : {}),
+        ...(!automaticStrategyTaskProfile && submittedActive?.record.source
+          ? { pluginSource: submittedActive.record.source }
+          : {}),
+        pluginType: automaticStrategyTaskProfile
+          ? null
+          : submittedActive?.record.marketplaceTrust ?? (routedPluginId ? 'official' : null),
         skillId: resolvedSkillId,
-        appliedPluginSnapshotId:
-          appliedPluginSnapshotId && appliedPluginSnapshotId.length > 0
-            ? appliedPluginSnapshotId
-            : null,
-        pluginTitle: submittedActive?.record.title ?? null,
-        taskKind: submittedActive?.result?.appliedPlugin?.taskKind ?? null,
-        pluginInputs: submittedPluginInputs,
-        deferredDefaultInputNames: submittedActive ? deferredDefaultInputNamesForSubmit(submittedActive) : [],
+        ...(resolvedSkillId && activeSkillCatalogScope
+          ? { skillCatalogScope: activeSkillCatalogScope }
+          : resolvedSkillId && lastSettledLocalCatalogScopeRef.current
+            ? { skillCatalogScope: lastSettledLocalCatalogScopeRef.current }
+          : {}),
+        appliedPluginSnapshotId: automaticStrategyTaskProfile
+          ? null
+          : submittedActive?.result?.appliedPlugin?.snapshotId ?? null,
+        pluginTitle: automaticStrategyTaskProfile ? null : submittedActive?.record.title ?? null,
+        taskKind: automaticStrategyTaskProfile
+          ? null
+          : submittedActive?.result?.appliedPlugin?.taskKind ?? null,
+        ...(!automaticStrategyTaskProfile ? { pluginInputs: submittedPluginInputs } : {}),
         projectKind: submittedProjectKind,
         projectMetadata: submittedProjectMetadata,
         designSystemId: submittedDesignSystemId,
+        ...(submittedDesignSystemId && designSystemCatalogScope
+          ? { designSystemCatalogScope }
+          : submittedDesignSystemId && lastSettledLocalCatalogScopeRef.current
+            ? { designSystemCatalogScope: lastSettledLocalCatalogScopeRef.current }
+          : {}),
         contextPlugins,
         contextMcpServers,
         contextConnectors,
+        ...(contextWorkspaceItems.length > 0
+          ? { initialRunContext: { workspaceItems: contextWorkspaceItems } }
+          : {}),
         attachments: stagedFiles,
         ...(workingDir ? { workingDir } : {}),
         ...(workingDirToken ? { workingDirToken } : {}),
+        ...(contextLinkedDirs.length > 0 ? { linkedDirs: contextLinkedDirs } : {}),
         conversationMode: sessionMode,
         ...(examplePromptToSend ? { examplePromptContext: examplePromptToSend } : {}),
       });
       if (accepted === false) {
-        setError('Failed to start the run. Make sure the daemon is reachable, then try again.');
+        setError(t('home.createFailed'));
         return;
       }
+      // Blocked-and-handled (AMR balance gate): the shell already shows its
+      // dialog. Keep the composer draft and staged contexts for the retry.
+      if (accepted === 'blocked') return;
       // Create accepted — now it is safe to spend the one-shot marker.
-      if (examplePromptToSend) examplePromptStorage?.setItem(examplePromptKey, '1');
+      if (examplePromptToSend) localStorage.setItem(examplePromptKey, '1');
+      // The draft has become a real run; drop it synchronously (before the
+      // navigation unmounts us) so the sent prompt + pick don't reappear the
+      // next time the Home tab mounts.
+      if (ownsComposerDraft) clearHomeComposerDraft();
       // Only drop the staged contexts once the run actually started — a
       // rejected creation keeps them so the retry sends the same payload.
       setSelectedPluginContexts([]);
       setSelectedMcpContexts([]);
       setSelectedConnectorContexts([]);
+      setContextWorkspaceItems([]);
     } catch (err) {
       // A submit handler that throws (instead of resolving false) lands on
       // the same recovery path as a rejected creation.
       console.warn('Home composer submit failed', err);
-      setError('Failed to start the run. Make sure the daemon is reachable, then try again.');
+      const isTransportFailure =
+        err instanceof TypeError
+        || (err instanceof ProjectCreateError && err.status === null);
+      if (isTransportFailure) {
+        setDaemonRecoveryActive(true);
+        setError(t('home.daemonRecovering'));
+      } else if (
+        err instanceof ProjectCreateError
+        && err.code === 'AMR_AUTH_REQUIRED'
+      ) {
+        setError(t('entry.authExpiredBody'));
+      } else {
+        // A rolling model window is the one upstream failure whose own wording
+        // must not reach the user: the gateway writes it in English for API
+        // callers, and read literally it sounds like a charged failure rather
+        // than a wait. Everything else keeps the verbatim path, where the
+        // daemon's message IS the specific thing to say.
+        const windowLimit = modelWindowLimitCopy(
+          err instanceof Error ? err.message : null,
+        );
+        if (windowLimit) {
+          setError(t(
+            windowLimit.messageKey,
+            windowLimit.retryAt
+              ? { retryAt: formatModelWindowRetryAt(windowLimit.retryAt, locale) }
+              : undefined,
+          ));
+        } else {
+          setError(err instanceof Error && err.message.trim()
+            ? err.message
+            : t('home.createFailed'));
+        }
+      }
     } finally {
       setSending(false);
     }
   }
 
+  // #5517: with no projects yet the home (logo + heading + composer) centers
+  // vertically instead of hugging the top.
+  const recentProjectsEmpty = !projectsLoading && projects.length === 0;
+
   return (
-    <div className="home-view" data-testid="home-view" ref={homeViewRef}>
+    <div
+      className={`home-view${recentProjectsEmpty ? ' home-view--centered' : ''}${
+        variant === 'dock' ? ' home-view--dock' : ''
+      }`}
+      data-testid="home-view"
+      data-variant={variant}
+      ref={homeViewRef}
+    >
+      {/* `active` gates the portal-escaping campaign dialog to the ACTIVE home
+          view: EntryShell only hides inactive views with display:none, which a
+          document.body portal ignores. A docked composer never runs it at all —
+          it is a Home-page moment, and a second copy of the modal would fight
+          the page one over the same dismissal state. */}
+      {variant === 'dock' ? null : (
+        <DeepSeekV4FlashCampaign
+          audience={deepSeekV4FlashCampaignAudience}
+          active={isActive}
+          onUseCampaignModel={onDeepSeekV4FlashCampaignUseNow}
+          metricsConsent={deepSeekV4FlashCampaignMetricsConsent}
+          installationId={deepSeekV4FlashCampaignInstallationId}
+        />
+      )}
       <HomeHero
+        variant={variant}
+        collapseSignal={collapseSignal}
+        workspaceContext={workspaceContext}
         ref={inputRef}
         active={isActive}
         firstRunGuide={projectsLoading ? undefined : projects.length === 0}
         prompt={prompt}
         onPromptChange={handlePromptChange}
         onSubmit={submit}
-        sessionMode={sessionMode}
-        onSessionModeChange={setSessionMode}
+        onSubmitScenario={submitScenario}
+        submitting={sending}
         activePluginTitle={activeBadgeTitle}
         activePluginIsExplicit={activePluginIsExplicit}
         activePluginRecord={active?.record ?? null}
         activeSkillId={activeSkill?.id ?? null}
         activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
+        activeSkillRecord={activeSkill}
         activeChipId={active?.chipId ?? null}
+        activePrototypeSubtypeId={active?.prototypeSubtypeId ?? null}
         showActivePluginChip={showActivePluginChip}
         onClearActivePlugin={clearActivePlugin}
         onClearActiveChip={clearActiveChipSelection}
-        onClearActiveSkill={() => setActiveSkill(null)}
+        onClearActiveSkill={() => {
+          setActiveSkill(null);
+          setActiveSkillCatalogScope(null);
+        }}
         selectedPluginContexts={selectedPluginContexts.map((item) => item.record)}
         selectedMcpContexts={selectedMcpContexts.map((item) => item.server)}
         selectedConnectorContexts={selectedConnectorContexts.map((item) => item.connector)}
         contextOnlyPlugins={selectedPluginContexts.filter((item) => !item.inlineBacked).map((item) => item.record)}
         contextOnlyMcpServers={selectedMcpContexts.filter((item) => !item.inlineBacked).map((item) => item.server)}
         contextOnlyConnectors={selectedConnectorContexts.filter((item) => !item.inlineBacked).map((item) => item.connector)}
+        contextWorkspaceItems={contextWorkspaceItems}
         onRemovePluginContext={removePluginContext}
         onRemoveMcpContext={removeMcpContext}
         onRemoveConnectorContext={removeConnectorContext}
+        onAddWorkspaceContext={addWorkspaceContext}
+        onRemoveWorkspaceContext={removeWorkspaceContext}
         onAddPlugin={onBrowseRegistry}
         onAddConnector={onOpenIntegrations}
         onAddMcp={onOpenMcp}
         onOpenPluginDetails={setDetailsRecord}
-        pluginInputFields={(active?.inputFields ?? []).filter(
-          (field) => !ARTIFACT_FOOTER_FIELD_NAMES.has(field.name) || (
-            active?.chipId === 'deck' && (field.name === 'slideCount' || field.name === 'speakerNotes')
-          ),
-        )}
+        onOpenSkillDetails={setDetailsSkill}
+        pluginInputFields={(active?.inputFields ?? []).filter((field) => (
+          !ARTIFACT_FOOTER_FIELD_NAMES.has(field.name)
+          || (active?.projectKind === 'deck' && (field.name === 'slideCount' || field.name === 'speakerNotes'))
+        ))}
         pluginInputValues={active?.inputs ?? {}}
         pluginInputTemplate={active?.queryTemplate ?? null}
         onPluginInputValuesChange={updateActiveInputs}
         inlineEditableInputNames={active?.editableInputNames ?? []}
         footerInputNames={footerInputNamesForChip(active?.chipId ?? null)}
         designSystems={designSystemPickerSystems}
+        selectedDesignSystemId={designSystemId}
+        onDesignSystemChange={handleDesignSystemChange}
         stagedFiles={stagedFiles}
         onAddFiles={stageFiles}
         onRemoveFile={removeStagedFile}
+        onImportFigma={() => setFigmaModalOpen(true)}
         pluginOptions={plugins}
-        pluginsLoading={pluginsLoading}
+        pluginsLoading={
+          pluginsLoading
+          || workspaceContextState.loading
+          || workspaceContextState.identityChangePending === true
+        }
         skillOptions={selectableSkills}
         skillsLoading={skillsLoading}
         mcpOptions={enabledMcpServers}
@@ -1684,12 +3243,23 @@ export function HomeView({
         connectorOptions={connectors.filter((connector) => connector.status === 'connected')}
         pendingPluginId={pendingApplyId}
         pendingChipId={pendingChipId}
+        typeSelectionPending={
+          defaultTypePending
+          || Boolean(pendingChipRestore)
+          || Boolean(pendingPluginUseHandoff)
+        }
         submitDisabled={
+          defaultTypePending ||
+          Boolean(pendingChipRestore) ||
+          Boolean(pendingPluginUseHandoff) ||
           Boolean(pendingApplyId) ||
           Boolean(pendingAuthoringChipId) ||
-          Boolean(active && !active.inputsValid)
+          // Only let missing required inputs disable Send where the user has a
+          // surface to fill them; otherwise a seeded 「使用」 brief would sit next
+          // to a permanently dead button (see requiredInputsAreUserFillable).
+          Boolean(active && !activeAutomaticStrategyTaskProfile
+            && !active.inputsValid && requiredInputsAreUserFillable(active))
         }
-        submitting={sending}
         onPickPlugin={(record, nextPrompt) => addPluginContext(record, nextPrompt)}
         onPickExamplePlugin={useExamplePlugin}
         onPickSkill={useSkill}
@@ -1701,6 +3271,7 @@ export function HomeView({
         workingDir={workingDir}
         recentDirs={recentDirs}
         onPickWorkingDir={handlePickWorkingDir}
+        onPickLocalCodeDir={handlePickLocalCodeDir}
         onSelectRecentWorkingDir={(dir) => {
           setWorkingDir(dir);
           // Recents come from the browser-side picker only; they carry no
@@ -1713,58 +3284,68 @@ export function HomeView({
           setWorkingDirToken(null);
         }}
         onExamplePromptStatusChange={handleExamplePromptStatusChange}
+        onStartBlankProject={() => {
+          void startBlankProject();
+        }}
         executionSwitcher={executionSwitcher}
+        // The onboarding "recommended start" strip (「Start with your first
+        // project」 + 全部类型 / 开始创作) no longer renders here. Home already
+        // asks the user for a first request in the composer directly above it,
+        // and the line below it ("Start with a template… / start a blank
+        // project") already covers the pick-a-shape path — the strip was a
+        // third way to say the same thing, wedged between the two. The
+        // recommendation engine and `RecommendedStartRegion` are left intact;
+        // only this mount point is gone.
+        recommendationSlot={artifactUpgradeSlot}
       />
 
-      <RecentProjectsStrip
-        projects={projects}
-        designSystems={designSystems}
-        {...(projectsLoading !== undefined ? { loading: projectsLoading } : {})}
-        onOpen={(id) => {
-          // P0 ui_click area=recent_projects element=project_card — emit
-          // before navigation so the event isn't lost when the host
-          // re-renders into the project view.
-          const project = projects.find((p) => p.id === id);
-          const projectKind = projectKindToTracking(project?.metadata?.kind, project?.metadata?.videoModel);
-          trackRecentProjectsClick(analytics.track, {
-            page_name: 'home',
-            area: 'recent_projects',
-            element: 'project_card',
-            project_id: id,
-            ...(projectKind ? { project_kind: projectKind } : {}),
-          });
-          onOpenProject(id);
-        }}
-        onViewAll={() => {
-          trackRecentProjectsClick(analytics.track, {
-            page_name: 'home',
-            area: 'recent_projects',
-            element: 'view_all',
-          });
-          onViewAllProjects();
-        }}
-      />
-
-      <HomeTemplatesReveal
-        enabled={!projectsLoading && projects.length === 0}
-      >
-        <PluginsHomeSection
-          plugins={plugins}
-          loading={pluginsLoading}
-          activePluginId={active?.record.id ?? null}
-          pendingApplyId={pendingApplyId}
-          onUse={(record, action) => void routePluginUse(record, action)}
-          onOpenDetails={handleCommunityOpenDetails}
-          onBrowseRegistry={onBrowseRegistry}
-          preferDefaultFacet={false}
-          cardLayout="gallery"
-        />
-      </HomeTemplatesReveal>
+      {/* No 最近项目 grid under the hero on EITHER branch (OPEND-2683, per
+          product: 最近项目统一在左侧栏展示; OPEND-3140 closed the local half):
+          the rail's 最近项目 section (EntryNavRail → RailRecentSection) is the
+          one recent-projects entry, with the status glyphs and hover preview
+          the grid used to carry, and 项目 / 全部项目 keep RecentProjectsStrip
+          for the browsable catalogue with its filter / sort / view controls. */}
 
       <AnimatePresence>
-        {detailsRecord ? (
+        {detailsRecord && detailsTemplate ? (
+          <TemplatePreviewModal
+            template={detailsTemplate}
+            onClose={() => {
+              // Same dismissal funnel as the full modal below — close button,
+              // Esc-less backdrop mousedown — so the analytics area stays one.
+              trackPluginDetailModalClick(analytics.track, {
+                page_name: 'home',
+                area: 'plugin_detail_modal',
+                element: 'close',
+                plugin_id: detailsRecord.sourceMarketplaceEntryName ?? detailsRecord.id,
+                plugin_type: detailsRecord.marketplaceTrust ?? 'official',
+              });
+              setDetailsRecord(null);
+            }}
+            onUse={() => {
+              // Footer action mirrors the community lightweight preview:
+              // prompt artifacts copy their seed prompt; template artifacts
+              // Remix — here that is the creation page's existing Remix
+              // semantic, duplicating the example as a project — behind a
+              // synchronous single-flight gate (see templateRemixInFlightRef).
+              if (isPromptArtifact(detailsTemplate)) {
+                void copyTemplatePrompt(detailsTemplate);
+                return;
+              }
+              if (templateRemixInFlightRef.current) return;
+              templateRemixInFlightRef.current = true;
+              setTemplateRemixBusy(true);
+              void duplicateExamplePlugin(detailsRecord).finally(() => {
+                templateRemixInFlightRef.current = false;
+                setTemplateRemixBusy(false);
+              });
+            }}
+            busy={templateRemixBusy}
+          />
+        ) : detailsRecord ? (
           <PluginDetailsModal
             record={detailsRecord}
+            workspaceContext={workspaceContext}
             onClose={() => {
               // Covers the close button, Esc and the backdrop — every
               // variant funnels dismissal through this single onClose.
@@ -1790,6 +3371,10 @@ export function HomeView({
               });
               void routePluginUse(record, action);
             }}
+            onDuplicate={(record) => {
+              setDetailsRecord(null);
+              void duplicateExamplePlugin(record);
+            }}
             isApplying={pendingApplyId === detailsRecord.id}
             onSharePopoverItemClick={(item) =>
               trackPluginDetailModalSharePopoverClick(analytics.track, {
@@ -1799,6 +3384,59 @@ export function HomeView({
                 plugin_id: detailsRecord.sourceMarketplaceEntryName ?? detailsRecord.id,
                 plugin_type: detailsRecord.marketplaceTrust ?? 'official',
               })}
+          />
+        ) : null}
+        {detailsSkill ? (
+          <SkillDetailsModal
+            skillId={detailsSkill.id}
+            summary={detailsSkill}
+            onClose={() => setDetailsSkill(null)}
+          />
+        ) : null}
+        {figmaModalOpen ? (
+          <FigmaImportModal
+            onClose={() => setFigmaModalOpen(false)}
+            workspaceContext={workspaceContext}
+            resolveProjectId={async () => {
+              // The homepage has no project yet; create a bare one to decode
+              // the Figma file into, then navigate into it.
+              try {
+                const { project } = await createProject({
+                  name: 'Imported from Figma',
+                  skillId: null,
+                  designSystemId: null,
+                  workspaceContext: resolvedWorkspaceContextForWrite(workspaceContextState),
+                });
+                return project.id;
+              } catch {
+                return null;
+              }
+            }}
+            onImported={(result, projectId) => {
+              void (async () => {
+                await patchProject(projectId, { pendingPrompt: result.suggestedPrompt }, workspaceContext);
+                setFigmaModalOpen(false);
+                onOpenProject(projectId);
+              })();
+            }}
+            onFigmaUrl={(url, notes) => {
+              void (async () => {
+                const reshapePrompt = `Migrate the Figma file at ${url} into a responsive webpage using its design system.${notes ? ` ${notes}` : ''}`;
+                try {
+                  const { project } = await createProject({
+                    name: 'Imported from Figma',
+                    skillId: null,
+                    designSystemId: null,
+                    pendingPrompt: reshapePrompt,
+                    workspaceContext: resolvedWorkspaceContextForWrite(workspaceContextState),
+                  });
+                  setFigmaModalOpen(false);
+                  onOpenProject(project.id);
+                } catch {
+                  setFigmaModalOpen(false);
+                }
+              })();
+            }}
           />
         ) : null}
       </AnimatePresence>
@@ -1905,6 +3543,55 @@ function defaultPluginIdForChip(chipId: string | null): string | null {
   return null;
 }
 
+/**
+ * The official-example identity an active pick hands to the daemon INSTEAD of
+ * pinning its plugin — `null` when this pick has no such identity to offer.
+ *
+ * An official example card under a task type names a LOOK, not a STRATEGY. It
+ * is an explicit pick for every UI purpose (its own chip, its own title, its
+ * own clear ×) yet it must not displace the product's automatic OD Next route:
+ * the user asked for that reference output, not for a different pipeline. When
+ * the pick can be named honestly — it came from an example rail, the task type
+ * it sits under owns an OD Next route, and the record carries the exact local
+ * catalogue `source` the daemon re-resolves it by (the same identity
+ * `/apply-local` looks it up with) — the example travels as this reference and
+ * the automatic route survives.
+ *
+ * Everything else has no honest reference to make and keeps pinning its plugin
+ * exactly as before: a Community card, the details modal, or a plugins-page
+ * hand-off (all strategy choices); an example under a task type with no OD Next
+ * route (Image, Document, WebGL, Website clone, …), where there is nothing to
+ * hand the routing back to; and a record whose source we cannot name, which
+ * would otherwise lose its material silently.
+ *
+ * `routeChipId` is the FIRST-LEVEL task type — the only thing a chip id can be
+ * — so an example picked under a nested Prototype scene (移动应用, 线框图) is
+ * judged by the route 原型 owns, exactly like one picked on 原型 itself.
+ */
+function examplePickReference(
+  active: ActivePlugin | null | undefined,
+  routeChipId: string | null,
+): CreateProjectExampleReference | null {
+  if (active?.examplePick !== true) return null;
+  if (automaticStrategyTaskProfileForRouteId(routeChipId) === null) return null;
+  const source = active.record.source?.trim();
+  if (!source) return null;
+  return { pluginId: active.record.id, source };
+}
+
+/**
+ * True when this pick pins its own plugin and therefore suppresses the
+ * product's automatic OD Next route. The single gate both routing decisions in
+ * `submit()` read; see `examplePickReference` for why `explicitPick` alone is
+ * not the answer.
+ */
+function pinsPluginOverAutomaticRoute(
+  active: ActivePlugin | null | undefined,
+  routeChipId: string | null,
+): boolean {
+  return active?.explicitPick === true && examplePickReference(active, routeChipId) === null;
+}
+
 export function shouldShowActivePluginChip(active: ActivePlugin | null): boolean {
   if (!active) return false;
   // An explicit pick (example-prompt preset / Community card / detail modal)
@@ -1917,31 +3604,17 @@ export function shouldShowActivePluginChip(active: ActivePlugin | null): boolean
   return active.record.id !== defaultPluginIdForChip(active.chipId);
 }
 
-function homeHeroChipLabelForId(chipId: string, t: ReturnType<typeof useI18n>['t']): string {
-  switch (chipId) {
-    case 'prototype': return t('homeHero.chip.prototype');
-    case 'live-artifact': return t('homeHero.chip.liveArtifact');
-    case 'deck': return t('homeHero.chip.deck');
-    case 'image': return t('homeHero.chip.image');
-    case 'video': return t('homeHero.chip.video');
-    case 'hyperframes': return t('homeHero.chip.hyperframes');
-    case 'audio': return t('homeHero.chip.audio');
-    case 'create-plugin': return t('homeHero.chip.createPlugin');
-    case 'figma': return t('homeHero.chip.figma');
-    case 'template': return t('homeHero.chip.template');
-    default: return chipId;
-  }
-}
-
-// Inputs in this set are stripped from run-facing plugin inputs unless Home
-// has visible user-confirmed evidence for keeping them. Deferred default
-// tracking is intentionally limited to deck page quantity in this PR.
 const ARTIFACT_FOOTER_FIELD_NAMES = new Set([
   'fidelity',
   'slideCount',
   'speakerNotes',
-  // `subject` / `style` / `aspect` / `mediaKind` are intentionally not listed:
-  // the od-media-generation apply path still validates against them.
+  // Media surfaces (image/video/audio/hyperframes) defer the same way. These
+  // were dropped from the footer but `buildHomeMediaComposer` still seeds them
+  // (`model: gpt-image-2`, `ratio: 16:9`, `duration: 5`, `audioType: speech`,
+  // …) so they must be stripped before submission. The prompt may infer its
+  // own defaults or ask only when the choice is material. `subject` / `style`
+  // / `aspect` / `mediaKind` are intentionally
+  // NOT listed: the od-media-generation apply still validates against them.
   'model',
   'ratio',
   'resolution',
@@ -1950,26 +3623,14 @@ const ARTIFACT_FOOTER_FIELD_NAMES = new Set([
   'voice',
 ]);
 
-// Hidden/deferred defaults must not be forwarded to the run just because the
-// plugin manifest ships them. Deck page quantity is the exception only after a
-// concrete value is visible/selected in Home; blank keeps Quick Brief in charge.
 function stripArtifactFooterInputs(
   inputs: Record<string, unknown>,
-  options: { keepDeckSlideCount?: boolean; keepDeckSpeakerNotes?: boolean } = {},
 ): Record<string, unknown> {
   if (!Object.keys(inputs).some((key) => ARTIFACT_FOOTER_FIELD_NAMES.has(key))) {
     return inputs;
   }
   const next: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(inputs)) {
-    if (options.keepDeckSlideCount && key === 'slideCount' && hasDeckSlideCount(value)) {
-      next[key] = value;
-      continue;
-    }
-    if (options.keepDeckSpeakerNotes && key === 'speakerNotes' && hasDeckSpeakerNotes(value)) {
-      next[key] = value;
-      continue;
-    }
     if (ARTIFACT_FOOTER_FIELD_NAMES.has(key)) continue;
     next[key] = value;
   }
@@ -1977,95 +3638,50 @@ function stripArtifactFooterInputs(
 }
 
 function footerInputNamesForChip(chipId: string | null): string[] {
-  if (chipId === 'deck') return ['slideCount', 'speakerNotes', 'designSystem'];
-  if (chipId === 'prototype') return ['designSystem'];
-  if (chipId === 'image' || chipId === 'video') return ['designSystem'];
-  // hyperframes / audio surface no pre-flight settings — the agent asks for
-  // ratio / duration / model / audio kind via question-form during the run.
-  return [];
+  return chipId === 'deck' ? ['slideCount', 'speakerNotes'] : [];
 }
 
 function hasDeckSlideCount(value: unknown): boolean {
-  return typeof value === 'string' && value.trim().length > 0 && !isUnresolvedTemplatePlaceholder(value);
+  return typeof value === 'string' && value.trim().length > 0 && !/^\{\{\s*[a-zA-Z_][\w-]*\s*\}\}$/.test(value.trim());
 }
 
 function hasDeckSpeakerNotes(value: unknown): boolean {
   return value === 'include speaker notes' || value === 'no speaker notes';
 }
 
-function isUnresolvedTemplatePlaceholder(value: string): boolean {
-  return /^\{\{\s*[a-zA-Z_][\w-]*\s*\}\}$/.test(value.trim());
-}
-
-function confirmedInputNamesForUpdate(active: ActivePlugin, normalized: Record<string, unknown>): string[] {
+function confirmedInputNamesForUpdate(active: ActivePlugin, inputs: Record<string, unknown>): string[] {
   if (active.projectKind !== 'deck') return active.confirmedInputNames;
   const confirmed = new Set(active.confirmedInputNames);
-  if (!Object.is(active.inputs.slideCount, normalized.slideCount)) {
-    if (hasDeckSlideCount(normalized.slideCount)) {
-      confirmed.add('slideCount');
-    } else {
-      confirmed.delete('slideCount');
-    }
+  for (const name of ['slideCount', 'speakerNotes']) {
+    if (Object.is(active.inputs[name], inputs[name])) continue;
+    const selected = name === 'slideCount'
+      ? hasDeckSlideCount(inputs[name])
+      : hasDeckSpeakerNotes(inputs[name]);
+    if (selected) confirmed.add(name);
+    else confirmed.delete(name);
   }
   return Array.from(confirmed);
 }
 
-function deferredDefaultInputNamesForSubmit(active: ActivePlugin): string[] {
-  if (!active.chipId || active.projectKind !== 'deck') return [];
-  const keep = keptArtifactFooterInputNamesForSubmit(active);
-  const deferred = new Set<string>();
-  for (const field of active.inputFields) {
-    const name = field.name;
-    if (!name || keep.has(name) || !ARTIFACT_FOOTER_FIELD_NAMES.has(name)) continue;
-    if (field.default === undefined || field.default === null || field.default === '') continue;
-    deferred.add(name);
-  }
-  return Array.from(deferred);
-}
-
-function keptArtifactFooterInputNamesForSubmit(active: ActivePlugin): Set<string> {
-  const keep = new Set<string>();
-  if (active.projectKind === 'deck') {
-    if (active.confirmedInputNames.includes('slideCount') && hasDeckSlideCount(active.inputs.slideCount)) {
-      keep.add('slideCount');
-    }
-    if (hasDeckSpeakerNotes(active.inputs.speakerNotes)) {
-      keep.add('speakerNotes');
-    }
-  }
-  return keep;
-}
-
-function getOptionalLocalStorage(): Storage | null {
-  try {
-    return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
-  } catch {
-    return null;
-  }
-}
-
-function inputsToCarryIntoPreset(
-  active: ActivePlugin,
-  record: InstalledPluginRecord,
-): { inputs?: Record<string, unknown>; confirmedInputNames?: string[] } {
-  const targetFieldNames = new Set((record.manifest?.od?.inputs ?? []).map((field) => field.name));
+function inputsToCarryIntoPreset(active: ActivePlugin): {
+  inputs?: Record<string, unknown>;
+  confirmedInputNames?: string[];
+} {
+  if (active.projectKind !== 'deck') return {};
   const inputs: Record<string, unknown> = {};
   const confirmedInputNames: string[] = [];
-  if (targetFieldNames.has('designSystem') && active.inputs.designSystem !== undefined) {
-    inputs.designSystem = active.inputs.designSystem;
+  if (
+    active.confirmedInputNames.includes('slideCount')
+    && hasDeckSlideCount(active.inputs.slideCount)
+  ) {
+    inputs.slideCount = active.inputs.slideCount;
+    confirmedInputNames.push('slideCount');
   }
-  if (active.projectKind === 'deck') {
-    if (
-      targetFieldNames.has('slideCount') &&
-      active.confirmedInputNames.includes('slideCount') &&
-      hasDeckSlideCount(active.inputs.slideCount)
-    ) {
-      inputs.slideCount = active.inputs.slideCount;
-      confirmedInputNames.push('slideCount');
-    }
-    if (targetFieldNames.has('speakerNotes') && hasDeckSpeakerNotes(active.inputs.speakerNotes)) {
-      inputs.speakerNotes = active.inputs.speakerNotes;
-    }
+  if (active.inputFields.some((field) => field.name === 'speakerNotes')) {
+    inputs.speakerNotes = hasDeckSpeakerNotes(active.inputs.speakerNotes)
+      ? active.inputs.speakerNotes
+      : 'no speaker notes';
+    if (active.confirmedInputNames.includes('speakerNotes')) confirmedInputNames.push('speakerNotes');
   }
   return {
     ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
@@ -2073,59 +3689,72 @@ function inputsToCarryIntoPreset(
   };
 }
 
-function promptTextWithCarriedPresetInputs(
+function promptTextWithCarriedDeckInputs(
   record: InstalledPluginRecord,
-  locale: Locale,
+  locale: string,
   promptText: string,
-  inputs: Record<string, unknown> | undefined,
-  projectKind: ProjectKind | null,
-  confirmedInputNames: string[],
+  carried: { inputs?: Record<string, unknown>; confirmedInputNames?: string[] },
 ): string {
-  if (!inputs || Object.keys(inputs).length === 0) return promptText;
   const query = resolvePluginQueryFallback(record.manifest?.od?.useCase?.query, locale);
   if (!query) return promptText;
-  const fields = record.manifest?.od?.inputs ?? [];
-  const defaultPrompt = firstPromptParagraph(
-    renderPluginBriefTemplate(query, hydratePluginInputs(fields, undefined)),
-  );
-  if (promptText.trim() !== defaultPrompt.trim()) return promptText;
-  const renderedInputs = hydratePluginInputs(fields, inputs);
-  if (projectKind === 'deck' && !confirmedInputNames.includes('slideCount')) {
-    delete renderedInputs.slideCount;
+  const inputs = hydratePluginInputs(record.manifest?.od?.inputs ?? [], carried.inputs);
+  const confirmed = new Set(carried.confirmedInputNames ?? []);
+  if (!confirmed.has('slideCount')) delete inputs.slideCount;
+  if (
+    record.manifest?.od?.inputs?.some((field) => field.name === 'speakerNotes')
+    && !hasDeckSpeakerNotes(inputs.speakerNotes)
+  ) {
+    inputs.speakerNotes = 'no speaker notes';
   }
-  const carriedPrompt = firstPromptParagraph(
-    renderPluginBriefTemplate(query, renderedInputs),
-  );
-  return carriedPrompt.trim() ? carriedPrompt : promptText;
+  return firstPromptParagraph(renderPluginBriefTemplate(query, inputs)) || promptText;
 }
 
 function normalizeHomeArtifactInputs(
   projectKind: ProjectKind | null,
   inputs: Record<string, unknown>,
-  confirmedInputNames: string[] = [],
+  inputFields: InputFieldSpec[],
+  confirmedInputNames: string[],
 ): Record<string, unknown> {
-  // Home exposes deck page quantity as a visible footer choice. Do not let the
-  // plugin manifest's default count stand in for user confirmation; choosing a
-  // real count later writes it back and prevents Quick Brief from re-asking.
-  if (projectKind !== 'deck' || !('slideCount' in inputs) || confirmedInputNames.includes('slideCount')) return inputs;
-  return { ...inputs, slideCount: '' };
+  if (projectKind !== 'deck') return inputs;
+  const next = { ...inputs };
+  if ('slideCount' in next && !confirmedInputNames.includes('slideCount')) next.slideCount = '';
+  if (
+    inputFields.some((field) => field.name === 'speakerNotes')
+    && !hasDeckSpeakerNotes(next.speakerNotes)
+  ) {
+    next.speakerNotes = 'no speaker notes';
+  }
+  return next;
 }
 
 function homeCreateProjectMetadata(
   projectKind: ProjectKind | null,
-  _inputs: Record<string, unknown> | null,
+  inputs: Record<string, unknown> | null,
   existing: ProjectMetadata | null,
+  confirmedInputNames: string[] = [],
+  inputFields: InputFieldSpec[] = [],
 ): ProjectMetadata | null {
   const kind = projectKind ?? existing?.kind ?? null;
   if (!kind) return existing;
 
-  // Artifact-specific settings are not stamped into project metadata here. If a
-  // user selects deck page quantity in Home, it travels through pluginInputs;
-  // otherwise the system prompt marks it unknown and Quick Brief asks.
   const next: ProjectMetadata = {
     ...(existing ?? {}),
     kind,
   };
+  if (kind === 'deck') {
+    if (confirmedInputNames.includes('slideCount') && hasDeckSlideCount(inputs?.slideCount)) {
+      next.slideCount = String(inputs?.slideCount).trim();
+    } else {
+      delete next.slideCount;
+    }
+    if (hasDeckSpeakerNotes(inputs?.speakerNotes)) {
+      next.speakerNotes = inputs?.speakerNotes === 'include speaker notes';
+    } else if (inputFields.some((field) => field.name === 'speakerNotes')) {
+      next.speakerNotes = false;
+    } else {
+      delete next.speakerNotes;
+    }
+  }
   return next;
 }
 
@@ -2158,15 +3787,14 @@ function selectableHomeDesignSystems(
   return [defaultSystem, ...sorted.filter((system) => system.id !== defaultSystem.id)];
 }
 
-// The composer's default selection title. A user-owned ("Personal") default
+// The composer's default selection id. A user-owned ("Personal") default
 // design system stays pre-selected; otherwise the composer defaults to
-// "不指定 / No design system" so nothing is imposed implicitly and the project
-// opens with an empty Design system.
-function homeDefaultDesignSystemTitle(
+// "不指定 / No design system" (null) so nothing is imposed implicitly and the
+// project opens with an empty Design system.
+function homeDefaultDesignSystemId(
   systems: DesignSystemSummary[],
   defaultDesignSystemId: string | null,
-  t: ReturnType<typeof useI18n>['t'],
-): string {
+): string | null {
   const defaultSystem = systems.find(
     (system) =>
       system.id === defaultDesignSystemId &&
@@ -2174,7 +3802,7 @@ function homeDefaultDesignSystemTitle(
       designSystemOptionGroup(system) === 'Personal' &&
       (system.status ?? 'draft') === 'published',
   );
-  return defaultSystem?.title ?? t('designSystemPicker.noneTitle');
+  return defaultSystem?.id ?? null;
 }
 
 function designSystemOptionGroup(
@@ -2210,23 +3838,38 @@ function withHomeDesignSystemDefault(
   };
 }
 
-// Resolve the composer's `designSystem` input (a title string) to the
-// designSystemId sent at submit. "不指定 / No design system" (or an unset
-// value) resolves to null so the project is created without a design system.
-function homeDesignSystemSelectionForInputs(
-  inputs: Record<string, unknown> | null,
-  systems: DesignSystemSummary[],
-  noneTitle: string,
-): string | null {
-  const value = inputs?.designSystem;
-  if (typeof value !== 'string') return null;
-  const selectedTitle = value.trim();
-  if (!selectedTitle || selectedTitle === noneTitle || selectedTitle === 'the active project design system') {
-    return null;
+// Supply values that are already part of the Home shell's active context for
+// plugin fields that otherwise have no input surface. Explicit request values
+// and manifest defaults remain authoritative.
+function withHomePluginContextDefaults(
+  provided: Record<string, unknown> | undefined,
+  fields: InputFieldSpec[],
+  defaultDesignSystemTitle: string,
+  workspaceName: string | undefined,
+): Record<string, unknown> | undefined {
+  const withDesignSystem = withHomeDesignSystemDefault(
+    provided,
+    fields,
+    defaultDesignSystemTitle,
+  );
+  const workspaceField = fields.find((field) => field.name === 'workspace_name');
+  const normalizedWorkspaceName = workspaceName?.trim();
+  if (
+    !workspaceField
+    || workspaceField.default !== undefined
+    || !normalizedWorkspaceName
+  ) {
+    return withDesignSystem;
   }
-  return systems.find((system) => system.title === selectedTitle)?.id ?? null;
+  const current = withDesignSystem?.workspace_name;
+  if (current !== undefined && current !== null && String(current).trim().length > 0) {
+    return withDesignSystem;
+  }
+  return {
+    ...(withDesignSystem ?? {}),
+    workspace_name: normalizedWorkspaceName,
+  };
 }
-
 
 function estimatePluginContextItemCount(
   record: InstalledPluginRecord,
@@ -2239,6 +3882,16 @@ function estimatePluginContextItemCount(
   const atomCount = context.atoms?.length ?? 0;
   const craftCount = context.craft?.length ?? 0;
   return assetCount + mcpCount + claudePluginCount + atomCount + craftCount;
+}
+
+// Single wording for "these required plugin fields are still empty", shared by
+// the pre-submit gate and the daemon-rejection path so both read identically.
+// Wording is unchanged from the original pre-submit gate — see the PR's copy
+// follow-up note: this string is hardcoded English and has no i18n key yet.
+function missingRequiredInputsMessage(missing: string[]): string {
+  return missing.length > 0
+    ? `Fill the required plugin ${missing.length === 1 ? 'parameter' : 'parameters'} before running: ${missing.join(', ')}.`
+    : 'Fill the required plugin parameters before running.';
 }
 
 function hydratePluginInputs(

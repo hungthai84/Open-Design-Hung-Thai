@@ -12,14 +12,29 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { DesignSystemSummary } from '@open-design/contracts';
+import type { DesignSystemSummary, WorkspaceCollabContext } from '@open-design/contracts';
 import { useI18n } from '../i18n';
 import {
   localizeDesignSystemCategory,
   localizeDesignSystemSummary,
 } from '../i18n/content';
-import { fetchDesignSystemPreview } from '../providers/registry';
+import { navigate } from '../router';
+import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
+import { useBrandsByDesignSystemId } from '../runtime/brands';
+import { DesignSystemKitPreview } from './DesignSystemKitPreview';
+import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
 import { Icon } from './Icon';
+import { ComposerPaletteIcon } from './chat/primitives/icons';
+
+// Mirror DesignSystemsTab's user/official split so the picker's grouping lines
+// up exactly with the "你的体系 / 官方预设" tabs in the Design Systems tab.
+function isUserSystem(system: DesignSystemSummary): boolean {
+  return system.source === 'user' || system.isEditable === true;
+}
+
+function isTeamSystem(system: DesignSystemSummary): boolean {
+  return system.teamShared === true || system.teamSynced === true;
+}
 
 interface PopoverAnchor {
   left: number;
@@ -36,22 +51,40 @@ interface Props {
   designSystems: DesignSystemSummary[];
   selectedId: string | null;
   loading?: boolean;
+  // Read-only viewer of a team-shared project cannot switch the design system.
+  disabled?: boolean;
   onChange: (id: string | null) => void;
-  /** Trigger pill styling only; the popover is identical. Defaults to 'project'. */
-  variant?: 'project' | 'footer';
+  /**
+   * Trigger styling only; the popover is identical across variants.
+   *   - 'project' (default): the chrome-header pill (`project-ds-picker-*`).
+   *   - 'footer': the home composer input-card footer pill.
+   *   - 'home': the home composer's persistent picker, sitting directly after
+   *     the upload disc in the card's foot row and matching its metrics.
+   *   - 'icon': a text-free palette icon button matching the composer
+   *     icon row (#5517's in-composer picker).
+   */
+  variant?: 'project' | 'footer' | 'home' | 'icon';
   /** Footer variant: visually-hidden label for the trigger button. */
   label?: string;
+  /** Hide the recursive "Create" action when the picker is already on create. */
+  showCreateAction?: boolean;
+  /** Project-owned identity used for preview reads while shell context catches up. */
+  workspaceContext?: WorkspaceCollabContext | null;
 }
 
 export function DesignSystemPicker({
   designSystems,
   selectedId,
   loading,
+  disabled = false,
   onChange,
   variant = 'project',
   label,
+  showCreateAction = true,
+  workspaceContext,
 }: Props) {
   const { locale, t } = useI18n();
+  const triggerDisabled = Boolean(loading || disabled);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [anchor, setAnchor] = useState<PopoverAnchor | null>(null);
@@ -63,26 +96,32 @@ export function DesignSystemPicker({
   // Tracks whether the "不指定 / No design system" row is the active preview
   // target (hovered), so its right-pane blurb shows instead of a system preview.
   const [hoveredNone, setHoveredNone] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [fullscreenPreview, setFullscreenPreview] = useState(false);
+  const [previewModalSystem, setPreviewModalSystem] = useState<DesignSystemSummary | null>(null);
 
   const selected = useMemo(
     () => designSystems.find((d) => d.id === selectedId) ?? null,
     [designSystems, selectedId],
   );
 
+  // Map each `user:<id>` design system to its backing brand so a selected /
+  // hovered brand previews the rich Brand Kit card instead of the thin
+  // design-system summary. Fetched lazily on first open; a non-brand system
+  // (bundled / imported) is absent from the map and keeps the thin preview.
+  const brandsByDesignSystem = useBrandsByDesignSystemId(open);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   useEffect(() => {
     if (!open) return;
     function onPointer(e: MouseEvent) {
-      if (fullscreenPreview) return;
       const target = e.target as Node;
       if (wrapRef.current?.contains(target)) return;
       if (popoverRef.current?.contains(target)) return;
       setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (fullscreenPreview) return;
       if (e.key === 'Escape') setOpen(false);
     }
     document.addEventListener('mousedown', onPointer);
@@ -91,7 +130,7 @@ export function DesignSystemPicker({
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
     };
-  }, [fullscreenPreview, open]);
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return undefined;
@@ -100,7 +139,7 @@ export function DesignSystemPicker({
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const viewport = window.innerWidth;
-      const popoverWidth = Math.min(440, Math.max(280, viewport - 24));
+      const popoverWidth = Math.min(640, Math.max(320, viewport - 24));
       const left = Math.max(8, Math.min(viewport - popoverWidth - 8, rect.left));
       const gap = 6;
       const margin = 12;
@@ -141,18 +180,8 @@ export function DesignSystemPicker({
       setQuery('');
       setHovered(null);
       setHoveredNone(false);
-      setFullscreenPreview(false);
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!fullscreenPreview) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setFullscreenPreview(false);
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [fullscreenPreview]);
 
   // Resolve what the right pane previews. Priority: a hovered system, the
   // hovered "不指定" row, the selected system, then "不指定" when nothing is
@@ -166,32 +195,6 @@ export function DesignSystemPicker({
     else previewNone = true;
   }
 
-  useEffect(() => {
-    if (!previewSystem) {
-      setPreviewHtml(null);
-      setPreviewLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setPreviewLoading(true);
-    void fetchDesignSystemPreview(previewSystem.id)
-      .then((html) => {
-        if (cancelled) return;
-        setPreviewHtml(html);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setPreviewHtml(null);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setPreviewLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [previewSystem?.id]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q.length === 0) return designSystems;
@@ -203,6 +206,20 @@ export function DesignSystemPicker({
     });
   }, [query, designSystems, locale]);
 
+  // Split the filtered list into the same scopes the Design Systems tab uses:
+  // personal first, then team-shared systems, then official presets.
+  const { userSystems, teamSystems, officialSystems } = useMemo(() => {
+    const mine: DesignSystemSummary[] = [];
+    const team: DesignSystemSummary[] = [];
+    const official: DesignSystemSummary[] = [];
+    for (const system of filtered) {
+      if (isTeamSystem(system)) team.push(system);
+      else if (isUserSystem(system)) mine.push(system);
+      else official.push(system);
+    }
+    return { userSystems: mine, teamSystems: team, officialSystems: official };
+  }, [filtered]);
+
   const selectDesignSystem = (id: string | null) => {
     onChange(id);
     setOpen(false);
@@ -212,6 +229,64 @@ export function DesignSystemPicker({
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     selectDesignSystem(id);
+  };
+
+  const renderOption = (d: DesignSystemSummary) => {
+    const active = d.id === selectedId;
+    return (
+      <button
+        key={d.id}
+        type="button"
+        className={`project-ds-picker-option${active ? ' active' : ''}`}
+        role="option"
+        aria-selected={active}
+        onMouseEnter={() => {
+          setHovered(d);
+          setHoveredNone(false);
+        }}
+        onFocus={() => {
+          setHovered(d);
+          setHoveredNone(false);
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          selectDesignSystem(d.id);
+        }}
+        onKeyDown={(event) => selectDesignSystemOnKeyDown(event, d.id)}
+        data-testid={`project-ds-picker-option-${d.id}`}
+      >
+        <div className="project-ds-picker-option-head">
+          <span className="project-ds-picker-option-title">{d.title}</span>
+          {active ? (
+            <span
+              className="project-ds-picker-option-check"
+              data-testid={`project-ds-picker-option-${d.id}-check`}
+            >
+              <Icon name="check" size={12} strokeWidth={2} />
+            </span>
+          ) : null}
+        </div>
+      </button>
+    );
+  };
+
+  // Clear: reset the search query and deselect any chosen system (back to "No
+  // design system") without closing, so the user can keep browsing. Create:
+  // jump to the standalone design-system creation page, closing the popover.
+  const clearSelection = () => {
+    setQuery('');
+    onChange(null);
+    inputRef.current?.focus();
+  };
+  const createDesignSystem = () => {
+    setOpen(false);
+    setPendingDesignSystemCreateEntry('composer_picker');
+    navigate({ kind: 'design-system-create' });
+  };
+
+  const openSystemPreview = (system: DesignSystemSummary) => {
+    setOpen(false);
+    setPreviewModalSystem(system);
   };
 
   // The trigger shows a neutral palette icon rather than a few swatches: a 3-dot
@@ -237,7 +312,13 @@ export function DesignSystemPicker({
             }}
           >
             <div className="project-ds-picker-search">
-              <Icon name="search" size={12} />
+              {/* Sized to READ the same as the composer row's type-pill glyph
+                  above (per product), which is a 14px Remix mark whose ink
+                  covers ~83% of its box = 11.7px. `search-line` covers 84.6%,
+                  so the row's nominal 14 lands it on 11.9 — the same mark, no
+                  correction needed. The `add-line` below is the exception; see
+                  there. */}
+              <Icon name="search" size={14} />
               <input
                 ref={inputRef}
                 type="text"
@@ -246,6 +327,32 @@ export function DesignSystemPicker({
                 placeholder={t('designSystemPicker.searchCompactPlaceholder')}
                 data-testid="project-ds-picker-search"
               />
+              <button
+                type="button"
+                className="project-ds-picker-action"
+                data-testid="project-ds-picker-clear"
+                onClick={clearSelection}
+              >
+                {t('common.clear')}
+              </button>
+              {showCreateAction ? (
+                <button
+                  type="button"
+                  className="project-ds-picker-action project-ds-picker-action--primary"
+                  data-testid="project-ds-picker-create"
+                  onClick={createDesignSystem}
+                >
+                  {/* 20, not the 14 the search glyph beside it takes:
+                      `add-line` is a bare cross that covers only 58.3% of its
+                      own box, where the type-pill mark this is being matched to
+                      covers ~83%. 20 x 0.583 = 11.7px of ink — the same drawn
+                      size, reached from a bigger box. (`strokeWidth` used to
+                      ride along here and never did anything: `plus` resolves
+                      through REMIX_ICON to a filled path, not a stroked one.) */}
+                  <Icon name="plus" size={20} />
+                  <span>{t('common.create')}</span>
+                </button>
+              ) : null}
             </div>
             <div className="project-ds-picker-body">
               <div className="project-ds-picker-list" role="listbox">
@@ -275,49 +382,41 @@ export function DesignSystemPicker({
                         className="project-ds-picker-option-check"
                         data-testid="project-ds-picker-option-none-check"
                       >
-                        <Icon name="check" size={13} strokeWidth={2} />
+                        <Icon name="check" size={12} strokeWidth={2} />
                       </span>
                     ) : null}
                   </div>
                 </button>
-                {filtered.map((d) => {
-                  const active = d.id === selectedId;
-                  return (
-                    <button
-                      key={d.id}
-                      type="button"
-                      className={`project-ds-picker-option${active ? ' active' : ''}`}
-                      role="option"
-                      aria-selected={active}
-                      onMouseEnter={() => {
-                        setHovered(d);
-                        setHoveredNone(false);
-                      }}
-                      onFocus={() => {
-                        setHovered(d);
-                        setHoveredNone(false);
-                      }}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        selectDesignSystem(d.id);
-                      }}
-                      onKeyDown={(event) => selectDesignSystemOnKeyDown(event, d.id)}
-                      data-testid={`project-ds-picker-option-${d.id}`}
-                    >
-                      <div className="project-ds-picker-option-head">
-                        <span className="project-ds-picker-option-title">{d.title}</span>
-                        {active ? (
-                          <span
-                            className="project-ds-picker-option-check"
-                            data-testid={`project-ds-picker-option-${d.id}-check`}
-                          >
-                            <Icon name="check" size={13} strokeWidth={2} />
-                          </span>
-                        ) : null}
-                      </div>
-                    </button>
-                  );
-                })}
+                {userSystems.length > 0 ? (
+                  <div
+                    className="project-ds-picker-group-label"
+                    role="presentation"
+                    data-testid="project-ds-picker-group-mine"
+                  >
+                    {t('dsManager.yourSystems')}
+                  </div>
+                ) : null}
+                {userSystems.map(renderOption)}
+                {teamSystems.length > 0 ? (
+                  <div
+                    className="project-ds-picker-group-label"
+                    role="presentation"
+                    data-testid="project-ds-picker-group-team"
+                  >
+                    {t('pluginsView.tab.team')}
+                  </div>
+                ) : null}
+                {teamSystems.map(renderOption)}
+                {officialSystems.length > 0 ? (
+                  <div
+                    className="project-ds-picker-group-label"
+                    role="presentation"
+                    data-testid="project-ds-picker-group-official"
+                  >
+                    {t('dsManager.officialPresets')}
+                  </div>
+                ) : null}
+                {officialSystems.map(renderOption)}
                 {filtered.length === 0 ? (
                   <div className="project-ds-picker-empty">{t('designSystemPicker.empty')}</div>
                 ) : null}
@@ -333,63 +432,29 @@ export function DesignSystemPicker({
                     </p>
                   </div>
                 ) : previewSystem ? (
-                  <>
-                    <div className="project-ds-picker-preview-head">
-                      <strong>{previewSystem.title}</strong>
-                    </div>
-                    {previewSystem.summary ? (
-                      <p className="project-ds-picker-preview-summary">
-                        {localizeDesignSystemSummary(locale, previewSystem)}
-                      </p>
-                    ) : null}
-                    {previewSystem.swatches && previewSystem.swatches.length > 0 ? (
-                      <div className="project-ds-picker-preview-swatches">
-                        {previewSystem.swatches.slice(0, 12).map((sw, i) => (
-                          <span
-                            key={`${previewSystem.id}-pv-sw-${i}`}
-                            className="project-ds-picker-preview-swatch"
-                            style={{ background: sw }}
-                            title={sw}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                    {previewLoading ? (
-                      <div className="project-ds-picker-preview-stage">
-                        <div className="project-ds-picker-preview-loading">
-                          {t('designSystemPicker.loadingPreview')}
-                        </div>
-                      </div>
-                    ) : previewHtml ? (
-                      <div className="project-ds-picker-preview-stage">
-                        <iframe
-                          className="project-ds-picker-preview-frame"
-                          data-testid="project-ds-picker-preview-frame"
-                          srcDoc={previewHtml}
-                          sandbox="allow-scripts"
-                          scrolling="no"
-                          title={t('designSystemPicker.previewFrameTitle', { title: previewSystem.title })}
-                        />
-                        <button
-                          type="button"
-                          className="project-ds-picker-preview-expand"
-                          data-testid="project-ds-picker-preview-expand"
-                          onClick={() => setFullscreenPreview(true)}
-                          title={t('designSystemPicker.openPreview')}
-                          aria-label={t('designSystemPicker.openPreview')}
-                        >
-                          <Icon name="eye" size={13} strokeWidth={1.9} />
-                          <span>{t('designSystemPicker.openPreview')}</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="project-ds-picker-preview-stage">
-                        <div className="project-ds-picker-preview-empty">
-                          {t('designSystemPicker.noPreview')}
-                        </div>
-                      </div>
-                    )}
-                  </>
+                  <div
+                    className="project-ds-picker-preview-kit-wrap"
+                    data-testid="project-ds-picker-preview-kit-wrap"
+                  >
+                    <DesignSystemKitPreview
+                      system={previewSystem}
+                      workspaceContext={workspaceContext}
+                      brandSummary={brandsByDesignSystem.get(previewSystem.id) ?? null}
+                      variant="compact"
+                      showCover={false}
+                      className="project-ds-picker-preview-kit"
+                      dataTestId="project-ds-picker-preview-kit"
+                    />
+                    <button
+                      type="button"
+                      className="project-ds-picker-preview-open"
+                      data-testid="project-ds-picker-preview-expand"
+                      onClick={() => openSystemPreview(previewSystem)}
+                    >
+                      <Icon name="eye" size={12} strokeWidth={1.9} />
+                      <span>{t('designSystemPicker.openPreview')}</span>
+                    </button>
+                  </div>
                 ) : (
                   <div className="project-ds-picker-preview-stage">
                     <div className="project-ds-picker-preview-empty">
@@ -404,50 +469,111 @@ export function DesignSystemPicker({
         )
       : null;
 
-  const fullscreen: ReactNode =
-    fullscreenPreview && previewSystem && previewHtml && typeof document !== 'undefined'
-      ? createPortal(
-          <div
-            className="project-ds-picker-fullscreen"
-            role="dialog"
-            aria-label={t('designSystemPicker.fullscreenAria', { title: previewSystem.title })}
-            onClick={(event) => {
-              if (event.target === event.currentTarget) {
-                setFullscreenPreview(false);
-              }
+  const previewModal: ReactNode = previewModalSystem ? (
+    <DesignSystemPreviewModal
+      system={previewModalSystem}
+      workspaceContext={workspaceContext}
+      onClose={() => setPreviewModalSystem(null)}
+    />
+  ) : null;
+
+  if (variant === 'icon') {
+    return (
+      <div
+        ref={wrapRef}
+        className="composer-ds-icon"
+        data-testid="composer-design-system-picker"
+      >
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`icon-btn composer-ds-icon-trigger od-tooltip${open ? ' is-active' : ''}${selected ? ' is-picked' : ''}`}
+          data-testid="composer-design-system-trigger"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={selected?.title ?? t('designSystemPicker.noneTitle')}
+          data-tooltip={selected?.title ?? t('designSystemPicker.noneTitle')}
+          disabled={loading}
+          title={selected?.title ?? t('designSystemPicker.noneTitle')}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <ComposerPaletteIcon size={16} />
+          {selected ? (
+            <span className="composer-ds-icon-trigger-label">{selected.title}</span>
+          ) : null}
+        </button>
+        {popover}
+        {previewModal}
+      </div>
+    );
+  }
+
+  if (variant === 'home') {
+    const triggerLabel = selected?.title ?? t('newproj.designSystem');
+    const clearLabel = selected ? `${t('common.clear')}: ${selected.title}` : undefined;
+    return (
+      <div
+        ref={wrapRef}
+        className="home-hero__ds-row-picker"
+        data-testid="home-hero-design-system-picker"
+      >
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`home-hero__ds-row-trigger${selected ? ' is-selected' : ' is-icon-only od-tooltip'}`}
+          data-testid="home-hero-design-system-trigger"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          disabled={triggerDisabled}
+          /* Unselected the control is the palette glyph alone (per product:
+             不选择不显示文案), so the field name lives on the tooltip + this
+             label rather than in the pill. The tooltip is the app's own
+             `od-tooltip` bubble, the same one the "+" trigger beside it uses,
+             not the browser's native `title` — the two sat in one row and
+             showed two different styles. Once a system is picked its name is
+             on the pill, so the bubble would only repeat it (the "+" trigger
+             drops its bubble for the same reason once it carries a label). */
+          {...(selected ? {} : { 'data-tooltip': triggerLabel })}
+          aria-label={triggerLabel}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {/* 16px is the composer row's icon size — the upload disc, this
+              palette and the type pill's glyph all match the working-directory
+              picker below them (per product: 这个位置的 icon 全部统一 16，包括
+              hover 后的 icon; was 14 across the same set). No chevron for the
+              same reason: the upload trigger opens a menu without one. */}
+          <span className="home-hero__ds-row-trigger-icon" aria-hidden>
+            <Icon name="palette" size={16} className="home-hero__ds-row-trigger-icon-default" />
+          </span>
+          {selected ? (
+            <span className="home-hero__ds-row-trigger-label">{selected.title}</span>
+          ) : null}
+        </button>
+        {selected ? (
+          <button
+            type="button"
+            className="home-hero__ds-row-clear"
+            aria-label={clearLabel}
+            title={clearLabel}
+            disabled={triggerDisabled}
+            onClick={() => {
+              setOpen(false);
+              onChange(null);
             }}
           >
-            <div className="project-ds-picker-fullscreen-frame">
-              <div className="project-ds-picker-fullscreen-head">
-                <div className="project-ds-picker-fullscreen-title">
-                  <strong>{previewSystem.title}</strong>
-                  {previewSystem.category ? (
-                    <span className="project-ds-picker-preview-cat">
-                      {localizeDesignSystemCategory(locale, previewSystem.category)}
-                    </span>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="project-ds-picker-fullscreen-close"
-                  onClick={() => setFullscreenPreview(false)}
-                  aria-label={t('designSystemPicker.closeFullscreen')}
-                  title={t('designSystemPicker.closeEsc')}
-                >
-                  <Icon name="close" size={18} strokeWidth={2.1} />
-                </button>
-              </div>
-              <iframe
-                className="project-ds-picker-fullscreen-iframe"
-                srcDoc={previewHtml}
-                sandbox="allow-same-origin"
-                title={t('designSystemPicker.fullscreenFrameTitle', { title: previewSystem.title })}
-              />
-            </div>
-          </div>,
-          document.body,
-        )
-      : null;
+            {/* 16, matching the type pill's clear next to it and the palette
+                this replaces on hover — the row's icons all carry the same box
+                and none of them changes size on hover (per product: 两个叉号和
+                没有 hover 时的图标一样大). See TemplatePicker for the optical
+                argument that once put both at 22; product overruled it. */}
+            <Icon name="close" size={16} />
+          </button>
+        ) : null}
+        {popover}
+        {previewModal}
+      </div>
+    );
+  }
 
   if (variant === 'footer') {
     return (
@@ -464,7 +590,7 @@ export function DesignSystemPicker({
           data-testid="home-hero-footer-option-designSystem"
           aria-haspopup="listbox"
           aria-expanded={open}
-          disabled={loading}
+          disabled={triggerDisabled}
           onClick={() => setOpen((v) => !v)}
         >
           {triggerSwatches}
@@ -473,10 +599,10 @@ export function DesignSystemPicker({
               ? t('designSystemPicker.loading')
               : selected?.title ?? t('designSystemPicker.noneTitle')}
           </span>
-          <Icon name="chevron-down" size={12} aria-hidden />
+          <Icon name="chevron-down" size={14} aria-hidden />
         </button>
         {popover}
-        {fullscreen}
+        {previewModal}
       </div>
     );
   }
@@ -492,8 +618,10 @@ export function DesignSystemPicker({
         type="button"
         className={`project-ds-picker-trigger${selected ? ' picked' : ''}`}
         data-testid="project-ds-picker-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        disabled={loading}
+        disabled={triggerDisabled}
         title={selected?.title ?? t('designSystemPicker.select')}
       >
         {triggerSwatches}
@@ -505,7 +633,7 @@ export function DesignSystemPicker({
         <Icon name="chevron-down" size={11} />
       </button>
       {popover}
-      {fullscreen}
+      {previewModal}
     </div>
   );
 }

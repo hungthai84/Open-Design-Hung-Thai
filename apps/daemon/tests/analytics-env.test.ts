@@ -5,16 +5,21 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 const posthogCapture = vi.hoisted(() => vi.fn());
+const posthogGroupIdentify = vi.hoisted(() => vi.fn());
 const posthogShutdown = vi.hoisted(() => vi.fn(async () => undefined));
-
-vi.mock('posthog-node', () => ({
-  PostHog: vi.fn(function PostHogMock() {
+const posthogCtor = vi.hoisted(() =>
+  vi.fn(function PostHogMock(_key: string, _options?: Record<string, unknown>) {
     return {
       capture: posthogCapture,
+      groupIdentify: posthogGroupIdentify,
       on: vi.fn(),
       shutdown: posthogShutdown,
     };
   }),
+);
+
+vi.mock('posthog-node', () => ({
+  PostHog: posthogCtor,
 }));
 
 describe('analytics telemetry environment', () => {
@@ -29,6 +34,24 @@ describe('analytics telemetry environment', () => {
       env: 'local_development',
       key: 'phc_test',
     });
+  });
+
+  it('enables GeoIP so daemon events get user country from their real IP', async () => {
+    // posthog-node defaults disableGeoip:true (it assumes a datacenter
+    // deployment). The daemon runs on the user's own machine, so its
+    // ingestion IP is the user's real public IP and country enrichment is
+    // accurate — the service must explicitly opt back in or every
+    // daemon-emitted event lands in the null-country bucket.
+    posthogCtor.mockClear();
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'od-analytics-geoip-'));
+    const { createAnalyticsService } = await import('../src/analytics.js');
+    createAnalyticsService({
+      dataDir,
+      env: { POSTHOG_KEY: 'phc_test', OD_TELEMETRY_ENV: 'local_development' },
+    });
+
+    expect(posthogCtor).toHaveBeenCalledTimes(1);
+    expect(posthogCtor.mock.calls[0]?.[1]).toMatchObject({ disableGeoip: false });
   });
 
   it('stamps daemon PostHog captures with env', async () => {
@@ -47,7 +70,7 @@ describe('analytics telemetry environment', () => {
       },
     });
 
-    analytics.capture({
+    const delivery = await analytics.capture({
       eventName: 'unit_event',
       appVersion: '1.2.3',
       context: {
@@ -70,5 +93,102 @@ describe('analytics telemetry environment', () => {
         env: 'local_development',
       },
     });
+    expect(delivery).toEqual({
+      status: 'queued',
+      acknowledgement: 'local_buffer',
+      errorType: null,
+    });
+  });
+
+  it('updates a workspace group only when analytics consent is enabled', async () => {
+    posthogGroupIdentify.mockReset();
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'od-analytics-group-'));
+    await writeFile(path.join(dataDir, 'app-config.json'), JSON.stringify({
+      installationId: 'install-1',
+      telemetry: { metrics: true },
+    }));
+    const { createAnalyticsService } = await import('../src/analytics.js');
+    const analytics = createAnalyticsService({
+      dataDir,
+      env: { POSTHOG_KEY: 'phc_test', OD_TELEMETRY_ENV: 'local_development' },
+    });
+
+    await analytics.identifyGroup({
+      context: {
+        deviceId: 'device-1',
+        sessionId: 'session-1',
+        clientType: 'web',
+        locale: 'en',
+        requestId: null,
+      },
+      groupType: 'workspace',
+      groupKey: 'workspace-1',
+      properties: { member_count: 3, project_count: 8, ignored: null },
+    });
+
+    expect(posthogGroupIdentify).toHaveBeenCalledWith({
+      groupType: 'workspace',
+      groupKey: 'workspace-1',
+      distinctId: 'device-1',
+      properties: { member_count: 3, project_count: 8 },
+    });
+  });
+
+  it('returns a bounded enqueue failure without exposing the thrown error', async () => {
+    posthogCapture.mockReset();
+    posthogCapture.mockImplementationOnce(() => {
+      throw new Error('network path and private details');
+    });
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'od-analytics-enqueue-failure-'));
+    await writeFile(path.join(dataDir, 'app-config.json'), JSON.stringify({
+      telemetry: { metrics: true },
+    }));
+    const { createAnalyticsService } = await import('../src/analytics.js');
+    const analytics = createAnalyticsService({
+      dataDir,
+      env: { POSTHOG_KEY: 'phc_test' },
+    });
+
+    await expect(analytics.capture({
+      eventName: 'run_finished',
+      appVersion: '1.2.3',
+      context: {
+        deviceId: 'device-1', sessionId: 'session-1', clientType: 'web',
+        locale: 'en', requestId: null,
+      },
+      insertId: 'insert-1',
+      properties: {},
+    })).resolves.toEqual({
+      status: 'failed', acknowledgement: 'none', errorType: 'enqueue_failed',
+    });
+  });
+
+  it('reports metrics opt-out as not expected rather than a delivery failure', async () => {
+    posthogCapture.mockReset();
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'od-analytics-consent-off-'));
+    await writeFile(path.join(dataDir, 'app-config.json'), JSON.stringify({
+      telemetry: { metrics: false },
+    }));
+    const { createAnalyticsService } = await import('../src/analytics.js');
+    const analytics = createAnalyticsService({
+      dataDir,
+      env: { POSTHOG_KEY: 'phc_test' },
+    });
+
+    await expect(analytics.capture({
+      eventName: 'run_finished',
+      appVersion: '1.2.3',
+      context: {
+        deviceId: 'device-1', sessionId: 'session-1', clientType: 'web',
+        locale: 'en', requestId: null,
+      },
+      insertId: 'insert-1',
+      properties: {},
+    })).resolves.toEqual({
+      status: 'not_expected',
+      acknowledgement: 'none',
+      errorType: 'metrics_consent_disabled',
+    });
+    expect(posthogCapture).not.toHaveBeenCalled();
   });
 });

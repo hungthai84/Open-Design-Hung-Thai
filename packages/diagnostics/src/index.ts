@@ -4,6 +4,9 @@ export {
   DIAGNOSTICS_FILENAME_PREFIX,
 } from "./contract.js";
 
+export { buildAutomaticDiagnostics, DIAGNOSTIC_CHUNK_BYTES, DIAGNOSTIC_DELIVERY_LOG_PREFIX, DIAGNOSTIC_MAX_BYTES,
+  type AutomaticDiagnosticManifest, type AutomaticDiagnosticSource } from './automatic.js';
+
 export {
   redactJsonValue,
   redactJsonText,
@@ -14,8 +17,10 @@ export {
 export {
   collectLogSource,
   collectLogSources,
+  findCrashDumps,
   findMacOSCrashReports,
   type CollectedFile,
+  type CrashDumpLookup,
   type CrashReportLookup,
   type LogSource,
   type LogSourceKind,

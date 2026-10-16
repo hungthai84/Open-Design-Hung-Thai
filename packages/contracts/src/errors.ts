@@ -1,3 +1,4 @@
+import type { ApiFailureDetail } from './api/failure-detail.js';
 import type { JsonValue } from './common.js';
 
 export const API_ERROR_CODES = [
@@ -22,9 +23,25 @@ export const API_ERROR_CODES = [
   // triage can count this failure class by code.
   'AGENT_CONNECTION_DROPPED',
   'AGENT_PROMPT_TOO_LARGE',
+  // An ACP agent CLI answered `initialize` and then refused to open a session
+  // (`session/new` / `session/load`) without naming a cause of its own — the
+  // shape Kimi Code 0.37.x / 0.38.0 fails in. Nothing streamed, so the run
+  // produced nothing, and re-running the identical request against the
+  // identical build only reproduces it. The one variable left is the installed
+  // CLI build, so clients render "this version can't start a session — change
+  // it, then retry" from THIS code rather than from any sentence the daemon
+  // writes: a daemon-authored string never passes through the client's i18n.
+  // The agent's own JSON-RPC line stays in the error `message` (it is both the
+  // classifier's input and the text the error card shows under details), and
+  // `details` carries the runtime identity the localized copy interpolates:
+  // `{ kind: 'agent_cli', action: 'update_cli', agent? }`.
+  // A handshake failure that DOES name its cause (signed out, throttled, no
+  // credit, upstream 5xx) keeps that cause's own code instead.
+  'AGENT_CLI_SESSION_REFUSED',
   'AMR_MODEL_UNAVAILABLE',
   'AMR_AUTH_REQUIRED',
   'AMR_INSUFFICIENT_BALANCE',
+  'AMR_TIER_UPGRADE_REQUIRED',
   // The agent emitted a fabricated Markdown role marker
   // (`## user` / `## assistant` / `## system`) inside its own response.
   // The chat host parses those lowercase lines as real turn
@@ -37,6 +54,18 @@ export const API_ERROR_CODES = [
   // `server.ts::abortForRoleMarker` alongside the existing
   // `fabricated_role_marker` warning event. Retryable.
   'ROLE_MARKER_HALLUCINATION',
+  // The agent got stuck repeating failing tool calls (e.g. re-running the same
+  // Edit that errors "string not found", or the same shell command that keeps
+  // exiting non-zero) without making progress. The daemon's tool-loop guard
+  // (`tool-loop-guard.ts`) counts consecutive failures and repeats of the same
+  // failing action. Only emitted when OD_TOOL_LOOP_GUARD=halt is enabled: at
+  // the hard ceiling the guard terminates the run so the agent cannot grind
+  // through dozens more identical attempts. The default mode is `warn`, which
+  // only surfaces a heads-up `tool_loop` event and never emits this error. The
+  // caller should re-check the actual target (the file, the element, the
+  // command) before retrying rather than resubmitting the same turn.
+  // OD_TOOL_LOOP_GUARD accepts warn|halt|off. Retryable.
+  'TOOL_LOOP_DETECTED',
   // The selected runtime agent def (apps/daemon/src/runtimes/defs/*) has
   // a checked-in field that fails strict source-config validation — e.g.
   // a non-integer, NaN, Infinity, or negative `inactivityTimeoutMs`
@@ -46,6 +75,7 @@ export const API_ERROR_CODES = [
   // than silently disabling the agent-specific watchdog.
   'AGENT_RUNTIME_DEF_INVALID',
   'PROJECT_NOT_FOUND',
+  'PROJECT_MATERIALIZATION_PENDING',
   // Handoff (`POST /api/projects/:id/handoff`): the requested conversation
   // is not in the project, or has no messages to synthesize a handoff from.
   'CONVERSATION_NOT_FOUND',
@@ -105,6 +135,60 @@ export const API_ERROR_CODES = [
   'CONNECTOR_RATE_LIMITED',
   'CONNECTOR_OUTPUT_TOO_LARGE',
   'CONNECTOR_EXECUTION_FAILED',
+  // Team-edition copy red-line (AC-9). A frozen or deleted team resource
+  // (design system / plugin / skill) may not be copied out to a personal,
+  // editable copy — the escape hole that would let a downgraded team keep using
+  // frozen content. Enforced server-side by assertTeamResourceCopyAllowed
+  // (api/team-resources.ts) at every copy-out route; UI graying is not enough.
+  // Workspace-scoped project creation/import failures. These are public route
+  // errors shared by ordinary project creation, folder/ZIP import, Desktop
+  // host import, and Plugin Remix.
+  'WORKSPACE_CONTEXT_INCOMPLETE',
+  'WORKSPACE_PROJECT_PERMISSION_DENIED',
+  'WORKSPACE_AUTHORITY_UNAVAILABLE',
+  'WORKSPACE_RESOURCE_FROZEN',
+  'WORKSPACE_RESOURCE_DELETED',
+  // Moving a project into the team space was refused because the team hub
+  // already registers the project under a DIFFERENT member's ownership
+  // (vela `team_project_owner_conflict`). This is a permanent ownership
+  // conflict, not a transient failure: retrying cannot succeed until the
+  // registered owner unshares the project, so clients must not render it as
+  // a "try again later" error.
+  'TEAM_PROJECT_OWNER_CONFLICT',
+  // `POST /api/runs/:id/steer` (B11 「引导对话」): the run's runtime cannot take
+  // a mid-turn user message at all. Only a `promptInputFormat: 'stream-json'`
+  // runtime keeps the child's stdin open past the opening prompt; every other
+  // runtime closes it together with the prompt, so a later write would go
+  // nowhere. This is a permanent property of the selected agent, NOT a
+  // transient state — clients must stop advertising the affordance rather than
+  // retry. Not retryable.
+  'RUN_STEERING_UNSUPPORTED',
+  // `POST /api/runs/:id/steer`: the runtime supports steering but this run can
+  // no longer receive it — the run reached a terminal status, or its turn ended
+  // cleanly and the daemon closed stdin (a `stop_reason: 'tool_use'` pause does
+  // NOT close it, and stays steerable). The message was NOT delivered and NOT
+  // written to the conversation; the caller should send it as a new turn.
+  // Not retryable against the same run.
+  'RUN_STEERING_CLOSED',
+  // A design-system enrichment ("AI Optimize") run was requested while the
+  // same conversation already has a non-terminal run. The enrichment turn is
+  // a hidden seeded prompt that refines the registered design system in
+  // place, so a second concurrent pass bills twice and races on the same
+  // files (2026-07-28: one double-triggered affordance billed two runs). The
+  // daemon rejects the newcomer with HTTP 409 and names the run that already
+  // owns the conversation in `details` (`DesignSystemEnrichmentInProgressDetails`)
+  // so a client can attach to it instead of starting another. Not retryable
+  // while that run is active; ordinary chat turns are never gated by this.
+  'DESIGN_SYSTEM_ENRICHMENT_IN_PROGRESS',
+  // POST /api/projects bounds every read-only preparation step that runs
+  // before the project/conversation transaction (design-system and skill
+  // validation, plugin and location lookups, plugin registry loads, template
+  // seeding) with one request-wide deadline. When the deadline passes the
+  // daemon answers HTTP 504 with this code and commits nothing, so a client
+  // that already entered an optimistic project surface can roll back to its
+  // composer instead of waiting on a stalled create. Retryable: the same
+  // client-minted project id may be resubmitted.
+  'PROJECT_CREATE_PREPARATION_TIMEOUT',
   'INTERNAL_ERROR',
 ] as const;
 
@@ -117,6 +201,8 @@ export interface ApiError {
   retryable?: boolean;
   requestId?: string;
   taskId?: string;
+  /** Optional closed-token classification; see `api/failure-detail.ts`. */
+  failure?: ApiFailureDetail;
 }
 
 export interface ApiErrorResponse {
@@ -147,6 +233,17 @@ export type CompatibleErrorResponse = ApiErrorResponse | LegacyErrorResponse;
 export interface SseErrorPayload {
   message: string;
   error?: ApiError;
+  /**
+   * Bounded, secret-redacted tail of what the agent process printed to stderr
+   * during this run — the ORIGINAL cause behind a failure whose `message` is
+   * necessarily generic (e.g. "…exited without a terminal result").
+   *
+   * Produced daemon-side by `failureCardStderrTail`, so the bound (a tail of
+   * lines, capped in bytes) and the redaction both happen before the text
+   * crosses the process boundary. Absent when the run wrote no stderr —
+   * consumers must render nothing rather than an empty section.
+   */
+  stderrTail?: string;
 }
 
 export function createApiError(code: ApiErrorCode, message: string, init: Omit<ApiError, 'code' | 'message'> = {}): ApiError {
