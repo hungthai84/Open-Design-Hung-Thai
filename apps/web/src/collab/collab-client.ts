@@ -12,12 +12,15 @@ import type {
   ProjectContentTransferState,
   ProjectSyncState,
   WorkspaceCollabContext,
+  OwnedProjectContentUpdate,
+  OwnedProjectContentUpdateRequest,
 } from '@open-design/contracts';
 
 // Presence identity is the shared contract DTO; re-export so collab consumers
 // keep importing it from the client module.
 import { coalescedGet, evictCoalescedGet } from '../lib/coalesced-get';
 import { randomUUID } from '../utils/uuid';
+import { parseOwnedProjectContentUpdate } from '@open-design/contracts';
 import {
   workspaceIdentityCacheKey,
   workspaceProjectHeaders,
@@ -25,6 +28,7 @@ import {
 export type { CollabPresenceMember };
 
 export interface CollabSnapshot {
+  ownedContentUpdate?: OwnedProjectContentUpdate | null;
   present: CollabPresenceMember[];
   publishedVersion: number | null;
   materializedVersion: number | null;
@@ -173,6 +177,7 @@ export class CollabClient {
   /** Consecutive failed heartbeat requests; any success resets it. */
   private heartbeatFailureStreak = 0;
   private running = false;
+  private ownedContentGeneration = 0;
   private onVisibilityChange: (() => void) | null = null;
 
   constructor(options: CollabClientOptions) {
@@ -322,6 +327,18 @@ export class CollabClient {
   async pull(): Promise<number | null> {
     const body = await this.post('/collab/pull');
     return typeof body?.version === 'number' ? body.version : null;
+  }
+
+  async requestContentUpdate(input: OwnedProjectContentUpdateRequest): Promise<OwnedProjectContentUpdate> {
+    const generation = ++this.ownedContentGeneration;
+    const body = await this.post('/collab/update', input);
+    const update = parseOwnedProjectContentUpdate(body?.update);
+    if (!update) throw new Error('invalid cloud update response');
+    if (generation === this.ownedContentGeneration) {
+      ++this.ownedContentGeneration;
+      this.update({ ownedContentUpdate: update });
+    }
+    return update;
   }
 
   async heartbeat(): Promise<void> {
@@ -484,6 +501,7 @@ export class CollabClient {
   }
 
   async pollStatus(): Promise<void> {
+    const ownedGeneration = this.ownedContentGeneration;
     const statusRequestGeneration =
       ++this.contentTransferStatusRequestGeneration;
     const transferGenerationAtStart =
@@ -524,6 +542,16 @@ export class CollabClient {
         ownerDisplayName,
         ownerRole,
       };
+      if (ownedGeneration === this.ownedContentGeneration && statusRequestGeneration === this.contentTransferStatusRequestGeneration) {
+        const update = parseOwnedProjectContentUpdate(body?.ownedContentUpdate);
+        const current = this.snapshot.ownedContentUpdate;
+        // A manually opened dialog is local to this client. Status/SSE rereads
+        // cannot hide it for the same head, and a fresh page never inherits it.
+        const keepManualOffer = current?.state === 'confirmation_required'
+          && current.promptSuppressedUntil != null && update?.state === 'suppressed'
+          && current.latestVersion === update.latestVersion && current.localVersion === update.localVersion;
+        next.ownedContentUpdate = keepManualOffer ? { ...update, state: 'confirmation_required' } : update;
+      }
       const transferResponseIsCurrent =
         reportsContentTransferState
         && statusRequestGeneration

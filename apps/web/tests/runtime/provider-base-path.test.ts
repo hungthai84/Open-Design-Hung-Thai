@@ -4,6 +4,7 @@ import type { WorkspaceCollabContext } from '@open-design/contracts';
 let connection: typeof import('../../src/providers/connection-test');
 let registry: typeof import('../../src/providers/registry');
 let workspaceIdentity: typeof import('../../src/collab/workspace-identity');
+let funding: typeof import('../../src/runtime/amr-funding-feedback');
 
 beforeAll(async () => {
   vi.stubEnv('NEXT_PUBLIC_OD_WEB_BASE_PATH', '/open-design');
@@ -11,6 +12,7 @@ beforeAll(async () => {
   connection = await import('../../src/providers/connection-test');
   registry = await import('../../src/providers/registry');
   workspaceIdentity = await import('../../src/collab/workspace-identity');
+  funding = await import('../../src/runtime/amr-funding-feedback');
 });
 afterEach(() => vi.unstubAllGlobals());
 afterAll(() => vi.unstubAllEnvs());
@@ -22,6 +24,21 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe('browser requests under a configured web base path', () => {
+  it('confirms workspace funding through the prefixed billing route', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ preflight: {
+      schemaVersion: 1, workspaceId: 'workspace', workspaceMemberId: 'member',
+      modelId: 'model', fundingCheck: 'available', generatedAt: new Date().toISOString(),
+    } }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await funding.checkAmrFundingFeedback({
+      workspaceType: 'personal', workspaceId: 'workspace', workspaceMemberId: 'member',
+    }, 'model')).toBe('available');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/open-design/api/workspace/billing/preflight?workspaceId=workspace&modelId=model',
+      expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it('preserves absolute attachment paths from recorded agent output', () => {
     expect(registry.projectFileUrl('p', '/tmp/odmedia.sh')).toBe(
       '/open-design/api/projects/p/raw//tmp/odmedia.sh',

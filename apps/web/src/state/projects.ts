@@ -1708,9 +1708,13 @@ function readCachedTabs(
 ): OpenTabsState | null {
   if (typeof window === 'undefined') return null;
   try {
-    return normalizeTabsState(JSON.parse(
+    const cached = normalizeTabsState(JSON.parse(
       window.localStorage.getItem(tabsCacheKey(projectId, workspaceContext)) ?? 'null',
     ));
+    // An existing cache is a saved user choice, even for older entries without
+    // this marker or an intentionally empty selection. Defaults must not win
+    // while the debounced daemon save is still pending.
+    return cached ? { ...cached, hasSavedState: true } : null;
   } catch {
     return null;
   }
@@ -1735,6 +1739,7 @@ function writeCachedTabs(
 ): OpenTabsState {
   const next: OpenTabsState = {
     ...state,
+    hasSavedState: true,
     updatedAt: Date.now(),
   };
   if (typeof window !== 'undefined') {
