@@ -163,6 +163,30 @@ describe('daemon sidecar startup', () => {
     }
   });
 
+  it.each([true, false])('keeps frame IPC alive for the correct motion=%s budget', async motion => {
+    const { startDaemonSidecar } = await import('../src/sidecar/server.js');
+    const root = await mkdtemp(join(tmpdir(), 'od-frame-ipc-budget-'));
+    const invokeDesktop = vi.fn(async () => ({ ok: true }));
+    const handle = await startDaemonSidecar({
+      app: APP_KEYS.DAEMON, base: root, ipc: join(root, 'daemon.sock'),
+      mode: SIDECAR_MODES.RUNTIME, namespace: `frame-budget-${randomBytes(4).toString('hex')}`,
+      source: SIDECAR_SOURCES.PACKAGED,
+    }, {
+      invokeDesktop: invokeDesktop as unknown as NonNullable<NonNullable<Parameters<typeof startDaemonSidecar>[1]>['invokeDesktop']>,
+      statusDesktop: async () => ({ pid: process.pid, state: 'running', updatedAt: new Date().toISOString(), url: null, windowVisible: false, capabilities: { frameRenderer: true } }),
+    });
+    try {
+      const runtimeOptions = startDaemonRuntime.mock.lastCall?.[0] as { desktopFrameRenderer: (input: DesktopRenderFramesInput) => Promise<DesktopRenderFramesResult> };
+      const input = { height: 180, width: 320, outputDir: join(root, 'frames'), html: motion ? '<meta name="od-motion-output" content="video">' : '<main></main>' };
+      await runtimeOptions.desktopFrameRenderer(input);
+      expect(invokeDesktop).toHaveBeenCalledWith(SIDECAR_MESSAGES.RENDER_FRAMES, input, motion ? 1_860_000 : 600_000);
+    } finally {
+      await handle.stop();
+      await handle.waitUntilStopped();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('defers lifecycle stop while a handoff journal hold is active', async () => {
     const {
       holdParentMonitorExit,

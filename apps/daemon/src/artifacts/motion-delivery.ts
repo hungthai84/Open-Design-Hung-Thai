@@ -23,6 +23,13 @@ export async function readMotionExportSpec(input: {
   const html = await fs.readFile(source, 'utf8');
   if (!isMotionVideoComposition(html)) return undefined;
   if (!source.startsWith(root + path.sep)) throw new Error('Motion source must stay inside the project.');
+  if (path.relative(root, source).split(path.sep).some(segment => segment.startsWith('.'))) {
+    throw new Error(
+      'Video-motion editable source must be in a visible directory such as motion-source/<id>. '
+      + 'Move the whole composition directory, including local assets, preserve its relative links, '
+      + 'then retry export with the visible --composition-dir. The source has not been changed.',
+    );
+  }
   const $ = load(html);
   const href = $('link[rel="alternate"][type="video/mp4"]').attr('href');
   if (!href || /[?#\\]/.test(href) || /^[a-z]+:/i.test(href) || path.isAbsolute(href)) {

@@ -47,6 +47,7 @@ import { renderPanelPrompt } from './panel.js';
 import { defaultCritiqueConfig, type CritiqueConfig } from '@open-design/contracts/critique';
 import {
   composeOdNextStrategyRequestPromptV2,
+  MOTION_SOURCE_DIRECTORY_GUIDANCE,
   executionProfileFromStreamFormat,
   INTEGRATIONS_MCP_PATH,
   normalizePromptLocale,
@@ -1923,7 +1924,8 @@ function renderMetadataBlock(
     ));
     if (metadata.videoModel === 'hyperframes-html') {
       lines.push(
-        'Special case: `hyperframes-html` is a local HTML-to-MP4 renderer, not a photoreal text-to-video model. Treat it like a motion design renderer, ask at most one clarifying question, then create a HyperFrames composition with `"$OD_NODE_BIN" "$OD_BIN" media scaffold --composition-dir <rel>` under `.hyperframes-cache/`, edit `index.html`, and dispatch via `"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model hyperframes-html --composition-dir <rel>`. Do not run HyperFrames `init` or `render` yourself.',
+        'Special case: `hyperframes-html` is a local HTML-to-MP4 renderer, not a photoreal text-to-video model. Treat it like a motion design renderer, ask at most one clarifying question, then create a HyperFrames composition with `"$OD_NODE_BIN" "$OD_BIN" media scaffold --composition-dir <rel>` in the source directory specified below, edit `index.html`, and dispatch via `"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model hyperframes-html --composition-dir <rel>`. Do not run HyperFrames `init` or `render` yourself.',
+        MOTION_SOURCE_DIRECTORY_GUIDANCE,
       );
     }
   }

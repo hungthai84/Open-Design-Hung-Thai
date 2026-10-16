@@ -112,6 +112,46 @@ describe('deterministic Electron frame capture', () => {
     expect(window.destroy).toHaveBeenCalledOnce();
   });
 
+  test.each([true, false])('keeps progressing past 300 seconds only for video motion=%s', async motion => {
+    vi.useFakeTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), 'od-frame-budget-'));
+    scratch.push(outputDir);
+    let captures = 0;
+    const window = {
+      destroy: vi.fn(), isDestroyed: vi.fn(() => false), setContentSize: vi.fn(),
+      setOpacity: vi.fn(), showInactive: vi.fn(),
+      webContents: {
+        on: vi.fn(), setWindowOpenHandler: vi.fn(),
+        executeJavaScript: vi.fn(async (expression: string) => {
+          if (expression.includes('bridge.ready')) return { duration: 20, fps: 30 };
+        }),
+        debugger: {
+          attach: vi.fn(), detach: vi.fn(),
+          sendCommand: vi.fn(async (command: string) => {
+            if (command !== 'Page.captureScreenshot') return {};
+            // Continuous progress at the reported slow-device scale, without a real 10-minute wait.
+            await vi.advanceTimersByTimeAsync(1_000);
+            captures += 1;
+            return { data: Buffer.from('png-frame').toString('base64') };
+          }),
+        },
+      },
+    };
+    mocks.browserWindow.mockImplementation(function BrowserWindowMock() { return window; });
+    const result = await renderDeterministicFrames({
+      fps: 30, width: 1920, height: 1080, outputDir,
+      html: motion ? '<meta name="od-motion-output" content="video"><main></main>' : '<main></main>',
+    });
+    if (motion) {
+      expect(result).toMatchObject({ ok: true, frameCount: 600, fps: 30 });
+      expect(captures).toBe(600);
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode: 'RENDER_TIMEOUT' });
+      expect(captures).toBeLessThan(600);
+    }
+    expect(window.destroy).toHaveBeenCalledOnce();
+  });
+
   test('uses zero-padded names that match the FFmpeg printf pattern', () => {
     expect(frameFilePath('/tmp/frames', 42)).toBe('/tmp/frames/frame-00000042.png');
   });
@@ -159,7 +199,7 @@ describe('deterministic Electron frame capture', () => {
     expect(window.destroy).toHaveBeenCalledOnce();
   });
 
-  test('stops capturing and destroys the render window when the desktop deadline expires', async () => {
+  test.each([true, false])('stops a stalled stage and destroys the render window for motion=%s', async motion => {
     vi.useFakeTimers();
     const outputDir = await mkdtemp(join(tmpdir(), 'od-frame-capture-timeout-'));
     scratch.push(outputDir);
@@ -213,7 +253,7 @@ describe('deterministic Electron frame capture', () => {
 
     const renderPromise = renderDeterministicFrames({
       height: 180,
-      html: '<main></main>',
+      html: motion ? '<meta name="od-motion-output" content="video"><main></main>' : '<main></main>',
       outputDir,
       width: 320,
     });

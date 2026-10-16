@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import { listFiles } from '../../src/projects.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -146,7 +147,7 @@ describe('hyperframes-html media renderer preflight', () => {
   });
 
   it.each([false, true])('encodes a real desktop MP4 with audio=%s', async (withAudio) => {
-    const compRel = '.hyperframes-cache/electron-runtime';
+    const compRel = 'motion-source/electron-runtime';
     const compDir = path.join(projectsRoot, 'project-1', compRel);
     await mkdir(compDir, { recursive: true });
     await writeFile(path.join(compDir, 'hyperframes.json'), '{}', 'utf8');
@@ -193,6 +194,7 @@ ${withAudio ? '<audio src="tone.wav" data-start="0" data-duration="0.1"></audio>
       },
     });
 
+    expect((await listFiles(projectsRoot, 'project-1')).map(file => file.path)).toEqual(expect.arrayContaining([`${compRel}/index.html`, 'electron.mp4']));
     expect(result.providerNote).toContain('hyperframes/electron-html');
     expect(receivedHtml).toContain('window.__odFrameRenderer');
     expect(receivedHtml).not.toContain('<audio');
@@ -209,6 +211,30 @@ ${withAudio ? '<audio src="tone.wav" data-start="0" data-duration="0.1"></audio>
       expect(decoded.stdout.length).toBeGreaterThan(4000);
       expect(decoded.stdout.some((value) => value !== 0)).toBe(true);
     }
+  });
+
+  it('keeps the visible source and local audio discoverable when actual export fails', async () => {
+    const compRel = 'motion-source/failed-film';
+    const compDir = path.join(projectsRoot, 'project-1', compRel);
+    await mkdir(compDir, { recursive: true });
+    await writeFile(path.join(compDir, 'hyperframes.json'), '{}');
+    await writeFile(path.join(compDir, 'meta.json'), '{}');
+    const html = '<meta name="od-motion-output" content="video"><link rel="alternate" type="video/mp4" href="../../failed.mp4">'
+      + '<main data-composition-id="main" data-duration="1" data-width="320" data-height="180"><audio src="tone.wav" data-duration="1"></audio></main>';
+    await writeFile(path.join(compDir, 'index.html'), html);
+    await execFileAsync(ffmpegInstaller.path, ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', path.join(compDir, 'tone.wav')]);
+    const audio = await readFile(path.join(compDir, 'tone.wav'));
+    const files = async () => (await listFiles(projectsRoot, 'project-1')).map(file => file.path);
+    expect(await files()).toContain(`${compRel}/index.html`);
+    await expect(generateMedia({
+      projectRoot, projectsRoot, projectId: 'project-1', surface: 'video', model: 'hyperframes-html',
+      output: 'failed.mp4', compositionDir: compRel,
+      desktopFrameRenderer: async () => ({ ok: false, errorCode: 'RENDER_TIMEOUT', error: 'capture timed out' }),
+    })).rejects.toThrow('capture timed out');
+    expect(await files()).toContain(`${compRel}/index.html`);
+    expect(await files()).not.toContain('failed.mp4');
+    expect(await readFile(path.join(compDir, 'index.html'), 'utf8')).toContain(html);
+    expect(await readFile(path.join(compDir, 'tone.wav'))).toEqual(audio);
   });
 
   it.each([

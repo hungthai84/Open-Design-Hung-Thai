@@ -3,6 +3,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { BrowserWindow } from "electron";
+import { isMotionVideoComposition } from "@open-design/contracts/runtime/motion-source-player";
+import { motionFrameCaptureTimeoutMs } from "@open-design/contracts/runtime/motion-render-budget";
 import type {
   DesktopRenderFramesInput,
   DesktopRenderFramesResult,
@@ -57,19 +59,26 @@ class FrameCaptureTimeoutError extends Error {
 
 type FrameCaptureDeadline = {
   clear(): void;
+  extendTotal(timeoutMs: number): void;
   wait<T>(operation: Promise<T>, context: FrameCaptureWaitContext): Promise<T>;
 };
 
 function createFrameCaptureDeadline(timeoutMs: number): FrameCaptureDeadline {
   let totalTimer: ReturnType<typeof setTimeout> | undefined;
   let activeContext: FrameCaptureWaitContext = { stage: "create-output-directory" };
-  const totalTimeout = new Promise<never>((_resolve, reject) => {
+  const startedAt = Date.now();
+  let rejectTotal: (error: Error) => void;
+  const totalTimeout = new Promise<never>((_resolve, reject) => { rejectTotal = reject; });
+  const armTotal = (budgetMs: number) => {
+    if (totalTimer !== undefined) clearTimeout(totalTimer);
     totalTimer = setTimeout(
-      () => reject(new FrameCaptureTimeoutError(timeoutMs, activeContext, "total")),
-      timeoutMs,
+      () => rejectTotal(new FrameCaptureTimeoutError(budgetMs, activeContext, "total")),
+      Math.max(0, startedAt + budgetMs - Date.now()),
     );
-  });
+  };
+  armTotal(timeoutMs);
   return {
+    extendTotal: armTotal,
     clear() {
       if (totalTimer !== undefined) clearTimeout(totalTimer);
     },
@@ -194,6 +203,10 @@ export async function renderDeterministicFrames(
         error: `frame count ${frameCount} exceeds the ${MAX_FRAME_COUNT} frame safety limit`,
         errorCode: "INVALID_FRAME_METADATA",
       };
+    }
+
+    if (isMotionVideoComposition(input.html)) {
+      deadline.extendTotal(motionFrameCaptureTimeoutMs(frameCount));
     }
 
     const dbg = window.webContents.debugger;

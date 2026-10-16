@@ -18,6 +18,7 @@ await build({
     "./src/api/touchpointTestRuntime.ts",
     "./src/runtime/deck-stage-fallback.ts",
     "./src/runtime/motion-source-player.ts",
+    "./src/runtime/motion-render-budget.ts",
     "./src/runtime/deck-protocol.ts",
     "./src/runtime/preview-observability.ts",
     "./src/runtime/preview-build-focus.ts",

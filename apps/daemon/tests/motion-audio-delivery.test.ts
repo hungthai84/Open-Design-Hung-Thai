@@ -1,15 +1,34 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { describe, it, expect } from 'vitest';
+import { listFiles } from '../src/projects.js';
 import { readMotionExportSpec, assertMotionExport } from '../src/artifacts/motion-delivery.js';
 const exec = promisify(execFile);
 const source = '<meta name="od-motion-output" content="video"><link rel="alternate" type="video/mp4" href="film.mp4"><main data-composition-id="main"></main>';
 
 describe('motion export without model-plan gates', () => {
+  it.each(['.hyperframes-cache/film', 'sources/.private/film'])('rejects a hidden video source at %s without modifying it', async directory => {
+    const root = await mkdtemp(path.join(tmpdir(), 'od-motion-hidden-'));
+    const sourcePath = `${directory}/index.html`;
+    const html = source.replace('href="film.mp4"', `href="${'../'.repeat(directory.split('/').length)}film.mp4"`);
+    try {
+      await mkdir(path.join(root, directory), { recursive: true });
+      await writeFile(path.join(root, sourcePath), html);
+      expect((await listFiles(path.dirname(root), path.basename(root))).map(file => file.path)).not.toContain(sourcePath);
+      await expect(readMotionExportSpec({ projectRoot: root, sourcePath, outputPath: 'film.mp4' }))
+        .rejects.toThrow(/visible.*motion-source/);
+      expect(await readFile(path.join(root, sourcePath), 'utf8')).toBe(html);
+      await writeFile(path.join(root, sourcePath), html.replace('content="video"', 'content="interactive"'));
+      await expect(readMotionExportSpec({ projectRoot: root, sourcePath, outputPath: 'film.mp4' })).resolves.toBeUndefined();
+      await writeFile(path.join(root, sourcePath), '<main>Legacy HyperFrames</main>');
+      await expect(readMotionExportSpec({ projectRoot: root, sourcePath, outputPath: 'film.mp4' })).resolves.toBeUndefined();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('checks real source and MP4 audio inside export, including silent and missing tracks', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'od-motion-audio-'));
     const video = path.join(root, 'film.mp4');

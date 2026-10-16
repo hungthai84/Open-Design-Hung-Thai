@@ -23,6 +23,7 @@ import {
   IMAGE_MODELS,
   VIDEO_MODELS,
 } from '../media/models.js';
+import { MOTION_SOURCE_DIRECTORY_GUIDANCE } from '@open-design/contracts';
 import type { ByokMediaDefaults, MediaExecutionPolicy, MediaSurface } from '@open-design/contracts';
 
 function fmtList(ids: string[]): string {
@@ -330,8 +331,11 @@ silent chat-tool time. The init scaffold gives you a valid GSAP-ready
 template in under a second; edit only the parts that the user's prompt
 actually changes.
 
+${MOTION_SOURCE_DIRECTORY_GUIDANCE}
+Choose the composition root from that rule before filling the command below.
+
 \`\`\`bash
-COMP_REL=".hyperframes-cache/$(date +%s)-$(openssl rand -hex 2)"
+COMP_REL="<composition-root>/<unique-film-id>"
 COMP="$OD_PROJECT_DIR/$COMP_REL"
 
 # Open Design writes the required files itself; HyperFrames init is never run.
@@ -528,7 +532,8 @@ path is given.
 
    For \`hyperframes-html\`, the discovery turn is the last turn before
    you start authoring. Once the user answers, create the composition
-   with \`"$OD_NODE_BIN" "$OD_BIN" media scaffold\` under \`.hyperframes-cache/\`, edit the
+   with \`"$OD_NODE_BIN" "$OD_BIN" media scaffold\` in the directory chosen by
+   the source-directory rule above, edit the
    generated \`index.html\`, and dispatch through
    \`"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model hyperframes-html --composition-dir <rel>\`.
    Do not run HyperFrames \`render\` yourself; Chrome-bound rendering

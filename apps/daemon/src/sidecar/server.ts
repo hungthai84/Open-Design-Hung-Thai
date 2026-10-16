@@ -1,3 +1,5 @@
+import { isMotionVideoComposition } from "@open-design/contracts/runtime/motion-source-player";
+import { MOTION_FRAME_CAPTURE_MAX_TIMEOUT_MS } from "@open-design/contracts/runtime/motion-render-budget";
 import { randomBytes } from "node:crypto";
 
 import {
@@ -136,7 +138,11 @@ export async function startDaemonSidecar(
           errorCode: "FRAME_RENDERER_NOT_READY",
         };
       }
-      return await invokeDesktop<DesktopRenderFramesResult>(SIDECAR_MESSAGES.RENDER_FRAMES, input, 600_000);
+      // Keep IPC alive through the bounded capture and desktop cleanup.
+      const timeoutMs = isMotionVideoComposition(input.html)
+        ? MOTION_FRAME_CAPTURE_MAX_TIMEOUT_MS + 60_000
+        : 600_000;
+      return await invokeDesktop<DesktopRenderFramesResult>(SIDECAR_MESSAGES.RENDER_FRAMES, input, timeoutMs);
     },
     desktopSlideRenderer: async (input: DesktopRenderSlidesInput): Promise<DesktopRenderSlidesResult> => {
       return await invokeDesktop<DesktopRenderSlidesResult>(SIDECAR_MESSAGES.RENDER_SLIDES, input, 600_000);

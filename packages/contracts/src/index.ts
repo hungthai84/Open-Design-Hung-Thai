@@ -111,3 +111,5 @@ export * from './analytics/observability.js';
 export * from './observability/index.js';
 
 export * from './api/amr-continuation.js';
+
+export { MOTION_SOURCE_DIRECTORY_GUIDANCE } from './prompts/media-contract.js';

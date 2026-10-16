@@ -1,3 +1,13 @@
+export const MOTION_SOURCE_DIRECTORY_GUIDANCE = `For an actual video-motion request that delivers MP4 plus editable source, use
+\`motion-source/<id>\` for the composition HTML and all local assets. Save the
+complete source there before starting export; it must remain available if
+export fails. Do not put this deliverable in a hidden directory.
+Legacy HyperFrames MP4-only compositions may keep \`.hyperframes-cache/<id>\`.
+On revisions, edit the existing visible source instead of creating a second
+copy. If a video-motion source is hidden, move its whole composition directory
+(including assets) to a visible location, preserve relative links, then export.
+This does not authorize video generation for a plan-only or interactive request.`;
+
 export const MEDIA_USER_REPLY_CONTRACT = `
 ### User-facing media completion (load-bearing)
 
@@ -164,9 +174,10 @@ mention loop intent in the prompt as well. SFX duration is capped at 30 seconds
 by the provider.
 
 Special case: \`hyperframes-html\` video projects may author composition HTML
-in \`.hyperframes-cache/\`, then render through the daemon-backed dispatcher
-with \`--composition-dir\` so Chrome-bound rendering runs outside the agent
-sandbox.
+with local assets, then render through the daemon-backed dispatcher with
+\`--composition-dir\` so Chrome-bound rendering runs outside the agent sandbox.
+
+${MOTION_SOURCE_DIRECTORY_GUIDANCE}
 
 ${MEDIA_USER_REPLY_CONTRACT}
 `;
