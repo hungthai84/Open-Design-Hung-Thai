@@ -986,7 +986,7 @@ else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit
 
     // Reacts to release-stable completing (not release: published — release-stable promotes its
     // own draft with GITHUB_TOKEN, which cannot trigger workflows), plus a manual backfill.
-    expect(workflow).toContain('workflows: ["release-stable"]');
+    expect(workflow).toContain('workflows: ["release-stable", "ci", "Docker image"]');
     expect(workflow).toContain("types: [completed]");
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("github.event_name == 'workflow_dispatch'");
@@ -1002,7 +1002,7 @@ else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit
     // --latest) or the dispatch tag — NEVER from workflow_run.head_branch, which can be the
     // dispatch ref rather than the built release branch when release-stable runs with a `ref` input.
     expect(workflow).toContain("gh release view --repo nexu-io/open-design --json tagName,isDraft,isPrerelease");
-    expect(workflow).not.toContain("github.event.workflow_run.head_branch");
+    expect(workflow).toContain("github.event.workflow_run.head_repository.full_name == github.repository");
     expect(workflow).not.toContain("HEAD_BRANCH");
 
     // Only a published (draft=false), non-prerelease, open-design-vX.Y.Z release finalizes; a
@@ -1019,11 +1019,13 @@ else { process.stderr.write("unexpected gh call: " + args + "\\n"); process.exit
     expect(workflow).toContain("npm pkg set version");
     expect(workflow).toContain("changed=true");
 
-    // The bump PR needs one core-maintainer approval (code-owned manifests + require_code_owner_review
-    // on main), so finalize requests that review and arms the merge queue pinned to the pushed SHA.
-    expect(workflow).toContain("--add-reviewer nexu-io/core-maintainers");
-    expect(workflow).toContain("--squash --auto --match-head-commit");
-    expect(workflow).toContain("head_sha=$(git rev-parse HEAD)");
+    // Approval exemption is only used by trusted version-tree validation, never a direct merge.
+    expect(workflow).toContain("ref: ${{ github.event.repository.default_branch }}");
+    expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain("node .github/scripts/release/bump-policy.ts --apply");
+    expect(workflow).toContain("inputs.follow_bump_only != true");
+    expect(workflow).not.toContain("--squash --auto --match-head-commit");
+    expect(workflow).not.toContain("gh pr merge");
     expect(workflow).toContain("git ls-remote --exit-code --heads origin \"$BRANCH\"");
 
     // The shipped release's backport label is cleaned up (tolerant of an already-deleted label).
@@ -2865,6 +2867,43 @@ process.stdin.on("end", () => {
     expect(workflow).toContain("  notify_failure:");
     expect(workflow).toContain("if: ${{ always() && needs.build.result == 'failure' }}");
     expect(workflow).toContain("tools/release/src/notifications/feishu-notice.ts");
+  });
+
+  it.each(["0.24.1", "0.25.0"])("[P1] cuts and pushes a release when main's packaged version is %s", async (mainVersion) => {
+    const workflow = await readFile(cutReleaseWorkflowPath, "utf8");
+    const script = extractWorkflowRunScript(workflow, "Create branch + bump version + push");
+    const dir = await mkdtemp(join(tmpdir(), "od-release-recut-"));
+    const checkout = join(dir, "checkout");
+    const remote = join(dir, "remote.git");
+    const branch = "release/v0.25.0";
+    const env = workflowFixtureEnv({ VERSION: "0.25.0", BRANCH: branch, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" });
+    const git = (args: string[]) => execFileAsync("git", args, { cwd: checkout, env });
+
+    try {
+      await mkdir(join(checkout, "apps", "packaged"), { recursive: true });
+      await writeFile(join(checkout, "apps", "packaged", "package.json"), `${JSON.stringify({ name: "fixture", version: mainVersion }, null, 2)}\n`);
+      await execFileAsync("git", ["init", "--bare", remote], { env });
+      await git(["init", "--initial-branch=main"]);
+      await git(["config", "user.name", "fixture"]);
+      await git(["config", "user.email", "fixture@example.com"]);
+      await git(["add", "."]);
+      await git(["commit", "-m", "main fixture"]);
+      await git(["remote", "add", "origin", remote]);
+      const mainSha = (await git(["rev-parse", "HEAD"])).stdout.trim();
+
+      await execFileAsync("bash", ["-c", script], { cwd: checkout, env });
+
+      const cutSha = (await git(["rev-parse", "HEAD"])).stdout.trim();
+      expect(cutSha).not.toBe(mainSha);
+      expect((await git(["rev-parse", "HEAD^"])).stdout.trim()).toBe(mainSha);
+      expect((await git(["log", "-1", "--format=%an|%s"])).stdout.trim()).toBe("open-design-release-bot[bot]|chore(release): v0.25.0");
+      expect((await git(["ls-remote", "--heads", "origin", branch])).stdout.trim()).toBe(`${cutSha}\trefs/heads/${branch}`);
+      expect(JSON.parse(await readFile(join(checkout, "apps", "packaged", "package.json"), "utf8")).version).toBe("0.25.0");
+      expect((await git(["diff", "--name-only", "HEAD^", "HEAD"])).stdout.trim()).toBe(mainVersion === "0.25.0" ? "" : "apps/packaged/package.json");
+      expect((await git(["status", "--porcelain"])).stdout.trim()).toBe("");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("[P1] skips the scheduled minor cut until the highest release branch is published stable", async () => {
