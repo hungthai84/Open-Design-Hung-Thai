@@ -884,8 +884,10 @@ export function registerCollabContextRoutes(app: Express, deps: RegisterCollabCo
       return res.status(400).json({ error: 'invalid_billing_scope' });
     }
     try {
-      const preflight = await (deps.fetchBillingFundingCheck ?? ((id, model) =>
-        fetchVelaBillingFundingCheck(id, model, { configuredEnv: configuredEnv() })))(workspaceId, modelId);
+      const read = req.query.purpose === 'task_start'
+        ? (deps.fetchBillingPreflight ?? ((id, model) => fetchVelaBillingPreflight(id, model, { configuredEnv: configuredEnv() })))
+        : (deps.fetchBillingFundingCheck ?? ((id, model) => fetchVelaBillingFundingCheck(id, model, { configuredEnv: configuredEnv() })));
+      const preflight = await read(workspaceId, modelId);
       if (!preflight || preflight.workspaceId !== workspaceId || preflight.modelId !== modelId) {
         return res.status(503).json({ error: 'billing_preflight_unavailable' });
       }

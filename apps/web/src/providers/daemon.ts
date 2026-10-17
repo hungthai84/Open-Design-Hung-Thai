@@ -277,6 +277,8 @@ export function buildDaemonPriorTranscript(
 }
 
 export interface DaemonStreamHandlers extends StreamHandlers {
+  /** Execution admission succeeded; HTTP 202 alone only means queued. */
+  onRunStarted?: (runId: string) => void;
   onAgentEvent: (ev: AgentEvent) => void;
   /** Authoritative artifact count from the daemon's terminal run record. */
   onArtifactCount?: (count: number) => void;
@@ -2139,6 +2141,7 @@ async function consumeDaemonPhysicalRun({
 
           if (event.event === 'start') {
             const data = event.data as ChatSseStartPayload;
+            handlers.onRunStarted?.(runId);
             onRunStatus?.('running');
             handlers.onAgentEvent({
               kind: 'status',

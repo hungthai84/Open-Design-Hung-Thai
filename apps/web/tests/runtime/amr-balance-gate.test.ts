@@ -88,6 +88,7 @@ function authoritativeWorkspaceBillingResponse(
 
 beforeEach(() => {
   window.localStorage.clear();
+  mockedFetch.mockResolvedValue(snapshot());
   mockedFetchStatus.mockRejectedValue(new Error('status unavailable'));
 });
 
@@ -161,48 +162,57 @@ describe('AMR balance gate workspace witness', () => {
 });
 
 describe('checkAmrBalanceGate', () => {
-  it('does not put workspace billing on the send critical path', async () => {
+  const scope = {workspaceType:'team' as const,workspaceId:'ws',workspaceMemberId:'member'};
+  function reply(taskCheck: WorkspaceBillingPreflight['taskCheck'], patch: Record<string, unknown> = {}) {
+    return {preflight:{schemaVersion:1, workspaceId:'ws',workspaceMemberId:'member',modelId:'model',
+      generatedAt:new Date().toISOString(),billingMode:'shared',balanceUsd:'0',taskCheck,...patch}};
+  }
+  it.each(['ready','requires_recovery'] as const)('accepts %s only from the exact fresh task preflight', async (taskCheck) => {
     mockedFetch.mockResolvedValue(snapshot());
-    const billing = vi.fn(() => new Promise<Response>(() => undefined));
-    vi.stubGlobal('fetch', billing);
-    const result = checkAmrBalanceGate({
-      workspaceType: 'team', workspaceId: 'ws', workspaceMemberId: 'member',
-    }, 'model');
-    expect(billing).not.toHaveBeenCalled();
-    await expect(result).resolves.toEqual({ kind: 'allow' });
+    const fetcher=vi.fn(async(_url: RequestInfo | URL)=>new Response(JSON.stringify(reply(taskCheck))));
+    vi.stubGlobal('fetch',fetcher);
+    await expect(checkAmrBalanceGate(scope,'model')).resolves.toEqual({kind:'allow'});
+    expect(fetcher.mock.calls[0]?.[0]).toContain('purpose=task_start');
+    expect(fetcher.mock.calls[0]?.[0]).toContain('workspaceId=ws');
   });
-  it.each(['0', '-1', '0.001', '1.2', '42'])('leaves funding to Link for wallet %s', async (balanceUsd) => {
-    mockedFetch.mockResolvedValue(snapshot({ balanceUsd }));
-    await expect(checkAmrBalanceGate(undefined, 'model')).resolves.toEqual({ kind: 'allow' });
-    expect(mockedFetch).toHaveBeenCalledTimes(1);
-    expect(mockedFetchStatus).not.toHaveBeenCalled();
+  it('keeps a genuine insufficient response distinct from unavailable or forbidden', async()=>{
+    mockedFetch.mockResolvedValue(snapshot({balanceUsd:'100'}));
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify(reply('insufficient')))));
+    await expect(checkAmrBalanceGate(scope,'model')).resolves.toMatchObject({kind:'hard',reason:'insufficient',snapshot:{balanceUsd:'0'}});
   });
-
-  it('confirms sign-out before blocking', async () => {
-    mockedFetch.mockResolvedValue(snapshot({ status: 'signed_out' }));
-    await expect(checkAmrBalanceGate()).resolves.toMatchObject({ kind: 'hard', reason: 'signed_out' });
-    expect(mockedFetch).toHaveBeenLastCalledWith({ refresh: true });
+  it.each(['model_denied','task_limit'] as const)('does not offer recharge for %s',async(taskCheck)=>{
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify(reply(taskCheck)))));
+    await expect(checkAmrBalanceGate(scope,'model')).resolves.toEqual({kind:'blocked',reason:taskCheck});
   });
-
-  it('allows a freshly signed-in account even with zero wallet', async () => {
-    mockedFetch.mockResolvedValueOnce(snapshot({ status: 'signed_out' })).mockResolvedValueOnce(snapshot());
-    await expect(checkAmrBalanceGate()).resolves.toEqual({ kind: 'allow' });
+  it.each([
+    {taskCheck:'unknown'}, {workspaceId:'other'}, {workspaceMemberId:'rejoined-member'}, {modelId:'other'},
+    {generatedAt:'invalid'}, {generatedAt:'2000-01-01T00:00:00Z'},
+  ])('keeps input when preflight cannot prove the current request: %j',async(patch)=>{
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify(reply('ready',patch)))));
+    await expect(checkAmrBalanceGate(scope,'model')).resolves.toEqual({kind:'unavailable'});
   });
-
-  it('retains legacy fail-open on an unavailable account read', async () => {
-    mockedFetch.mockRejectedValue(new Error('offline'));
-    await expect(checkAmrBalanceGate()).resolves.toEqual({ kind: 'allow' });
+  it('does not confuse a server failure with empty funds',async()=>{
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response('{}',{status:503})));
+    await expect(checkAmrBalanceGate(scope,'model')).resolves.toEqual({kind:'unavailable'});
   });
-
-  it.each(['coding_plan', 'wallet', 'gateway', undefined])('does not turn advisory funding %s into a local rejection', async (funding) => {
-    mockedFetch.mockResolvedValue(snapshot());
-    const body = authoritativeWorkspaceBillingResponse('ws', 'member', '0');
-    const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({ ...body, ...(funding ? { preflight: { funding } } : {}) })));
-    vi.stubGlobal('fetch', fetcher);
-    await expect(checkAmrBalanceGate({ workspaceType: 'team', workspaceId: 'ws', workspaceMemberId: 'member' }, 'model/a+b')).resolves.toEqual({ kind: 'allow' });
-    expect(fetcher).not.toHaveBeenCalled();
+  it('preserves explicit legacy response compatibility',async()=>{
+    const body=reply('ready');delete (body.preflight as {billingMode?:string}).billingMode;
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify(body))));
+    await expect(checkAmrBalanceGate(scope,'model')).resolves.toEqual({kind:'allow'});
   });
-
+  it.each(['0','-1','0.001','1.2','42'])('leaves an unbound legacy wallet %s to Link',async(balanceUsd)=>{
+    mockedFetch.mockResolvedValue(snapshot({balanceUsd}));
+    await expect(checkAmrBalanceGate(undefined,'model')).resolves.toEqual({kind:'allow'});
+  });
+  it('confirms sign-out before blocking', async()=>{
+    mockedFetch.mockResolvedValue(snapshot({status:'signed_out'}));
+    await expect(checkAmrBalanceGate()).resolves.toMatchObject({kind:'hard',reason:'signed_out'});
+    expect(mockedFetch).toHaveBeenLastCalledWith({refresh:true});
+  });
+  it('allows a freshly signed-in legacy account even with zero wallet',async()=>{
+    mockedFetch.mockResolvedValueOnce(snapshot({status:'signed_out'})).mockResolvedValueOnce(snapshot());
+    await expect(checkAmrBalanceGate()).resolves.toEqual({kind:'allow'});
+  });
 });
 
 describe('post-failure wallet display authority', () => {

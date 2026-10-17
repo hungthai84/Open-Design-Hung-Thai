@@ -12,6 +12,7 @@ export const AMR_HARD_BLOCK_BALANCE_USD = 0;
 export type AmrBalanceGateResult =
   | { kind: 'allow' }
   | { kind: 'unavailable' }
+  | { kind: 'blocked'; reason: 'model_denied' | 'task_limit' }
   | { kind: 'hard'; reason: 'insufficient' | 'signed_out'; snapshot: AmrWalletSnapshot }
   | { kind: 'empty_not_blocked'; snapshot: AmrWalletSnapshot };
 
@@ -259,12 +260,11 @@ export async function fetchAmrBalanceCardWalletSnapshot(
   };
 }
 
-/** Only sign-in can be checked here. Workspace funding is admitted by Link
- * as the run starts; a display-billing outage must not delay or reject a send.
- * Exact-member authoritative reads remain required for card amounts/recovery. */
+/** A fresh shared preflight is required before handing the draft to a run.
+ * It does not reserve a slot; final admission rechecks after this read. */
 export async function checkAmrBalanceGate(
-  _scope?: AmrBalanceGateScope,
-  _modelId?: string | null,
+  scope?: AmrBalanceGateScope,
+  modelId?: string | null,
 ): Promise<AmrBalanceGateResult> {
   try {
     const cached = await fetchAmrWalletSnapshot().catch(() => null);
@@ -273,9 +273,26 @@ export async function checkAmrBalanceGate(
       if (fresh?.status === 'signed_out')
         return { kind: 'hard', reason: 'signed_out', snapshot: fresh };
     }
+    if (scope) {
+      const query = new URLSearchParams({workspaceId: scope.workspaceId, purpose: 'task_start'});
+      if (modelId) query.set('modelId', modelId);
+      const response = await fetch(`/api/workspace/billing/preflight?${query}`, {cache:'no-store', signal:AbortSignal.timeout(10_000)});
+      if (!response.ok) return {kind:'unavailable'};
+      const {preflight} = await response.json() as {preflight:WorkspaceBillingPreflight};
+      if (!preflight || preflight.workspaceId !== scope.workspaceId || preflight.workspaceMemberId !== scope.workspaceMemberId || preflight.modelId !== (modelId ?? null)) return {kind:'unavailable'};
+      const age = Date.now() - Date.parse(preflight.generatedAt);
+      if (!Number.isFinite(age) || age < -5000 || age > 30000) return {kind:'unavailable'};
+      if (preflight.billingMode === 'shared') {
+        if (preflight.taskCheck === 'unknown' || !preflight.taskCheck) return {kind:'unavailable'};
+        if (preflight.taskCheck === 'model_denied' || preflight.taskCheck === 'task_limit') return {kind:'blocked',reason:preflight.taskCheck};
+        if (preflight.taskCheck === 'insufficient') return {kind:'hard',reason:'insufficient',snapshot:{status:'available',profile:cached?.profile ?? 'default',user:cached?.user ?? null,balanceUsd:preflight.balanceUsd,updatedAt:preflight.generatedAt,fetchedAt:preflight.generatedAt,stale:false,source:'vela_api'}};
+        // Recovery is a server admission action, never a GET side effect.
+        if (preflight.taskCheck !== 'ready' && preflight.taskCheck !== 'requires_recovery') return {kind:'unavailable'};
+      }
+    }
     return { kind: 'allow' };
   } catch {
-    return { kind: 'allow' };
+    return { kind: 'unavailable' };
   }
 }
 

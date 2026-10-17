@@ -1003,6 +1003,9 @@ export interface WorkspaceBillingPreflight {
   funding: 'coding_plan' | 'wallet' | 'gateway';
   /** Fresh read-only feedback. Never use this to cancel an already running task. */
   fundingCheck?: 'available' | 'insufficient' | 'unknown';
+  billingMode?: 'shared';
+  taskCheck?: 'ready' | 'requires_recovery' | 'insufficient' | 'model_denied' | 'unknown' | 'task_limit';
+  taskCapacity?: { running: number; limit: number; available: boolean } | null;
   codingPlan: {
     workspaceId: string;
     generatedAt: string;

@@ -1,15 +1,8 @@
 // @vitest-environment jsdom
 //
-// OPEND-2614 · a Home send hands off to the project frame BEFORE the AMR
-// balance gate is consulted, and the gate's verdict then lands behind that
-// frame: allow → the create reuses the optimistic id; a dismissed hard block or
-// an unreadable wallet → the hand-off is rolled back (with a notice only where
-// no dialog explained the outcome) and nothing is created. The local-agent
-// path never sees the gate but takes the same hand-off.
-//
-// The Playwright case `e2e/ui/home-amr-pending.test.ts` pins the visible
-// behaviour (pending frame within one animation frame of the click); this
-// file pins the contract between EntryShell and App that makes it possible.
+// Shared task admission keeps the Home draft mounted until authoritative
+// preflight succeeds. The existing optimistic project ID is allocated only
+// after that check; a denial/unavailable result must not create an empty task.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
@@ -206,7 +199,7 @@ async function submitHome(prompt: string) {
   fireEvent.click(await screen.findByTestId('home-hero-submit'));
 }
 
-describe('OPEND-2614 · Home send hands off before the AMR gate', () => {
+describe('OPEND-2614 · Home send waits for authoritative AMR preflight', () => {
   beforeEach(() => {
     globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver;
     window.sessionStorage.clear();
@@ -244,11 +237,11 @@ describe('OPEND-2614 · Home send hands off before the AMR gate', () => {
     resetTeamProjectsCache();
   });
 
-  it('allow: begin → gate → create, and the create reuses the optimistic id with the gate witness', async () => {
+  it('allow: gate → begin → create, and the create reuses the optimistic id with the gate witness', async () => {
     const h = harness('amr');
     await submitHome('Draft a landing page.');
     await waitFor(() => expect(h.onCreateProject).toHaveBeenCalledTimes(1));
-    expect(h.calls).toEqual(['begin', 'gate', 'create']);
+    expect(h.calls).toEqual(['gate', 'begin', 'create']);
     expect(h.onCreateProject.mock.calls[0]?.[0]).toMatchObject({
       optimisticProjectId: 'optimistic-2614',
       autoSendFirstMessage: true,
@@ -261,39 +254,35 @@ describe('OPEND-2614 · Home send hands off before the AMR gate', () => {
     expect(h.rollback).not.toHaveBeenCalled();
   });
 
-  it('hard block: the dialog shows behind the hand-off; dismiss rolls back without a notice and creates nothing', async () => {
+  it('hard block preserves Home without handing off; dismiss creates nothing', async () => {
     const h = harness('amr');
     h.setGate({ kind: 'hard', reason: 'insufficient', snapshot: emptyWallet() });
     await submitHome('Design a pricing page.');
     await screen.findByTestId('amr-balance-dialog');
-    expect(h.onBeginProjectCreation).toHaveBeenCalledTimes(1);
+    expect(h.onBeginProjectCreation).not.toHaveBeenCalled();
     expect(h.rollback).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('amr-balance-dialog-dismiss'));
-    await waitFor(() => expect(h.rollback).toHaveBeenCalledTimes(1));
-    expect(h.rollback).toHaveBeenCalledWith();
+    await waitFor(() => expect(screen.queryByTestId('amr-balance-dialog')).toBeNull());
+    expect(h.rollback).not.toHaveBeenCalled();
     expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
     expect(h.onCreateProject).not.toHaveBeenCalled();
-    expect(h.calls).toEqual(['begin', 'gate', 'rollback:']);
+    expect(h.calls).toEqual(['gate']);
   });
 
-  it('unreadable wallet: the hand-off is rolled back with an explicit notice and nothing is created', async () => {
+  it('unavailable preflight preserves Home and draft with an explicit notice', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const h = harness('amr');
       h.setGate({ kind: 'unavailable' });
       await submitHome('Draft a deck.');
-      await waitFor(() => expect(h.onBeginProjectCreation).toHaveBeenCalledTimes(1));
-      // Home retries an unavailable read twice (400ms + 1200ms) before giving up.
       await vi.advanceTimersByTimeAsync(2_000);
-      await waitFor(() => expect(h.rollback).toHaveBeenCalledTimes(1));
-      expect(h.rollback.mock.calls[0]?.[0]?.notice).toBe(
-        "Couldn't confirm your OpenDesign Cloud balance. Try sending again.",
-      );
+      await screen.findByText("Couldn't confirm your OpenDesign Cloud balance. Try sending again.");
+      expect(h.onBeginProjectCreation).not.toHaveBeenCalled();
+      expect(h.rollback).not.toHaveBeenCalled();
       expect(h.onCreateProject).not.toHaveBeenCalled();
       expect(mockedCheckAmrBalanceGate).toHaveBeenCalledTimes(3);
-    } finally {
-      vi.useRealTimers();
-    }
+      expect(screen.getByTestId('home-hero-input')).toHaveTextContent('Draft a deck.');
+    } finally { vi.useRealTimers(); }
   });
 
   it('local agent: same hand-off, no gate', async () => {
@@ -492,7 +481,7 @@ describe('Home memory funding gate', () => {
     await waitFor(() => expect(screen.getByTestId('home-hero-submit')).toBeEnabled());
     await submitHome('Continue this draft.');
     await waitFor(() => expect(h.onCreateProject).toHaveBeenCalledTimes(1));
-    expect(h.calls).toEqual(['begin', 'gate', 'create']);
+    expect(h.calls).toEqual(['gate', 'begin', 'create']);
     expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
   });
 
@@ -599,17 +588,18 @@ describe('Home memory funding gate', () => {
     },
   );
 
-  it('confirmed sign-out still rolls back the pending frame and preserves the draft', async () => {
+  it('confirmed sign-out preserves the draft without creating a pending frame', async () => {
     const h = harness('amr');
     h.setGate({ kind: 'hard', reason: 'signed_out', snapshot: { ...emptyWallet(), status: 'signed_out' } });
     await waitForWalletInMemory();
     await submitHome('Design a pricing page.');
     await screen.findByTestId('amr-balance-dialog');
-    expect(h.onBeginProjectCreation).toHaveBeenCalledTimes(1);
+    expect(h.onBeginProjectCreation).not.toHaveBeenCalled();
     expect(h.onCreateProject).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('amr-balance-dialog-dismiss'));
-    await waitFor(() => expect(h.rollback).toHaveBeenCalledTimes(1));
-    expect(h.calls).toEqual(['begin', 'gate', 'rollback:']);
+    await waitFor(() => expect(screen.queryByTestId('amr-balance-dialog')).toBeNull());
+    expect(h.rollback).not.toHaveBeenCalled();
+    expect(h.calls).toEqual(['gate']);
   });
 
   it('zero wallet proceeds without a preliminary dialog or duplicate preflight', async () => {
@@ -619,7 +609,7 @@ describe('Home memory funding gate', () => {
     await waitFor(() => expect(mockedCheckAmrBalanceGate).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(h.onCreateProject).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
-    expect(h.calls).toEqual(['begin', 'gate', 'create']);
+    expect(h.calls).toEqual(['gate', 'begin', 'create']);
     expect(h.onCreateProject.mock.calls[0]?.[0]).toMatchObject({
       optimisticProjectId: 'optimistic-2614',
     });

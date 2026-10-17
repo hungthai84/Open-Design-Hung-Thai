@@ -335,3 +335,18 @@ describe('中断的一轮 · 层叠', () => {
     expect(dot!.matches(tick!.selector), '中断的一轮戴上了「已完成」那枚绿勾').toBe(false);
   });
 });
+
+
+describe('cancellation origin detail', () => {
+  it.each([undefined, 'unknown', 'project_cleanup', 'daemon_shutdown'] as const)(
+    'does not claim a user stop for origin %s', (cancelOrigin) => {
+      const view = renderTurn(turn({ runStatus: 'canceled', cancelOrigin }));
+      expect(view.queryByTestId('assistant-label-detail')).toBeNull();
+      expect(view.container.querySelector('[data-canceled="true"]')).toBeTruthy();
+    },
+  );
+  it('retains the manual stop explanation only for user_stop', () => {
+    const view = renderTurn(turn({ runStatus: 'canceled', cancelOrigin: 'user_stop' }));
+    expect(view.getByTestId('assistant-label-detail').textContent).toBe(en['assistant.canceledDetail']);
+  });
+});

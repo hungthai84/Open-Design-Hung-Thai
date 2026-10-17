@@ -100,6 +100,9 @@ export interface ChatArtifactRefsChangedSsePayload {
 
 export const CHAT_SSE_PROTOCOL_VERSION = 1;
 
+/** Execution is admitted and about to spawn. POST /api/runs 202 only confirms queueing.
+ * AMR emits this after workspace task admission; rejected admission emits error/end without start.
+ */
 export interface ChatSseStartPayload {
   runId?: string;
   agentId?: string;

@@ -1,3 +1,4 @@
+import { createRunStartReceipt } from '../runtime/run-start-receipt';
 import { readRetriedErrorSurface, retriedErrorSurfaceKey, writeRetriedErrorSurface } from '../runtime/chat/retried-error-surface';
 import {
   startTransition,
@@ -9096,7 +9097,11 @@ export function ProjectView({
             }
             return acceptedDurableQueue(parkBlockedSend());
           }
-          if (gate.kind === 'unavailable') {
+          if (gate.kind === 'unavailable' || gate.kind === 'blocked') {
+            setError(t(gate.kind === 'blocked'
+              ? gate.reason === 'model_denied' ? 'chat.runError.title.modelUnavailable' : 'chat.runError.title.membershipConcurrencyLimit'
+              : 'home.amrGateUnavailable'));
+            if (meta?.composerOwnedDraft) return rejectBlockedSend();
             return acceptedDurableQueue(parkBlockedSend());
           }
           if (gate.kind === 'empty_not_blocked') {
@@ -10436,12 +10441,15 @@ export function ProjectView({
           recoveryActionType: taskAnalytics.recoveryActionType,
           recoveryActionInstanceId: taskAnalytics.recoveryActionInstanceId,
         };
+        const startReceipt = config.agentId === 'amr' && meta?.composerOwnedDraft
+          ? createRunStartReceipt([controller.signal, cancelController.signal])
+          : null;
         void streamViaDaemon({
           agentId: config.agentId,
           history: nextHistory,
           signal: controller.signal,
           cancelSignal: cancelController.signal,
-          handlers,
+          handlers: { ...handlers, onRunStarted: () => startReceipt?.settle(true) },
           projectId: project.id,
           conversationId: runConversationId,
           userMessageId: userMsg.id,
@@ -10608,7 +10616,11 @@ export function ProjectView({
             updateMessageById(assistantId, (prev) => ({ ...prev, lastRunEventId }));
             persistAssistantSoon();
           },
-        });
+        }).finally(() => startReceipt?.settle(false));
+        if (startReceipt && !(await startReceipt.started)) {
+          amrGateBlockedRequestRef.current = clientRequestId;
+          return false;
+        }
         return true;
       } else {
         if (config.apiProtocol === 'bedrock') {
@@ -10965,8 +10977,8 @@ export function ProjectView({
        * (OPEND-2719)。以前这里是 `void handleSend(...)`:输入框立刻清空,
        * 于是「不代管就会丢正文」变成了硬约束,拦截档只能拿队列去接。
        *
-       * 这一等**只对 OpenDesign Cloud 有实际时长** —— 只有那一档在
-       * `POST /api/runs` 之前有一次预检往返;别的 agent 这条路上一个 await
+       * 这一等**只对 OpenDesign Cloud 有实际时长** —— 该档在
+       * 预检后还须等待服务端完成最终准入并发出 start;别的 agent 这条路上一个 await
        * 都没有,promise 在微任务里就落定,输入框和以前一样立刻清空。
        * 等待期间 `ChatComposer` 自己会把发送键换成「准备中」那枚不可点的
        * 药丸(`composedSendPending`)—— 那套机制原本就是为这道预检写的,

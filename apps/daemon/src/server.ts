@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { createWorkspaceTaskLeaseLifecycle } from './services/workspace-task-lease-lifecycle.js';
+import { VelaTaskLeaseError } from './integrations/vela-task-leases.js';
 
 import { usesProductionMarker, composeResumedRequest } from './strategies/od-next/request-resume.js';
 import { todoSnapshotHasUnfinishedWork } from '@open-design/contracts';
@@ -3499,6 +3501,12 @@ export async function startServer({
   const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
   daemonHealth?.setStorageProbe(() => readSqlitePageStats({ db, file: db.name }));
   const amrTerminalReportOutbox = createAmrTerminalReportOutboxStore(db);
+  const amrTaskLeases = createWorkspaceTaskLeaseLifecycle({
+    retainWorkspace: workspaceId => workspaceHubSubscriptions?.retainEventInterest(workspaceId) ?? (() => {}),
+    onReleaseFailure: (runId) => console.warn(`[od] task lease cleanup pending TTL run=${runId}`),
+  });
+  const finalizeAmrTerminal = createAmrTerminalReportFinalizer(amrTerminalReportOutbox);
+
   const amrTerminalReportDelivery = createAmrTerminalReportDeliveryService({
     store: amrTerminalReportOutbox,
     env: { ...process.env, OD_DATA_DIR: RUNTIME_DATA_DIR },
@@ -6313,6 +6321,7 @@ export async function startServer({
       console.info(
         `[od] hub workspace access revoked workspaceId=${exactWorkspaceId} reason=${reason ?? 'unknown'}`,
       );
+      void amrTaskLeases.revokeWorkspace(exactWorkspaceId);
       handleHubWorkspaceAccessRevoked(
         exactWorkspaceId,
         () => pollWorkspaceInvalidationForWorkspace(exactWorkspaceId),
@@ -6543,6 +6552,9 @@ export async function startServer({
           workspaceBillingRuntime.reconnect(subscribedWorkspaceId);
           break;
         case 'workspace-members-changed':
+          // The event invalidates membership; a server heartbeat verifies the
+          // exact original member before allowing its process to continue.
+          void amrTaskLeases.recheckWorkspace(eventWorkspaceId);
           workspaceDirectoryAuthority.invalidate('event_dirty');
           workspaceExactAuthorityCache.invalidate(eventWorkspaceId);
           workspaceExactContextCache.invalidate(
@@ -8044,7 +8056,11 @@ export async function startServer({
           : null;
         if (promptBudget) run.promptBudgetDiagnostics = promptBudget;
       },
-      onTerminal: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
+      onTerminal: (run, status, terminalAt) => {
+        amrTaskLeases.reportTerminal(run.id, run.manualResumeAttemptCount ?? 0, () => {
+          finalizeAmrTerminal(run, status, terminalAt);
+        });
+      },
       beforeFinish: (run, status, _code, _signal, terminalAt) => {
         if (run.deliverableSyntaxValidation?.metrics) {
           run.deliverableSyntaxValidation = {
@@ -14368,35 +14384,40 @@ export async function startServer({
       return;
     }
 
-    run.status = 'running';
-    run.updatedAt = Date.now();
-    send('start', {
-      runId,
-      agentId,
-      bin: userFacingAgentLabel(agentId, resolvedBin),
-      streamFormat: def.streamFormat ?? 'plain',
-      projectId: typeof projectId === 'string' ? projectId : null,
-      cwd,
-      model: safeModel,
-      reasoning: safeReasoning,
-      serviceTier: safeServiceTier,
-      toolTokenExpiresAt: toolTokenGrant?.expiresAt ?? null,
-    });
-    /*
-     * This turn's done key, published BEFORE the child is spawned.
-     *
-     * Ordering is the whole contract: the chat client only honours a
-     * `<od-done key="…"/>` marker whose key matches the one it has already
-     * seen for this turn, so the key event must land ahead of the first
-     * `text_delta` on both the live stream and the persisted event list. It is
-     * emitted as a normal agent event so it rides the same path as everything
-     * else — persisted into the assistant message and replayed on reconnect —
-     * rather than needing a message column of its own.
-     */
-    if (typeof run.doneKey === 'string' && run.doneKey) {
-      send('agent', { type: 'done_key', key: run.doneKey });
-    }
-    noteAgentActivity();
+    const publishRunStart = () => {
+      run.status = 'running';
+      run.updatedAt = Date.now();
+      send('start', {
+        runId,
+        agentId,
+        bin: userFacingAgentLabel(agentId, resolvedBin),
+        streamFormat: def.streamFormat ?? 'plain',
+        projectId: typeof projectId === 'string' ? projectId : null,
+        cwd,
+        model: safeModel,
+        reasoning: safeReasoning,
+        serviceTier: safeServiceTier,
+        toolTokenExpiresAt: toolTokenGrant?.expiresAt ?? null,
+      });
+      /*
+       * This turn's done key, published BEFORE the child is spawned.
+       *
+       * Ordering is the whole contract: the chat client only honours a
+       * `<od-done key="…"/>` marker whose key matches the one it has already
+       * seen for this turn, so the key event must land ahead of the first
+       * `text_delta` on both the live stream and the persisted event list. It is
+       * emitted as a normal agent event so it rides the same path as everything
+       * else — persisted into the assistant message and replayed on reconnect —
+       * rather than needing a message column of its own.
+       */
+      if (typeof run.doneKey === 'string' && run.doneKey) {
+        send('agent', { type: 'done_key', key: run.doneKey });
+      }
+      noteAgentActivity();
+    };
+    // AMR queue acceptance is not permission to start the task. Publish the
+    // existing start event only after the authoritative lease admission.
+    if (def.id !== 'amr') publishRunStart();
 
     let child;
     let acpSession = null;
@@ -14437,12 +14458,7 @@ export async function startServer({
         def.streamFormat === CODEX_APP_SERVER_STREAM_FORMAT
           ? 'pipe'
           : 'ignore';
-      const env = applyAgentLaunchEnv({
-        ...agentSpawnEnv,
-        ...(mmdRouteLaunchEnv || {}),
-        ...odMediaEnv,
-        ...(byokOpenCodeProvider ? byokOpenCodeProvider.env : {}),
-        ...await openDesignAmrTraceEnvForRun({
+      const amrTraceEnv = await openDesignAmrTraceEnvForRun({
           agentId: def.id,
           runId: run.id,
           conversationId: run.conversationId,
@@ -14496,7 +14512,49 @@ export async function startServer({
               },
             });
           },
-        }),
+        });
+      let taskLeaseEnv: NodeJS.ProcessEnv = {};
+      if (def.id === 'amr') {
+        try {
+          const lease = await amrTaskLeases.start({
+            runId: run.id,
+            workspaceId: amrTraceEnv.OPEN_DESIGN_WORKSPACE_ID ?? '',
+            ...(typeof safeModel === 'string' && safeModel.trim() ? {modelId:safeModel.trim()} : {}),
+            attempt: run.manualResumeAttemptCount ?? 0,
+          }, {
+            configuredEnv: configuredAgentEnv,
+            onLost: async (code) => {
+              run.errorCode = code;
+              await design.runs.cancel(run, 'workspace_task_lease_lost');
+            },
+          });
+          if (run.cancelRequested || design.runs.isTerminal(run.status)) {
+            await amrTaskLeases.finish(run.id, lease.attempt);
+            return;
+          }
+          taskLeaseEnv = {
+            OPEN_DESIGN_WORKSPACE_ID: lease.workspaceId,
+            OPEN_DESIGN_TASK_LEASE_TOKEN: lease.leaseToken,
+            OPEN_DESIGN_TASK_ATTEMPT: String(lease.attempt),
+          };
+        } catch (error) {
+          // Only an explicit server-side OFF decision preserves the legacy
+          // path. Missing CLI/API capability or transport errors are not OFF.
+          if (!(error instanceof VelaTaskLeaseError) || error.code !== 'workspace_task_leases_not_enabled') {
+            return failRun(error instanceof VelaTaskLeaseError ? error.code : 'workspace_task_lease_unavailable',
+              'Unable to verify the workspace task slot. Retry after the connection or client capability is restored.');
+          }
+        }
+      }
+      if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+      if (def.id === 'amr') publishRunStart();
+      const env = applyAgentLaunchEnv({
+        ...agentSpawnEnv,
+        ...(mmdRouteLaunchEnv || {}),
+        ...odMediaEnv,
+        ...(byokOpenCodeProvider ? byokOpenCodeProvider.env : {}),
+        ...amrTraceEnv,
+        ...taskLeaseEnv,
         // OpenCode external-MCP injection (issue #2142). Layered AFTER
         // spawnEnvForAgent / odMediaEnv / configuredAgentEnv so the
         // daemon-built MCP config wins over a stale value the user

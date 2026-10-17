@@ -1539,16 +1539,7 @@ export function EntryShell({
         invalidateAmrFundingFeedback();
       }
     }
-    // Without known negative evidence, the project frame opens on the click tick,
-    // before any admission check. Everything below runs behind that frame —
-    // this shell is unmounted the moment the hand-off navigates, so nothing
-    // after this line may rely on this instance's state or DOM. App owns the
-    // hand-off and the way back.
-    const handoff = onBeginProjectCreation(createInput);
-    // Confirm sign-in behind the pending frame. Workspace billing is not a
-    // send prerequisite: Link admits funding when the run starts, and
-    // ProjectView presents any live funding rejection without waiting on a
-    // display-wallet read. Dismissing a sign-in block restores the Home draft.
+    // Keep the Home composer mounted until authoritative preflight succeeds.
     let amrGatePrecheckWitness: AmrBalanceGateScope | undefined;
     let amrGatePrecheckPassed = false;
     if (isAmrSend) {
@@ -1606,17 +1597,17 @@ export function EntryShell({
           if (decision === 'dismiss') {
             // The dialog was the feedback; the composer gets its draft back
             // without a second error on top.
-            handoff.rollback();
             return 'blocked' as const;
           }
+          // Recharge updates the evidence, not the user's decision to send.
+          if (blocked.reason === 'insufficient') return 'blocked' as const;
           gate = await retryUnavailableAmrBalanceGate(
             () => checkAmrBalanceGate(gateScope, amrModelId),
           );
         }
-        if (gate.kind === 'unavailable') {
-          handoff.rollback({ notice: t('home.amrGateUnavailable') });
-          return false;
-        }
+        if (gate.kind === 'unavailable') throw new Error(t('home.amrGateUnavailable'));
+        if (gate.kind === 'blocked') throw new Error(t(gate.reason === 'model_denied'
+          ? 'chat.runError.title.modelUnavailable' : 'chat.runError.title.membershipConcurrencyLimit'));
         // Everything else falls through and the run starts. Home used to hold
         // the submit open behind a centered reminder dialog ("额度不多了" + 仍要
         // 发起任务 / 去充值). Product ruled it away on 2026-09-06 — "软提醒弹窗
@@ -1641,10 +1632,10 @@ export function EntryShell({
         break;
       }
       if (!amrGatePrecheckPassed) {
-        handoff.rollback({ notice: t('home.createFailed') });
-        return false;
+        throw new Error(t('home.createFailed'));
       }
     }
+    const handoff = onBeginProjectCreation(createInput);
     const create = () => Promise.resolve(onCreateProject({
       ...createInput,
       optimisticProjectId: handoff.projectId,

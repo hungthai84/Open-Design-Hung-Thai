@@ -17,6 +17,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 
 import { ChatComposer } from '../../../src/components/ChatComposer';
 import { uploadProjectFiles } from '../../../src/providers/registry';
+import { composerText, flushMounts, pressEnter, typeAndSettle } from '../../helpers/lexical-composer';
 
 vi.mock('../../../src/providers/registry', async () => {
   const actual = await vi.importActual<typeof import('../../../src/providers/registry')>(
@@ -138,27 +139,79 @@ describe('待发送附件托盘 · 逐文件上传', () => {
     });
   });
 
-  it('还在传的那张卡发不出去 —— 它没有服务端路径', async () => {
+  it('上传未完成时按钮和 Enter 都保留正文,完成后仍须手动发送', async () => {
+    let complete!: () => void;
     mockedUpload.mockImplementation(async (_id, files) => {
-      const file = files[0]!;
-      if (file.name === '慢的.png') return neverResolves();
-      return uploadedImage(file.name);
+      if (files[0]!.name === '慢的.png') await new Promise<void>((resolve) => { complete = resolve; });
+      return uploadedImage(files[0]!.name);
     });
     const onSend = renderComposer();
-
+    await flushMounts();
+    await typeAndSettle('连同两个附件一起发送');
     pickFiles([png('快的.png'), png('慢的.png')]);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('staged-attachments').querySelectorAll('.msg-att-img')).toHaveLength(2);
-    });
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('chat-send')).toBeDisabled();
     fireEvent.click(screen.getByTestId('chat-send'));
+    pressEnter();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(composerText()).toBe('连同两个附件一起发送');
+
+    await act(async () => { complete(); });
+    await waitFor(() => expect(screen.getByTestId('chat-send')).toBeEnabled());
+    expect(onSend).not.toHaveBeenCalled();
+    pressEnter();
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    // ⚠️ 这条同时钉住了一个【已知的现网 bug】的现状:上传期间发送键仍然可点,
-    // 点下去在传的那个文件不跟着发。这一轮不修它(要另起红测 + 独立 PR,
-    // 见规格 §4-A 末尾),这里只是把「发出去的到底是哪些」写死,
-    // 免得后面改动悄悄把在传的半成品也塞进消息里。
     expect((onSend.mock.calls[0]?.[1] as Array<{ name: string }>).map((a) => a.name))
-      .toEqual(['快的.png']);
+      .toEqual(['快的.png', '慢的.png']);
+  });
+
+  it.each(['cancel', 'fail'] as const)('上传 %s 后恢复手动发送,迟到结果不自动发送或恢复取消的附件', async (outcome) => {
+    let complete!: () => void;
+    mockedUpload.mockImplementation(async () => {
+      await new Promise<void>((resolve) => { complete = resolve; });
+      return outcome === 'fail'
+        ? { uploaded: [], failed: [{ name: '慢的.png' }], error: 'offline' }
+        : uploadedImage('慢的.png');
+    });
+    const onSend = renderComposer();
+    await flushMounts();
+    await typeAndSettle('保留这段输入');
+    pickFiles([png('慢的.png')]);
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('chat-send')).toBeDisabled();
+    if (outcome === 'cancel') {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel upload of 慢的.png' }));
+      // Cancellation must release Send even while the HTTP upload is in flight.
+      await waitFor(() => expect(screen.getByTestId('chat-send')).toBeEnabled());
+    }
+    await act(async () => { complete(); });
+    await waitFor(() => expect(screen.getByTestId('chat-send')).toBeEnabled());
+    expect(composerText()).toBe('保留这段输入');
+    expect(onSend).not.toHaveBeenCalled();
+    if (outcome === 'cancel') expect(screen.queryByTestId('staged-attachments')).toBeNull();
+    else expect(screen.getByTestId('staged-att-retry')).toBeTruthy();
+    pressEnter();
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0]?.[0]).toBe('保留这段输入');
+    expect(onSend.mock.calls[0]?.[1]).toEqual([]);
+  });
+
+  it('等待项目创建时也不丢掉将上传的附件,创建失败后保留正文可手动发送', async () => {
+    let complete!: (id: string | null) => void;
+    const onSend = vi.fn();
+    render(<ChatComposer projectId={null} projectFiles={[]} streaming={false}
+      onEnsureProject={() => new Promise((resolve) => { complete = resolve; })}
+      onSend={onSend} onStop={vi.fn()} />);
+    await flushMounts();
+    await typeAndSettle('等附件准备好');
+    pickFiles([png('首页.png')]);
+    expect(screen.getByTestId('chat-send')).toBeDisabled();
+    pressEnter();
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => { complete(null); });
+    expect(screen.getByTestId('chat-send')).toBeEnabled();
+    expect(composerText()).toBe('等附件准备好');
+    expect(mockedUpload).not.toHaveBeenCalled();
   });
 
   it('失败的那一张留在托盘里、能单独重试,成功后变成可发送的附件', async () => {

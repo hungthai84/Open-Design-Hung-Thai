@@ -132,6 +132,64 @@ test('[P0] real daemon run streams, persists, and previews an artifact', async (
   await expectProjectFileToContain(page, projectId, GENERATED_FILE, GENERATED_HEADING);
 });
 
+test('[P1] uploading attachments block click and Enter until the real upload completes', async ({ page }, testInfo) => {
+  await createProject(page, 'Upload before send');
+  await expectWorkspaceReady(page);
+  const prompt = 'Send this text together with the uploaded attachment';
+  const input = page.getByTestId('chat-composer-input');
+  await input.fill(prompt);
+  let release!: () => void;
+  let arrived!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const uploaded = new Promise<void>((resolve) => { arrived = resolve; });
+  const requests: Request[] = [];
+  const record = (request: Request) => { if (isCreateRunRequest(request)) requests.push(request); };
+  page.on('request', record);
+  await page.route('**/api/projects/*/upload', async (route) => {
+    const response = await route.fetch(); // Real daemon upload and file storage.
+    expect(response.ok()).toBeTruthy();
+    arrived();
+    await held; // Hold only delivery, leaving the composer in its upload state.
+    await route.fulfill({ response });
+  });
+  try {
+    await page.getByTestId('chat-file-input').setInputFiles({
+      name: 'send-together.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment with the prompt.'),
+    });
+    await uploaded;
+    await expect(page.getByRole('button', { name: 'Cancel upload of send-together.txt' })).toBeVisible();
+    await testInfo.attach('upload-in-flight', { body: await page.screenshot(), contentType: 'image/png' });
+    const send = page.getByTestId('chat-send');
+    await expect(send).toBeDisabled();
+    // Native disabled click and the real Lexical Enter path must use one gate.
+    await send.evaluate((element) => (element as HTMLButtonElement).click());
+    await input.press('Enter');
+    await expect(input).toHaveText(prompt);
+    expect(requests).toHaveLength(0);
+    const responseReady = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/upload'));
+    release();
+    expect((await responseReady).ok()).toBeTruthy();
+    await expect(page.getByRole('button', { name: 'Remove send-together.txt' })).toBeVisible();
+    await expect(send).toBeEnabled();
+    expect(requests).toHaveLength(0); // Completion must not auto-send.
+    await sendPrompt(page, prompt);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.postDataJSON().message).toBe(`## user\n${prompt}`);
+    expect(requests[0]!.postDataJSON().attachments).toContain('send-together.txt');
+    await expect(input).toHaveText('');
+    await testInfo.attach('submitted-upload', { body: Buffer.from(JSON.stringify({
+      message: requests[0]!.postDataJSON().message,
+      attachments: requests[0]!.postDataJSON().attachments,
+      requests: requests.length,
+    })), contentType: 'application/json' });
+  } finally {
+    release();
+    page.off('request', record);
+    await page.unroute('**/api/projects/*/upload');
+  }
+});
+
 test('[P1] execution plan connector stops before completed status markers', async ({ page }) => {
   await createProject(page, 'Execution plan connector geometry', 'claude');
   await expectWorkspaceReady(page);

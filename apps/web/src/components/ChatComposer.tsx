@@ -677,6 +677,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // Enter/click in that window cannot start another send before the host
     // decides whether the first one is kept or handed back.
     const composedSendPendingRef = useRef(false);
+    const pendingDraftRef = useRef<{
+      snapshot: ComposerSendSnapshot;
+      keptWorkspaceContextIds: ReadonlySet<string>;
+      storageKey: string | undefined;
+      edited: boolean;
+    } | null>(null);
+    const currentDraftStorageKeyRef = useRef(draftStorageKey);
+    currentDraftStorageKeyRef.current = draftStorageKey;
     // The latch above prevents duplicates, but a ref alone leaves the UI
     // completely unchanged while an async admission gate (notably AMR's
     // workspace billing check) is pending. Mirror it in state so Send turns
@@ -836,6 +844,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [slash, setSlash] = useState<{ q: string } | null>(null);
     const [slashIndex, setSlashIndex] = useState(0);
     const [uploading, setUploading] = useState(false);
+    const [preparingUploads, setPreparingUploads] = useState(0);
     const [uploadError, setUploadError] = useState<string | null>(null);
     /* 待发送托盘里【还没传完 / 传失败】的那几张卡(设计稿 #61 / #63)。
        它们不进 `staged` —— `staged` 是「能跟着这条消息发出去的附件」,而这几张
@@ -1566,6 +1575,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const nextWorkspaceLinkedDirAdds = Object.fromEntries(
         Object.entries(workspaceLinkedDirAdds).filter(([id]) => linkedWorkspaceContextIds.has(id)),
       );
+      draftRef.current = "";
       setDraft("");
       setStaged([]);
       nextAttachmentOrderRef.current = 0;
@@ -1649,6 +1659,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         activeAppliedPlugin,
         quotes: quotes ?? [],
       };
+      const pending = pendingDraftRef.current;
+      if (pending && composerChangedSinceReset(pending.snapshot, pending.keptWorkspaceContextIds)) {
+        pending.edited = true;
+      }
     });
 
     /**
@@ -1662,8 +1676,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       snapshot: ComposerSendSnapshot,
       keptWorkspaceContextIds: ReadonlySet<string>,
     ): boolean {
-      const text = editorRef.current?.getText() ?? draftRef.current;
-      if (text.trim()) return true;
+      // Enter runs inside a Lexical update: React can commit reset() before
+      // that editor update clears its old text. The synchronous draft mirror
+      // already reflects reset and every subsequent user edit.
+      if (draftRef.current.trim()) return true;
       const current = latestComposerContentRef.current;
       if (!current) return false;
       return (
@@ -1718,7 +1734,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       snapshot: ComposerSendSnapshot,
       keptWorkspaceContextIds: ReadonlySet<string>,
     ) {
-      if (composerChangedSinceReset(snapshot, keptWorkspaceContextIds)) return;
+      const pending = pendingDraftRef.current;
+      if (pending?.edited || pending?.storageKey !== currentDraftStorageKeyRef.current
+        || composerChangedSinceReset(snapshot, keptWorkspaceContextIds)) return;
       replaceEditorDraft(snapshot.draft);
       setStaged(snapshot.staged);
       nextAttachmentOrderRef.current = snapshot.nextAttachmentOrder;
@@ -1755,6 +1773,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         },
         handBack,
       ).finally(() => {
+        pendingDraftRef.current = null;
         composedSendPendingRef.current = false;
         setComposedSendPending(false);
       });
@@ -1777,6 +1796,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         throw error;
       }
       const keptWorkspaceContextIds = new Set(reset().map((item) => item.id));
+      pendingDraftRef.current = { snapshot, keptWorkspaceContextIds, storageKey: draftStorageKey, edited: false };
       finishComposedSend(outcome, snapshot, keptWorkspaceContextIds, pendingMetadata);
       return true;
     }
@@ -2412,11 +2432,23 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       }
     }
 
+    async function ensureUploadProject() {
+      // Project creation is part of preparing the selected attachment too.
+      // Count overlapping preparations; canceling a staged upload is tracked
+      // separately so an outstanding HTTP request cannot keep Send locked.
+      setPreparingUploads((count) => count + 1);
+      try {
+        return await ensureProject();
+      } finally {
+        setPreparingUploads((count) => count - 1);
+      }
+    }
+
     /** 只重发这一个文件。本地 `File` 还在 `pendingFilesRef` 里,失败时没有清掉。 */
     async function retryPendingUpload(pendingId: string) {
       const target = pendingUploads.find((item) => item.id === pendingId);
       if (!target || !pendingFilesRef.current.has(pendingId)) return;
-      const id = await ensureProject();
+      const id = await ensureUploadProject();
       if (!id) return;
       setUploadError(null);
       setPendingUploads((current) =>
@@ -2427,7 +2459,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
 
     async function uploadFiles(files: File[]) {
       if (files.length === 0) return;
-      const id = await ensureProject();
+      const id = await ensureUploadProject();
       if (!id) return;
       setUploading(true);
       setUploadError(null);
@@ -2901,6 +2933,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // (files) is intentionally NOT pruned: users attach files via the upload
     // button without leaving an `@<path>` token.
     function handleEditorChange(text: string, present: InlineMentionEntity[]) {
+      if (pendingDraftRef.current && text !== draftRef.current) pendingDraftRef.current.edited = true;
       draftRef.current = text;
       setDraft(text);
       const set = new Set(present.map((e) => `${e.kind}:${e.id}`));
@@ -3333,7 +3366,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
      * 而引用**是折进正文的**,所以同一时刻它非空。同一个问题、两处各算各的,
      * 早晚会分叉;分叉之后症状出现在离原因最远的地方(用户看到的是「按钮坏了」)。
      */
-    const canSend = !sendDisabled && hasComposerPayload;
+    const hasPendingUpload = preparingUploads > 0
+      || pendingUploads.some((item) => item.state === 'uploading')
+      || Boolean(externalPendingUploads?.some((item) => item.state === 'uploading'));
+    const canSend = !sendDisabled && !hasPendingUpload && hasComposerPayload;
     /**
      * 摆到台面上的那枚「已应用插件」芯片(OPEND-2412)。
      *

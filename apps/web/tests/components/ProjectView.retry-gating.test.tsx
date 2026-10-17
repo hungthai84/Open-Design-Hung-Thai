@@ -762,6 +762,10 @@ describe('OPEND-2719 余额不足是终局:不进队列,不起任务,弹窗和�
   it('反向锚点:预检放行时照常起任务,不进队列,输入框照常清空', async () => {
     conversationMessages = [];
     checkAmrBalanceGate.mockResolvedValue({ kind: 'allow' });
+    streamViaDaemon.mockImplementation(async (options: Parameters<typeof import('../../src/providers/daemon').streamViaDaemon>[0]) => {
+      options.onRunCreated?.('admitted-run');
+      options.handlers.onRunStarted?.('admitted-run');
+    });
 
     renderProjectView(amrConfig);
     await waitForConversation();
@@ -1301,5 +1305,63 @@ describe('2026-09-14 retry replaces the old error surface without erasing histor
     expect(screen.queryByTestId('chat-run-error-card')).toBeNull();
     expect(screen.queryByTestId('chat-upgrade-card')).toBeNull();
     expect(streamViaDaemon).not.toHaveBeenCalled();
+  });
+});
+
+describe('shared final admission is distinct from local queue acceptance', () => {
+  it.each(['status-first', 'transport-first'] as const)('returns the draft when revocation arrives %s before execution starts', async (order) => {
+    conversationMessages = [];
+    type Options = Parameters<typeof import('../../src/providers/daemon').streamViaDaemon>[0];
+    let options: Options | undefined;
+    let close!: () => void;
+    streamViaDaemon.mockImplementation((value: Options) => {
+      options = value;
+      value.onRunCreated?.('revoked-before-start');
+      return new Promise<void>(resolve => { close = resolve; });
+    });
+    renderProjectView(amrConfig);
+    await waitForConversation();
+    await waitFor(() => expect(screen.getByTestId('send-message')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('send-message'));
+    await waitFor(() => expect(options).toBeDefined());
+    const revoked = () => {
+      options!.onRunStatus?.('canceled');
+      options!.onCancelOrigin?.('unknown');
+      options!.handlers.onDone('');
+    };
+    if (order === 'status-first') act(revoked);
+    await act(async () => close());
+    await waitFor(() => expect(sendOutcomes).toEqual(['restore-draft']));
+    if (order === 'transport-first') act(revoked);
+    act(() => options!.handlers.onRunStarted?.('revoked-before-start'));
+    expect(sendOutcomes).toEqual(['restore-draft']);
+  });
+
+  it.each(['started', 'rejected'] as const)('waits for actual execution %s before settling the composer send', async (outcome) => {
+    conversationMessages = [];
+    type Options = Parameters<typeof import('../../src/providers/daemon').streamViaDaemon>[0];
+    let options: Options | undefined;
+    let close!: () => void;
+    streamViaDaemon.mockImplementation((value: Options) => {
+      options = value;
+      value.onRunCreated?.('queued-run');
+      return new Promise<void>(resolve => { close = resolve; });
+    });
+    renderProjectView(amrConfig);
+    await waitForConversation();
+    await waitFor(() => expect(screen.getByTestId('send-message')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('send-message'));
+    await waitFor(() => expect(options).toBeDefined());
+    expect(sendOutcomes).toEqual([]);
+    if (outcome === 'started') {
+      act(() => options!.handlers.onRunStarted?.('queued-run'));
+      await waitFor(() => expect(sendOutcomes).toEqual([undefined]));
+    } else {
+      await act(async () => close());
+      await waitFor(() => expect(sendOutcomes).toEqual(['restore-draft']));
+      act(() => options!.handlers.onRunStarted?.('queued-run'));
+      expect(sendOutcomes).toEqual(['restore-draft']);
+    }
+    close();
   });
 });

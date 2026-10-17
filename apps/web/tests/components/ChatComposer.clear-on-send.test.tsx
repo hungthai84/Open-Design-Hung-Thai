@@ -2,6 +2,8 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
+import { flushSync } from 'react-dom';
+import { KEY_ENTER_COMMAND } from 'lexical';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,7 +12,7 @@ import {
   type ChatSendOutcome,
 } from '../../src/components/ChatComposer';
 import type { ChatQuote } from '../../src/runtime/chat/quote-selection';
-import { composerText, flushMounts, typeAndSettle } from '../helpers/lexical-composer';
+import { composerText, flushMounts, getComposerEditor, typeAndSettle } from '../helpers/lexical-composer';
 
 /*
  * OPEND-3392: the host already paints the sent turn (and flips to Working)
@@ -113,6 +115,22 @@ describe('ChatComposer clears on submit (OPEND-3392)', () => {
     expect(onRestoreQuotes).toHaveBeenCalledWith(quotes);
   });
 
+  it('restores after Enter flushes React reset before Lexical commits its cleared state', async () => {
+    const send = deferredSend();
+    renderComposer({ onSend: send.onSend });
+    await flushMounts();
+    await typeAndSettle('restore after authority changes');
+    // Enter handlers run inside a Lexical update. React may commit the reset
+    // before that outer update commits the editor's previous nonempty state.
+    const editor = getComposerEditor();
+    act(() => editor.update(() => {
+      flushSync(() => editor.dispatchCommand(KEY_ENTER_COMMAND, null));
+    }, { discrete: true }));
+    await waitFor(() => expect(composerText().trim()).toBe(''));
+    await act(async () => send.settle('restore-draft'));
+    expect(composerText()).toBe('restore after authority changes');
+  });
+
   it('puts the prompt back when the send throws', async () => {
     const send = deferredSend();
     renderComposer({ onSend: send.onSend });
@@ -198,4 +216,49 @@ describe('ChatComposer clears on submit (OPEND-3392)', () => {
     expect(onRestoreQuotes).not.toHaveBeenCalled();
     expect(composerText().trim()).toBe('');
   });
+  it('does not restore a submitted draft after the user edits then clears the next draft', async () => {
+    const send = deferredSend();
+    renderComposer({ onSend: send.onSend });
+    await flushMounts();
+    await typeAndSettle('original');
+    fireEvent.click(screen.getByTestId('chat-send'));
+    await waitFor(() => expect(composerText().trim()).toBe(''));
+    await typeAndSettle('new draft');
+    await typeAndSettle('');
+    await act(async () => send.settle('restore-draft'));
+    expect(composerText().trim()).toBe('');
+  });
+
+  it('returns the submitted attachment with its prompt after final admission rejects', async () => {
+    const send = deferredSend();
+    renderComposer({ onSend: send.onSend });
+    await flushMounts();
+    act(() => window.dispatchEvent(new CustomEvent(STAGE_ATTACHMENT_EVENT, {
+      detail: { attachments: [{ path: 'shots/original.png', name: 'original.png', kind: 'image' }] },
+    })));
+    await typeAndSettle('original attachment');
+    fireEvent.click(screen.getByTestId('chat-send'));
+    await waitFor(() => expect(composerText().trim()).toBe(''));
+    expect(screen.queryByRole('button', { name: 'Preview original.png' })).toBeNull();
+    await act(async () => send.settle('restore-draft'));
+    expect(composerText()).toBe('original attachment');
+    expect(screen.getByRole('button', { name: 'Preview original.png' })).toBeTruthy();
+  });
+
+  it('does not clear later text or attachments when an earlier start finally arrives', async () => {
+    const send = deferredSend();
+    renderComposer({ onSend: send.onSend });
+    await flushMounts();
+    await typeAndSettle('submitted');
+    fireEvent.click(screen.getByTestId('chat-send'));
+    await waitFor(() => expect(composerText().trim()).toBe(''));
+    await typeAndSettle('next draft');
+    act(() => window.dispatchEvent(new CustomEvent(STAGE_ATTACHMENT_EVENT, {
+      detail: { attachments: [{ path: 'shots/next.png', name: 'next.png', kind: 'image' }] },
+    })));
+    await act(async () => send.settle(undefined));
+    expect(composerText()).toBe('next draft');
+    expect(screen.getByRole('button', { name: 'Preview next.png' })).toBeTruthy();
+  });
+
 });
