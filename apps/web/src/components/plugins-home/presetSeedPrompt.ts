@@ -26,10 +26,11 @@ const HOME_ESCAPED_ARGUMENT_PLACEHOLDER_PATTERN =
 const HOME_ARGUMENT_PLACEHOLDER_PATTERN =
   /\{argument\s+name=(?:"([^"]+)"|'([^']+)')\s+default=(?:"([^"]*)"|'([^']*)')[^}]*\}/g;
 
-export type PromptLocaleKind = 'zh' | 'ja' | 'en';
+export type PromptLocaleKind = 'zh' | 'zh-TW' | 'ja' | 'en';
 
 export function promptLocaleKind(locale: Locale): PromptLocaleKind {
-  if (locale === 'zh-CN' || locale === 'zh-TW') return 'zh';
+  if (locale === 'zh-CN') return 'zh';
+  if (locale === 'zh-TW') return 'zh-TW';
   if (locale === 'ja') return 'ja';
   return 'en';
 }
@@ -182,7 +183,8 @@ export function examplePresetSeedPrompt(
   // zh: the localized useCase.query is a generator-facing meta-instruction
   // ("follow the en field verbatim; start from example.html"), useless as a
   // human seed — surface the curated one-line description instead.
-  if (promptLocaleKind(locale) === 'zh' && description) {
+  const kind = promptLocaleKind(locale);
+  if ((kind === 'zh' || kind === 'zh-TW') && description) {
     return { text: description, fromRenderedQuery: false };
   }
   const query = pluginPresetQuery(record, locale);

@@ -18,6 +18,7 @@ import type {
 import { Icon, type IconName } from './Icon';
 import { navigate } from '../router';
 import { useT } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import type { SkillSummary } from '../types';
 
 type TranslateFn = ReturnType<typeof useT>;
@@ -539,9 +540,9 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [], 
 
   const projectsById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const p of projects) map.set(p.id, p.name);
+    for (const p of projects) map.set(p.id, displayProjectName(p.name, t));
     return map;
-  }, [projects]);
+  }, [projects, t]);
 
   // Sort routines by creation time, newest first
   const sortedRoutines = useMemo(

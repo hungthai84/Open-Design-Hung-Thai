@@ -586,6 +586,12 @@ export interface Dict {
   'settings.modelPickerLiveCatalogOnlyHint': string;
   'settings.modelPickerFallbackHint': string;
   'settings.cliEnvTitle': string;
+  'settings.codexPath.repairHint': string;
+  'settings.codexPath.useDetected': string;
+  'settings.codexPath.clearCustom': string;
+  'settings.codexPath.configuredSuccess': string;
+  'settings.codexPath.invalidFallback': string;
+  'settings.codexPath.failedFallback': string;
   'settings.cliEnvHint': string;
   'settings.cliEnvClaudeConfigDir': string;
   'settings.cliEnvClaudeBaseUrl': string;
@@ -1770,6 +1776,8 @@ export interface Dict {
   'pluginCard.use': string;
   'pluginCard.useWithQuery': string;
   'pluginCard.applying': string;
+  'pluginCard.pluginActive': string;
+  'pluginCard.reloadExampleQuery': string;
   'pluginCard.duplicate': string;
   'pluginCard.duplicating': string;
   'pluginCard.duplicateFailed': string;

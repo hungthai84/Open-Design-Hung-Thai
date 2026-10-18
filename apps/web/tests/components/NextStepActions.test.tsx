@@ -295,6 +295,27 @@ describe('NextStepActions', () => {
     );
   });
 
+  it('localizes incomplete-project recovery prompts in Traditional Chinese', () => {
+    const onPromptAction = vi.fn();
+    renderActions({
+      variant: 'project-incomplete',
+      fileName: null,
+      onPromptAction,
+    }, 'zh-TW');
+
+    fireEvent.click(screen.getByTestId('next-step-project-action-project-continue'));
+    expect(onPromptAction).toHaveBeenCalledWith(
+      expect.stringContaining('從已停止或未完成的回合繼續處理'),
+    );
+    fireEvent.click(screen.getByTestId('next-step-project-action-project-generate-artifact'));
+    expect(onPromptAction).toHaveBeenCalledWith(
+      expect.stringContaining('現在產生缺少的專案產物'),
+    );
+    expect(onPromptAction).not.toHaveBeenCalledWith(
+      expect.stringContaining('现在生成缺失的项目产物'),
+    );
+  });
+
   it('localizes design-system project prompts in Chinese', () => {
     const onPromptAction = vi.fn();
     renderActions({ variant: 'design-system', onPromptAction }, 'zh-CN');

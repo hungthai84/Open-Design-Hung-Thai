@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom';
 import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/contracts';
 
 import { useT } from '../../i18n';
+import { displayProjectName } from '../../utils/projectName';
 import { Icon } from '../Icon';
 import {
   hasCompletionNotice,
@@ -216,7 +217,10 @@ export function RailRecentRow({
     if (rect) setMenuAnchor({ top: rect.top + rect.height / 2, left: rect.right + POPUP_GAP_PX });
   }, [menuOpen]);
   const [renaming, setRenaming] = useState(false);
-  const [draftName, setDraftName] = useState(project.name);
+  // Display-only: the daemon's shared-project placeholder reads as the
+  // localized label. Saving it unchanged is a no-op (see commitRename).
+  const shownName = displayProjectName(project.name, t);
+  const [draftName, setDraftName] = useState(shownName);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -265,7 +269,7 @@ export function RailRecentRow({
   function commitRename() {
     const next = draftName.trim();
     setRenaming(false);
-    if (!next || next === project.name) return;
+    if (!next || next === project.name || next === shownName) return;
     onRename?.(project.id, next);
   }
 
@@ -309,7 +313,7 @@ export function RailRecentRow({
               commitRename();
             } else if (event.key === 'Escape') {
               event.preventDefault();
-              setDraftName(project.name);
+              setDraftName(shownName);
               setRenaming(false);
             }
           }}
@@ -347,7 +351,7 @@ export function RailRecentRow({
               <ProjectFolderGlyph size={16} />
             )}
           </span>
-          <span className="entry-nav-rail__recent-name">{project.name}</span>
+          <span className="entry-nav-rail__recent-name">{shownName}</span>
           {/* Completed, unread: the dot at the row's end. The section spends
               it when the row opens the project (`acknowledgeProjectCompletion`
               in the shared run-status store), which is also what drops it from
@@ -406,7 +410,7 @@ export function RailRecentRow({
               title={foreignTitle}
               onClick={() => {
                 releasePopup(project.id, 'menu');
-                setDraftName(project.name);
+                setDraftName(shownName);
                 setRenaming(true);
               }}
             >

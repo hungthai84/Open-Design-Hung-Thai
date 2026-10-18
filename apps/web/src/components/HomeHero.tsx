@@ -85,6 +85,7 @@ import {
 } from './plugins-home/curatedPriority';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
 import { notifyCompletionFeedbackGesture } from '../utils/notifications';
+import { displayProjectName } from '../utils/projectName';
 import { inferPluginPreview } from './plugins-home/preview';
 import { ComposerPlusMenu, PLUS_SUBMENU_RESOURCE_KIND } from './ComposerPlusMenu';
 import { ContextChipHoverCard } from './ContextChipHoverCard';
@@ -1127,7 +1128,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   function handleReferenceProjects(selections: ProjectReferenceSelection[]) {
     for (const selection of selections) {
       const path = selection.resolvedDir.trim();
-      const label = selection.project.name || selection.project.id;
+      const label = displayProjectName(selection.project.name, t) || selection.project.id;
       addWorkspaceContextItem(
         {
           id: `project:${selection.project.id}`,
@@ -4158,6 +4159,9 @@ function fallbackPlaceholderScenarioText(
   if (kind === 'zh') {
     return description ? `创建一个${label}：${description}` : `创建一个${label}`;
   }
+  if (kind === 'zh-TW') {
+    return description ? `建立一個${label}：${description}` : `建立一個${label}`;
+  }
   if (kind === 'ja') {
     return description ? `${label}を作成する：${description}` : `${label}を作成する`;
   }
@@ -4492,6 +4496,12 @@ function describeStructuredPresetPrompt(
       : '';
     return `使用「${title}」插件生成${artifact}。${main}${sentenceEnd(main)}${details}`;
   }
+  if (kind === 'zh-TW') {
+    const details = detailValues.length > 0
+      ? `重點包含：${detailValues.join('；')}。`
+      : '';
+    return `使用「${title}」外掛生成${artifact}。${main}${sentenceEnd(main)}${details}`;
+  }
   if (kind === 'ja') {
     const details = detailValues.length > 0
       ? `重点として：${detailValues.join('、')}。`
@@ -4573,6 +4583,17 @@ function pluginPresetArtifactLabel(chipId: string, kind: PromptLocaleKind): stri
       default: return '一个设计产物';
     }
   }
+  if (kind === 'zh-TW') {
+    switch (chipId) {
+      case 'prototype': return '一個互動原型';
+      case 'deck': return '一套 PPT 簡報';
+      case 'image': return '一張圖片';
+      case 'video': return '一段影片';
+      case 'hyperframes': return '一段 HyperFrames 動效影片';
+      case 'audio': return '一段音訊';
+      default: return '一個設計產物';
+    }
+  }
   if (kind === 'ja') {
     switch (chipId) {
       case 'prototype': return 'インタラクティブなプロトタイプ';
@@ -4610,6 +4631,9 @@ function fallbackPluginPresetPrompt(
   const description = localizePluginDescription(locale, record).trim();
   if (kind === 'zh') {
     return `使用「${title}」插件生成${artifact}${description ? `，方向是：${description}` : ''}。`;
+  }
+  if (kind === 'zh-TW') {
+    return `使用「${title}」外掛生成${artifact}${description ? `，方向是：${description}` : ''}。`;
   }
   if (kind === 'ja') {
     return `「${title}」プラグインで${artifact}を生成します${description ? `。方向性：${description}` : ''}。`;

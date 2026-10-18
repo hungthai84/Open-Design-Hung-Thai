@@ -15,6 +15,7 @@ import {
   subscribeWorkspaceTabsDock,
 } from './workspaceTabsDock';
 import { useT } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import { scrollMovesAnchor } from '../lib/scroll-moves-anchor';
 import { buildPath, navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
@@ -1331,9 +1332,11 @@ export function WorkspaceTabsBar({
   const commitDockRename = useCallback((project: Project) => {
     const next = dockRenameDraft.trim();
     setDockRenamingProjectId(null);
-    if (!next || next === project.name) return;
+    // The draft is prefilled with the display name, so an untouched localized
+    // placeholder must not be saved as a rename.
+    if (!next || next === project.name || next === displayProjectName(project.name, t)) return;
     void onRenameProject?.(project.id, next);
-  }, [dockRenameDraft, onRenameProject]);
+  }, [dockRenameDraft, onRenameProject, t]);
 
   // Full-page settings borrows CHAT's chrome row: a lone Home logo at the left
   // edge, no search / rail toggle. App swaps EntryShell out for the settings
@@ -2200,7 +2203,7 @@ export function WorkspaceTabsBar({
                           } else if (event.key === 'Escape') {
                             event.preventDefault();
                             event.stopPropagation();
-                            setDockRenameDraft(rowProject.name);
+                            setDockRenameDraft(displayProjectName(rowProject.name, t));
                             setDockRenamingProjectId(null);
                           }
                         }}
@@ -2298,7 +2301,7 @@ export function WorkspaceTabsBar({
                     title={dockActionsForeignTitle}
                     onClick={() => {
                       setDockActionsProjectId(null);
-                      setDockRenameDraft(dockActionsProject.name);
+                      setDockRenameDraft(displayProjectName(dockActionsProject.name, t));
                       setDockRenamingProjectId(dockActionsProject.id);
                     }}
                   >
@@ -2781,7 +2784,10 @@ function displayTabFor(
     // project) — fall back to the last real name this tab showed before
     // falling back further to the untitled label, so a tab with a real name
     // never regresses to "untitled" just because Home reloaded.
-    const title = project?.name?.trim() || knownProjectNames?.get(tab.projectId) || t('common.untitled');
+    const title = displayProjectName(
+      project?.name?.trim() || knownProjectNames?.get(tab.projectId) || '',
+      t,
+    ) || t('common.untitled');
     return {
       id: tab.id,
       title,

@@ -21,6 +21,7 @@ import { Dialog, DialogDescription, DialogFooter, DialogTitle } from '@open-desi
 
 const MOVE_CONFIRM_SKIP_KEY = 'od.projects.moveConfirmSkip';
 import { useT } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import {
   fetchProjectFiles,
   invalidateProjectFilesCache,
@@ -696,7 +697,7 @@ export function RecentProjectsStrip({
   const bulkMutationDisabled = selectedCount === 0 || selectionHasForeignProject;
   const bulkMutationTitle = selectionHasForeignProject
     ? t('recentProjects.ownOnlyMutation')
-    : selectedProjects.map(({ project }) => project.name).join('、') || undefined;
+    : selectedProjects.map(({ project }) => displayProjectName(project.name, t)).join('、') || undefined;
   // A tab that can only hold one side of the share offers only the move that
   // leaves it: 团队项目 cannot move anything TO the team, 个人项目 nothing OUT.
   const canBulkMoveToTeam =
@@ -1037,8 +1038,11 @@ export function RecentProjectsStrip({
       project_relation: 'self',
     });
     setMenuOpenId(null);
-    setRenameTarget({ id: project.id, original: project.name });
-    setRenameInput(project.name);
+    // Display name as both the prefill and the "unchanged" baseline, so saving
+    // the localized placeholder untouched is a no-op rather than a rename.
+    const shownName = displayProjectName(project.name, t);
+    setRenameTarget({ id: project.id, original: shownName });
+    setRenameInput(shownName);
   }
 
   function cancelRename() {
@@ -1548,6 +1552,7 @@ export function RecentProjectsStrip({
             project,
             coverByProject[project.id] ?? null,
             workspaceContext,
+            displayProjectName(project.name, t),
           );
           const designSystemProject = isDesignSystemProject(project);
           const status: ProjectDisplayStatus = project.status?.value ?? 'not_started';
@@ -1576,7 +1581,7 @@ export function RecentProjectsStrip({
                   type="button"
                   className="recent-projects__select-check"
                   aria-pressed={selected}
-                  aria-label={project.name}
+                  aria-label={displayProjectName(project.name, t)}
                   onClick={(event) => {
                     event.stopPropagation();
                     toggleSelection(project.id);
@@ -1662,7 +1667,7 @@ export function RecentProjectsStrip({
                   }
                 }}
                 aria-busy={opening ? true : undefined}
-                title={project.name}
+                title={displayProjectName(project.name, t)}
               >
                 {opening ? (
                   <span className="recent-projects__card-opening" aria-hidden>
@@ -1723,7 +1728,7 @@ export function RecentProjectsStrip({
                 </div>
                 <div className="recent-projects__card-meta">
                   <div className="recent-projects__card-name-row">
-                    <span className="recent-projects__card-name">{project.name}</span>
+                    <span className="recent-projects__card-name">{displayProjectName(project.name, t)}</span>
                     {shared && view === 'list' ? (
                       <span className="recent-projects__card-badge recent-projects__card-badge--shared recent-projects__card-badge--inline">
                         <Icon name="swap" size={13} />
@@ -2307,6 +2312,7 @@ export function projectCover(
   project: Project,
   override: ProjectCoverOverride | null,
   workspaceContext?: WorkspaceCollabContext | null,
+  shownName?: string,
 ): {
   kind: 'image' | 'video' | 'html' | 'logo' | 'fallback';
   src?: string;
@@ -2323,7 +2329,7 @@ export function projectCover(
   const style: CSSProperties = {
     background: `radial-gradient(circle at 30% 28%, hsl(${hue} 70% 78% / 0.55), transparent 42%), linear-gradient(135deg, hsl(${hue} 65% 88%), hsl(${hue2} 70% 90%))`,
   };
-  const trimmed = project.name.trim();
+  const trimmed = (shownName ?? project.name).trim();
   const initial = (trimmed ? Array.from(trimmed)[0]! : '?').toUpperCase();
   if (override) {
     return {

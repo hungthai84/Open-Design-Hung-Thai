@@ -25,7 +25,7 @@ window.__odValidateMotionTimeline = function (root, tl) {
 // Shared by URL previews, srcdoc previews and the persisted editable source.
 // The renderer installs its flag before author scripts; it never sees chrome,
 // layout scaling, poster seeking, or wall-clock playback from this runtime.
-const PLAYER = `<script data-od-motion-source-player="6">
+const PLAYER = `<script data-od-motion-source-player="7">
 ${MOTION_TIMELINE_CHECK_SCRIPT}
 (function () {
   function boot() {
@@ -40,7 +40,24 @@ ${MOTION_TIMELINE_CHECK_SCRIPT}
     hint.setAttribute('data-od-motion-status', ''); hint.setAttribute('role', 'status');
     hint.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;padding:6px 10px;border-radius:6px;background:#17191d;color:white;font:13px system-ui;display:none';
     document.body.appendChild(hint);
-    function notice(text) { hint.textContent = text; hint.style.display = text ? 'block' : 'none'; }
+    function notice(text) { if (!text) noticeKey = null; hint.textContent = text; hint.style.display = text ? 'block' : 'none'; }
+    // Notices follow the app's locale, which the host sends with each activity
+    // reply. Standalone or exported files have no host and use the browser
+    // language. Chinese locales get Chinese text; everything else gets English.
+    var MESSAGES = {
+      en: { unmute: 'Click the video to turn on sound', audioFailed: 'Audio could not play. Check the audio files.', notReady: 'Motion is not ready. Check the timeline or its dependency files.' },
+      'zh-CN': { unmute: '点击画面开启声音', audioFailed: '音频无法播放，请检查素材', notReady: '动效未就绪，请检查时间轴或依赖文件' },
+      'zh-TW': { unmute: '點擊畫面開啟聲音', audioFailed: '音訊無法播放，請檢查素材', notReady: '動效未就緒，請檢查時間軸或依賴檔案' }
+    };
+    function messagesFor(tag) {
+      tag = String(tag || '').toLowerCase();
+      if (!/^zh(-|$)/.test(tag)) return MESSAGES.en;
+      return /^zh-(tw|hk|mo|hant)(-|$)/.test(tag) ? MESSAGES['zh-TW'] : MESSAGES['zh-CN'];
+    }
+    var messages = messagesFor((navigator.languages && navigator.languages[0]) || navigator.language);
+    var noticeKey = null;
+    function say(key) { noticeKey = key; notice(messages[key]); }
+    function setLocale(tag) { messages = messagesFor(tag); if (noticeKey) notice(messages[noticeKey]); }
     var hosted = window.__odMotionPreview === true || new URL(location.href).searchParams.get('odMotionPreview') === '1';
     var thumbnail = window.__odMotionThumbnail === true || new URL(location.href).searchParams.get('odMotionThumbnail') === '1';
     var instance = Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -51,6 +68,7 @@ ${MOTION_TIMELINE_CHECK_SCRIPT}
       var data = event.data;
       if (!hosted || event.source !== window.parent || !data) return;
       if (data.type === '${MOTION_PREVIEW_PROBE}') { requestActivity(); return; }
+      if (data.type === '${MOTION_PREVIEW_ACTIVITY}' && typeof data.locale === 'string') setLocale(data.locale);
       if (data.type !== '${MOTION_PREVIEW_ACTIVITY}' || typeof data.active !== 'boolean' || (data.active && data.id !== instance)) return;
       active = data.active; applyPlayback();
     }
@@ -75,7 +93,7 @@ ${MOTION_TIMELINE_CHECK_SCRIPT}
           if (promise) promise.catch(function (error) {
             if (error && error.name === 'AbortError') return;
             track.blocked = true;
-            notice(error && error.name === 'NotAllowedError' ? '点击画面开启声音' : '音频无法播放，请检查素材');
+            say(error && error.name === 'NotAllowedError' ? 'unmute' : 'audioFailed');
           }).finally(function () {
             track.pending = false;
             if (!active || !pageActive || !playing || !wantsPlay) audio.pause();
@@ -99,10 +117,10 @@ ${MOTION_TIMELINE_CHECK_SCRIPT}
       var tl = window.__timelines && window.__timelines[root.dataset.compositionId];
       if (!tl || typeof tl.seek !== 'function' || typeof tl.play !== 'function' || !(tl.duration() > 0)) {
         if (Date.now()-started < 15000) { setTimeout(connect, 100); return; }
-        notice('动效未就绪，请检查时间轴或依赖文件'); return;
+        say('notReady'); return;
       }
       var timingError = window.__odValidateMotionTimeline(root, tl);
-      if (timingError) { tl.pause(); notice(timingError); return; }
+      if (timingError) { tl.pause(); noticeKey = null; notice(timingError); return; }
       var duration = tl.duration();
       applyPlayback = function () {
         clearTimeout(updateTimer); updateTimer = null;
@@ -163,7 +181,7 @@ export function injectMotionSourcePlayer(html: string): string {
   const existing = findRealTagOffset(html, /<script\b[^>]*\bdata-od-motion-source-player\b/i);
   if (existing >= 0) {
     const script = /^<script\b[^>]*>[\s\S]*?<\/script\s*>/i.exec(html.slice(existing));
-    if (!script || /data-od-motion-source-player="6"/.test(script[0])) return html;
+    if (!script || /data-od-motion-source-player="7"/.test(script[0])) return html;
     return html.slice(0, existing) + PLAYER + html.slice(existing + script[0].length);
   }
   const end = findRealTagOffset(html, HTML_TAG_PATTERNS.bodyClose);

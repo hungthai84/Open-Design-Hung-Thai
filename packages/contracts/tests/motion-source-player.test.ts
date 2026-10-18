@@ -39,7 +39,22 @@ describe('motion audio contract isolation', () => {
     const source = '<meta name="od-motion-output" content="video"><div data-composition-id="main"></div><script data-od-motion-source-player>oldPlayer();</script>';
     const result = injectMotionSourcePlayer(source);
     expect(result).not.toContain('oldPlayer');
-    expect(result).toContain('data-od-motion-source-player="6"');
+    expect(result).toContain('data-od-motion-source-player="7"');
     expect(injectMotionSourcePlayer(result)).toBe(result);
+  });
+});
+
+describe('motion player notices', () => {
+  const video = '<meta name="od-motion-output" content="video"><div data-composition-id="main"></div>';
+  it('ships English notices with Chinese only as a locale variant', () => {
+    const result = injectMotionSourcePlayer(video);
+    expect(result).toContain('Motion is not ready. Check the timeline or its dependency files.');
+    expect(result).toContain('Click the video to turn on sound');
+    expect(result).toContain("say('notReady')");
+    expect(result).not.toContain("notice('动效未就绪");
+  });
+  it('upgrades a v6 player that still hardcodes Chinese notices', () => {
+    const v6 = video + '<script data-od-motion-source-player="6">notice(\'动效未就绪\');</script>';
+    expect(injectMotionSourcePlayer(v6)).toContain('data-od-motion-source-player="7"');
   });
 });

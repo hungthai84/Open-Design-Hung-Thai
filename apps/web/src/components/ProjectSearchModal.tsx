@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom';
 import type { Project } from '../types';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import { relativeTimeLong } from '../utils/chatTime';
 import { projectCover, projectCategory, ProjectTag } from './RecentProjectsStrip';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
@@ -76,8 +77,10 @@ export function ProjectSearchModal({
     const sorted = [...projects].sort((a, b) => b.updatedAt - a.updatedAt);
     const q = query.trim().toLowerCase();
     if (q.length === 0) return sorted;
-    return sorted.filter((p) => (p.name || '').toLowerCase().includes(q));
-  }, [projects, query]);
+    return sorted.filter((p) => (
+      `${p.name || ''}\n${displayProjectName(p.name, t)}`.toLowerCase().includes(q)
+    ));
+  }, [projects, query, t]);
 
   // A new query re-ranks the list, so the old index would point at an
   // unrelated row (or past the end) — always restart at the top match.
@@ -149,7 +152,7 @@ export function ProjectSearchModal({
             <div className="project-search-empty">{t('quickSwitcher.noMatches')}</div>
           ) : (
             filtered.map((project, index) => {
-              const cover = projectCover(project, null, workspaceContext);
+              const cover = projectCover(project, null, workspaceContext, displayProjectName(project.name, t));
               const showImage =
                 (cover.kind === 'image' || cover.kind === 'logo') && Boolean(cover.src);
               const active = index === activeIndex;
@@ -177,7 +180,7 @@ export function ProjectSearchModal({
                     )}
                   </span>
                   <span className="project-search-item-name">
-                    {project.name || t('chat.untitledConversation')}
+                    {displayProjectName(project.name, t) || t('chat.untitledConversation')}
                   </span>
                   <span className="project-search-item-tag">
                     <ProjectTag category={projectCategory(project)} />

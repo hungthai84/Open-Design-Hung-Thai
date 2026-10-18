@@ -25,6 +25,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 
 import { workspaceIdentityCacheKey } from '../../collab/workspace-identity';
+import { useT } from '../../i18n';
+import { displayProjectName } from '../../utils/projectName';
 import {
   getProjectCoverSnapshot,
   projectCoverSnapshotKey,
@@ -248,9 +250,11 @@ export function ProjectHoverPreviewCard({
   testId?: string;
 }) {
   const { coverSrc, showsImage, showsVideo, showsHtml, isDeck } = cover;
+  const t = useT();
+  const shownName = displayProjectName(project.name, t);
   const glyph = (
     <span className="entry-nav-rail__recent-preview-glyph" aria-hidden>
-      {(Array.from(project.name.trim())[0] ?? '?').toUpperCase()}
+      {(Array.from(shownName.trim())[0] ?? '?').toUpperCase()}
     </span>
   );
   return (
@@ -274,7 +278,7 @@ export function ProjectHoverPreviewCard({
       {/* The name the row had to ellipsize, given room to wrap — that is the
           whole job of this card. No timestamp line (per product: 时间去掉，最多
           两行名称): a hover preview answers "which project is this". */}
-      <p className="entry-nav-rail__recent-preview-name">{project.name}</p>
+      <p className="entry-nav-rail__recent-preview-name">{shownName}</p>
     </div>
   );
 }

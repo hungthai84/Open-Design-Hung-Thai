@@ -677,6 +677,12 @@ export const zhTW: Dict = {
   "settings.modelPickerFallbackHint":
     "正在顯示內建預設值。點擊「重新掃描」可從 CLI 拉取即時模型。",
   "settings.cliEnvTitle": "進階：代理與自訂路徑",
+  "settings.codexPath.repairHint": "目前儲存的 Codex 路徑不適合繼續使用。",
+  "settings.codexPath.useDetected": "使用偵測到的 Codex",
+  "settings.codexPath.clearCustom": "清除自訂路徑",
+  "settings.codexPath.configuredSuccess": "本次測試使用的是已設定的 Codex 路徑：{path}。",
+  "settings.codexPath.invalidFallback": "已設定的 Codex 路徑無效或不可執行：{configuredPath}。本次測試改用 PATH 中的 Codex CLI：{detectedPath}。建議更新 CODEX_BIN 或清除自訂路徑。",
+  "settings.codexPath.failedFallback": "已設定的 Codex 路徑啟動失敗：{configuredPath}。本次測試改用 PATH 中的 Codex CLI：{detectedPath}。建議更新 CODEX_BIN 或清除自訂路徑。",
   "settings.cliEnvHint":
     "用於覆蓋所選 CLI 的底層環境變數：API key、代理 base URL、自訂 home 或非標準可執行檔路徑。不填 base URL 時，CLI 會使用自己的預設端點。密鑰只保存在本機應用設定中，且只傳給所選 CLI。",
   "settings.cliEnvClaudeConfigDir": "Claude Code 設定目錄",
@@ -1437,6 +1443,8 @@ export const zhTW: Dict = {
   "pluginCard.use": "使用",
   "pluginCard.useWithQuery": "帶查詢使用",
   "pluginCard.applying": "正在套用…",
+  "pluginCard.pluginActive": "外掛已啟用",
+  "pluginCard.reloadExampleQuery": "重新載入範例請求",
   "pluginCard.duplicate": "Remix",
   "pluginCard.duplicating": "正在 Remix…",
   "pluginCard.duplicateFailed": "無法 Remix 這個範本。",

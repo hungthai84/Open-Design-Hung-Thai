@@ -20,6 +20,7 @@ import { listPlugins } from '../state/projects';
 import { fetchMcpServers, type McpServerConfig } from '../state/mcp';
 import { inlineMentionToken } from '../utils/inlineMentions';
 import { useI18n, useT } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import type { Dict } from '../i18n/types';
 import { localizePluginDescription, localizePluginTitle } from './plugins-home/localization';
 import { describeRoutineSchedule, describeRoutineScheduleParts } from './routineScheduleLabels';
@@ -518,7 +519,7 @@ export function NewAutomationModal({
   const projectName = projects.find((p) => p.id === form.projectId)?.name ?? null;
   const routineNextRunAt = initial?.routine?.nextRunAt ?? null;
   const projectLabel =
-    form.mode === 'reuse' && projectName ? projectName : t('automations.targetCreateEachRun');
+    form.mode === 'reuse' && projectName ? displayProjectName(projectName, t) : t('automations.targetCreateEachRun');
   const schedule = buildSchedule(form);
   const scheduleLabel = describeRoutineSchedule(schedule, t, routineNextRunAt);
   const scheduleLabelNode = describeScheduleSummaryNode(schedule, t, routineNextRunAt);
@@ -836,8 +837,8 @@ export function NewAutomationModal({
                             setForm({ ...form, mode: 'reuse', projectId: p.id });
                             setPopover(null);
                           }}
-                          label={p.name}
-                          title={p.name}
+                          label={displayProjectName(p.name, t)}
+                          title={displayProjectName(p.name, t)}
                         />
                       ))}
                     </>

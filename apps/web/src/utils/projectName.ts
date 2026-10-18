@@ -94,3 +94,32 @@ export function canAutoRenameProjectFromPrompt(
   const currentName = project.name.trim();
   return Boolean(promptHead) && (currentName === promptHead || currentName === summarized);
 }
+
+/**
+ * Transport sentinel the daemon stores as the local placeholder name of a
+ * shared project while it is being pulled (and permanently when the pulled
+ * project carries no name). Must match `PULLED_PROJECT_PLACEHOLDER_NAME` in
+ * apps/daemon/src/routes/collab-sync.ts. Use it for logic comparisons only and
+ * never render it: show `displayProjectName(...)` instead.
+ */
+export const SHARED_PROJECT_PLACEHOLDER_NAME = '共享项目';
+
+type SharedProjectFallbackTranslate = (
+  key: 'recentProjects.sharedProjectFallbackName',
+) => string;
+
+/**
+ * The name to show the user for a project. Swaps the daemon's hardcoded
+ * placeholder sentinel for the localized "Shared project" label; any other
+ * name is returned unchanged. Display only: keep comparisons, sorting and
+ * persistence on the raw `project.name`.
+ */
+export function displayProjectName(
+  name: string | null | undefined,
+  t: SharedProjectFallbackTranslate,
+): string {
+  if (name == null) return '';
+  return name.trim() === SHARED_PROJECT_PLACEHOLDER_NAME
+    ? t('recentProjects.sharedProjectFallbackName')
+    : name;
+}

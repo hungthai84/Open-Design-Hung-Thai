@@ -10,6 +10,9 @@ export function bindMotionPreviewActivity(frame: HTMLIFrameElement, onSize?: (si
   const host = frame.ownerDocument.defaultView;
   if (!host) return;
   const isActive = () => (frame.dataset.odMotionActive ?? frame.dataset.odActive) === 'true';
+  // I18nProvider keeps <html lang> on the app's chosen locale; the player
+  // uses it to localize its status notices.
+  const locale = () => frame.ownerDocument.documentElement.lang || undefined;
   const send = (active = isActive()) => {
     // Never cache a document ID on WindowProxy: it survives navigation. Pause
     // immediately; activation always challenges the current document anew.
@@ -22,16 +25,21 @@ export function bindMotionPreviewActivity(frame: HTMLIFrameElement, onSize?: (si
     const data = event.data as { type?: unknown; id?: unknown; width?: unknown; height?: unknown } | null;
     if (data?.type !== MOTION_PREVIEW_REQUEST || typeof data.id !== 'string' || data.id.length === 0 || data.id.length > 128) return;
     if (typeof data.width === 'number' && typeof data.height === 'number' && Number.isFinite(data.width) && Number.isFinite(data.height) && data.width > 0 && data.height > 0 && data.width <= 16384 && data.height <= 16384) onSize?.({ width: data.width, height: data.height });
-    frame.contentWindow?.postMessage({ type: MOTION_PREVIEW_ACTIVITY, id: data.id, active: isActive() }, '*');
+    frame.contentWindow?.postMessage({ type: MOTION_PREVIEW_ACTIVITY, id: data.id, active: isActive(), locale: locale() }, '*');
   };
   const onLoad = () => send();
   const observer = new MutationObserver(() => send());
   observer.observe(frame, { attributes: true, attributeFilter: ['data-od-active', 'data-od-motion-active'] });
+  // A language switch re-probes so the player's request is answered with the
+  // new locale and its current activity state.
+  const langObserver = new MutationObserver(() => frame.contentWindow?.postMessage({ type: MOTION_PREVIEW_PROBE }, '*'));
+  langObserver.observe(frame.ownerDocument.documentElement, { attributes: true, attributeFilter: ['lang'] });
   host.addEventListener('message', onRequest);
   frame.addEventListener('load', onLoad);
   bindings.set(frame, { dispose() {
     send(false);
     observer.disconnect();
+    langObserver.disconnect();
     host.removeEventListener('message', onRequest);
     frame.removeEventListener('load', onLoad);
   } });

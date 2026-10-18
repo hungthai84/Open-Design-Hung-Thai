@@ -200,10 +200,18 @@ export interface NoMailClientNotice {
 }
 
 // Copy for the fallback dialog. The main process has no i18n layer; the OS
-// locale picks Chinese or English, the two languages the product ships its
-// support flow in.
+// locale picks Chinese (Simplified or Traditional) or English, the languages
+// the product ships its support flow in.
 export function noMailClientNotice(address: string, locale: string): NoMailClientNotice {
-  if (locale.trim().toLowerCase().startsWith("zh")) {
+  const tag = locale.trim().toLowerCase();
+  if (/^zh-(tw|hk|mo|hant)(-|$)/.test(tag)) {
+    return {
+      message: "找不到可用的郵件應用程式",
+      detail: `已將 ${address} 複製到剪貼簿，貼到任何郵件用戶端或網頁郵件即可聯絡我們。`,
+      button: "好",
+    };
+  }
+  if (tag.startsWith("zh")) {
     return {
       message: "未找到可用的邮件应用",
       detail: `已复制 ${address} 到剪贴板，粘贴到任意邮件客户端或网页邮箱即可联系我们。`,

@@ -2,6 +2,7 @@ import { useId } from 'react';
 import { Dialog, DialogDescription, DialogFooter, DialogTitle } from '@open-design/components';
 
 import { useT } from '../../i18n';
+import { displayProjectName } from '../../utils/projectName';
 
 /**
  * The one delete confirmation every project entry point shows (OPEND-2797):
@@ -42,7 +43,7 @@ export function ProjectDeleteConfirmDialog({
       data-testid="project-delete-confirm-dialog"
     >
       <DialogTitle id={titleId}>{t('designs.deleteTitle')}</DialogTitle>
-      <DialogDescription>{t('designs.deleteConfirm', { name: projectName })}</DialogDescription>
+      <DialogDescription>{t('designs.deleteConfirm', { name: displayProjectName(projectName, t) })}</DialogDescription>
       {failed ? (
         <p className="recent-projects__card-menu-error" role="alert">
           {t('ds.actionFailed')}

@@ -54,8 +54,8 @@ function boot(hosted: boolean, playResult: Promise<void> = Promise.resolve(), th
     for (const [type, listener, options] of listeners.mock.calls) window.removeEventListener(type, listener, options);
   };
   const id = (post.mock.calls.find(([data]) => data.type === MOTION_PREVIEW_REQUEST)?.[0] as {id?: string} | undefined)?.id;
-  const activity = (active: boolean, instance = id, source: MessageEventSource | null = window.parent) => {
-    window.dispatchEvent(new MessageEvent('message', {source, data:{type:MOTION_PREVIEW_ACTIVITY, id:instance, active}}));
+  const activity = (active: boolean, instance = id, source: MessageEventSource | null = window.parent, locale?: string) => {
+    window.dispatchEvent(new MessageEvent('message', {source, data:{type:MOTION_PREVIEW_ACTIVITY, id:instance, active, ...(locale ? {locale} : {})}}));
   };
   return { audio, timeline, activity, simulateDelayedStart: () => { audioPaused = false; }, player: motionWindow.__odMotionPlayer! };
 }
@@ -138,4 +138,26 @@ it('stops a late audio start after the preview was deactivated', async () => {
   resolve();
   await vi.waitFor(() => expect(audio.paused).toBe(true));
   expect(audio.paused).toBe(true);
+});
+
+it('shows notices in the host app locale: Chinese for zh, English otherwise', async () => {
+  const blocked = Promise.reject(Object.assign(new Error('blocked'), { name: 'NotAllowedError' }));
+  blocked.catch(() => {});
+  const { activity } = boot(true, blocked);
+  const hint = () => document.querySelector('[data-od-motion-status]')!.textContent;
+  activity(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(hint()).toBe('Click the video to turn on sound');
+  activity(true, undefined, undefined, 'zh-CN');
+  expect(hint()).toBe('点击画面开启声音');
+  activity(true, undefined, undefined, 'zh-TW');
+  expect(hint()).toBe('點擊畫面開啟聲音');
+  activity(true, undefined, undefined, 'zh-Hant-HK');
+  expect(hint()).toBe('點擊畫面開啟聲音');
+  activity(true, undefined, undefined, 'zhuang');
+  expect(hint()).toBe('Click the video to turn on sound');
+  activity(true, undefined, undefined, 'zh');
+  expect(hint()).toBe('点击画面开启声音');
+  activity(true, undefined, undefined, 'fr');
+  expect(hint()).toBe('Click the video to turn on sound');
 });

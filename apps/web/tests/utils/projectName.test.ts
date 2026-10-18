@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canAutoRenameProjectFromPrompt,
+  displayProjectName,
+  SHARED_PROJECT_PLACEHOLDER_NAME,
   summarizeProjectNameFromPrompt,
 } from '../../src/utils/projectName';
 
@@ -73,5 +75,31 @@ describe('summarizeProjectNameFromPrompt', () => {
       ),
     ).toBe(false);
     expect(canAutoRenameProjectFromPrompt({ name: 'Project', metadata: undefined })).toBe(false);
+  });
+});
+
+describe('displayProjectName', () => {
+  const t = (key: 'recentProjects.sharedProjectFallbackName') =>
+    key === 'recentProjects.sharedProjectFallbackName' ? 'Shared project' : key;
+
+  it('keeps the daemon sentinel byte-for-byte so stored rows still match', () => {
+    expect(SHARED_PROJECT_PLACEHOLDER_NAME).toBe('共享项目');
+  });
+
+  it('swaps the placeholder sentinel for the localized label', () => {
+    expect(displayProjectName('共享项目', t)).toBe('Shared project');
+    expect(displayProjectName('  共享项目 \n', t)).toBe('Shared project');
+  });
+
+  it('returns real names unchanged, including ones that merely contain the sentinel', () => {
+    expect(displayProjectName('Landing page', t)).toBe('Landing page');
+    expect(displayProjectName('共享项目 v2', t)).toBe('共享项目 v2');
+    expect(displayProjectName('  Padded  ', t)).toBe('  Padded  ');
+  });
+
+  it('tolerates missing names', () => {
+    expect(displayProjectName(null, t)).toBe('');
+    expect(displayProjectName(undefined, t)).toBe('');
+    expect(displayProjectName('', t)).toBe('');
   });
 });

@@ -11,6 +11,7 @@ import {
   trackProjectsMorePopoverClick,
 } from "../analytics/events";
 import { useT } from "../i18n";
+import { displayProjectName } from "../utils/projectName";
 import { useWorkspaceContext } from "../collab/useWorkspaceContext";
 import { workspaceIdentityCacheKey } from "../collab/workspace-identity";
 import {
@@ -446,6 +447,7 @@ export function DesignsTab({
 		if (!q) return list;
 		return list.filter((item) => {
 			if (item.project.name.toLowerCase().includes(q)) return true;
+			if (displayProjectName(item.project.name, t).toLowerCase().includes(q)) return true;
 			return (
 				item.type === "live-artifact" &&
 				item.liveArtifact.title.toLowerCase().includes(q)
@@ -479,8 +481,11 @@ export function DesignsTab({
 		setSelected(new Set());
 	};
 	const handleRenameProject = (project: Project) => {
-		setRenameTarget({ id: project.id, original: project.name });
-		setRenameInput(project.name);
+		// Display name as both the prefill and the "unchanged" baseline, so saving
+		// the localized placeholder untouched is a no-op rather than a rename.
+		const shownName = displayProjectName(project.name, t);
+		setRenameTarget({ id: project.id, original: shownName });
+		setRenameInput(shownName);
 	};
 	const commitRename = () => {
 		if (!renameTarget) return;
@@ -499,7 +504,7 @@ export function DesignsTab({
 		setConfirmError(null);
 		setConfirmTarget({
 			title: t("designs.deleteTitle"),
-			message: t("designs.deleteConfirm", { name: project.name }),
+			message: t("designs.deleteConfirm", { name: displayProjectName(project.name, t) }),
 			confirmLabel: t("designs.menuDelete"),
 			onConfirm: () => onDelete(project.id),
 		});
@@ -817,8 +822,8 @@ export function DesignsTab({
 						const ds = dsName(resolveProjectDesignSystemId(p));
 						if (item.type === "live-artifact") {
 							const artifact = item.liveArtifact;
-							const title = liveArtifactCardTitle(p, artifact);
-							const metaLead = liveArtifactCardMetaLead(p, artifact);
+							const title = liveArtifactCardTitle(p, artifact, t);
+							const metaLead = liveArtifactCardMetaLead(p, artifact, t);
 							return (
 								<div
 									key={`live:${artifact.id}`}
@@ -895,6 +900,7 @@ export function DesignsTab({
 							p,
 							coverByProject[p.id] ?? null,
 							workspaceContext,
+							displayProjectName(p.name, t),
 						);
 						const isSelected = selected.has(p.id);
 						const designSystemProject = isDesignSystemProject(p);
@@ -1077,8 +1083,8 @@ export function DesignsTab({
 											<ProjectTag category={projectCategory(p)} />
 										)}
 									</div>
-									<div className="design-card-name" title={p.name}>
-										{p.name}
+									<div className="design-card-name" title={displayProjectName(p.name, t)}>
+										{displayProjectName(p.name, t)}
 									</div>
 									<div className="design-card-meta">
 										<span className="design-card-meta-main">
@@ -1150,7 +1156,7 @@ export function DesignsTab({
 														className="design-card-close"
 														title={t("designs.deleteTitle")}
 														aria-label={t("designs.deleteAria", {
-															name: p.name,
+															name: displayProjectName(p.name, t),
 														})}
 														onClick={(e) => {
 															e.stopPropagation();
@@ -1161,9 +1167,9 @@ export function DesignsTab({
 													</button>
 													<div
 														className="design-kanban-card-name"
-														title={p.name}
+														title={displayProjectName(p.name, t)}
 													>
-														{p.name}
+														{displayProjectName(p.name, t)}
 													</div>
 													{designSystemProject ? (
 														<div className="design-card-tag-row">
@@ -1330,12 +1336,20 @@ function shouldHideProjectCard(project: Project, liveArtifacts: LiveArtifactSumm
   return project.skillId === 'live-artifact' && isOrbitProject(project);
 }
 
-function liveArtifactCardTitle(project: Project, liveArtifact: LiveArtifactSummary): string {
-  return isCollapsedOrbitArtifactProject(project) ? project.name : liveArtifact.title;
+function liveArtifactCardTitle(
+  project: Project,
+  liveArtifact: LiveArtifactSummary,
+  t: ReturnType<typeof useT>,
+): string {
+  return isCollapsedOrbitArtifactProject(project) ? displayProjectName(project.name, t) : liveArtifact.title;
 }
 
-function liveArtifactCardMetaLead(project: Project, liveArtifact: LiveArtifactSummary): string {
-  return isCollapsedOrbitArtifactProject(project) ? liveArtifact.title : project.name;
+function liveArtifactCardMetaLead(
+  project: Project,
+  liveArtifact: LiveArtifactSummary,
+  t: ReturnType<typeof useT>,
+): string {
+  return isCollapsedOrbitArtifactProject(project) ? liveArtifact.title : displayProjectName(project.name, t);
 }
 
 function isCollapsedOrbitArtifactProject(project: Project): boolean {
@@ -1352,6 +1366,7 @@ function projectCover(
 	project: Project,
 	override: ProjectCoverOverride | null,
 	workspaceContext?: WorkspaceCollabContext | null,
+	shownName?: string,
 ): {
 	kind: "image" | "video" | "html" | "logo" | "brand" | "fallback";
 	src?: string;
@@ -1370,7 +1385,7 @@ function projectCover(
 	const style: CSSProperties = {
 		background: `radial-gradient(circle at 30% 28%, hsl(${hue} 70% 78% / 0.55), transparent 42%), linear-gradient(135deg, hsl(${hue} 65% 88%), hsl(${hue2} 70% 90%))`,
 	};
-	const trimmed = project.name.trim();
+	const trimmed = (shownName ?? project.name).trim();
 	const initial = (trimmed ? Array.from(trimmed)[0]! : "?").toUpperCase();
 	const meta = project.metadata;
 	// Brand projects get a clean generated cover (extracted logo / site favicon

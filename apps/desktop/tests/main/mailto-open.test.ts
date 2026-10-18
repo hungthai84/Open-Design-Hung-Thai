@@ -390,4 +390,13 @@ describe("mailto fallback helpers (OPEND-2799)", () => {
     expect(en.button).toBe("OK");
     expect(noMailClientNotice("a@b.c", "fr-FR").button).toBe("OK");
   });
+
+  test("noMailClientNotice uses Traditional Chinese for Traditional locales", () => {
+    for (const locale of ["zh-TW", "zh-HK", "zh-Hant-MO"]) {
+      expect(noMailClientNotice("a@b.c", locale).message).toBe("找不到可用的郵件應用程式");
+    }
+    for (const locale of ["zh", "zh-CN", "zh-Hans-SG"]) {
+      expect(noMailClientNotice("a@b.c", locale).message).toBe("未找到可用的邮件应用");
+    }
+  });
 });

@@ -88,16 +88,6 @@ interface Props {
   onSubmit: (payload: PluginLoopSubmit) => void;
 }
 
-function pluginLoopLocalLabel(
-  locale: string,
-  key: 'pluginActive' | 'reloadExampleQuery',
-): string {
-  if (locale === 'zh-CN') {
-    return key === 'pluginActive' ? '插件已启用' : '重新加载示例请求';
-  }
-  return key === 'pluginActive' ? 'Plugin active' : 'Reload example query';
-}
-
 interface ActivePlugin {
   record: InstalledPluginRecord;
   result: ApplyResult;
@@ -392,10 +382,10 @@ export function PluginLoopHome({ onSubmit }: Props) {
                       ? t('pluginCard.applying')
                       : hasQuery
                         ? isActive
-                          ? pluginLoopLocalLabel(locale, 'reloadExampleQuery')
+                          ? t('pluginCard.reloadExampleQuery')
                           : t('pluginCard.useWithQuery')
                         : isActive
-                          ? pluginLoopLocalLabel(locale, 'pluginActive')
+                          ? t('pluginCard.pluginActive')
                           : t('preview.usePlugin')}
                   </button>
                 </div>

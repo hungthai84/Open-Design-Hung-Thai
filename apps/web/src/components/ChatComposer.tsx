@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import { ThinkingOrb } from './composer/ThinkingOrb';
 import { useI18n } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import { localizePluginDescription, localizePluginTitle } from './plugins-home/localization';
 import type { Dict, Locale } from '../i18n/types';
 import {
@@ -1961,8 +1962,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         return {
           id: `project:${project.id}`,
           kind: 'project',
-          label: project.name || project.id,
-          title: project.name || project.id,
+          label: displayProjectName(project.name, t) || project.id,
+          title: displayProjectName(project.name, t) || project.id,
           path: project.id,
           ...(path ? { absolutePath: path } : {}),
         } satisfies WorkspaceContextItem;

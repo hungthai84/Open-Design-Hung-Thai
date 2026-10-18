@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { InstalledPluginRecord } from '@open-design/contracts';
-import { examplePresetSeedPrompt } from '../../src/components/plugins-home/presetSeedPrompt';
+import { examplePresetSeedPrompt, promptLocaleKind } from '../../src/components/plugins-home/presetSeedPrompt';
 
 function fixture(overrides: {
   id: string;
@@ -130,5 +130,14 @@ describe('examplePresetSeedPrompt', () => {
     const seed = examplePresetSeedPrompt(record, 'en', fallback);
     expect(seed.text).toBe('fallback seed');
     expect(seed.fromRenderedQuery).toBe(false);
+  });
+});
+
+describe('promptLocaleKind', () => {
+  it('keeps Traditional Chinese separate so zh-TW seeds are not Simplified', () => {
+    expect(promptLocaleKind('zh-CN')).toBe('zh');
+    expect(promptLocaleKind('zh-TW')).toBe('zh-TW');
+    expect(promptLocaleKind('ja')).toBe('ja');
+    expect(promptLocaleKind('fr')).toBe('en');
   });
 });

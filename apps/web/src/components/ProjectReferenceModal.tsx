@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Project } from '../types';
 import { useI18n } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import { getProjectDetail, listProjects } from '../state/projects';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { dirExists } from '../providers/registry';
@@ -238,7 +239,7 @@ export function ProjectReferenceModal({
                       <Icon name="folder" size={15} />
                     </span>
                     <span className={styles.itemText}>
-                      <span className={styles.itemTitle}>{project.name}</span>
+                      <span className={styles.itemTitle}>{displayProjectName(project.name, t)}</span>
                       <span className={styles.itemMeta}>{projectMeta(project)}</span>
                     </span>
                     {selected ? (

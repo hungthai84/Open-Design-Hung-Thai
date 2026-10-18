@@ -73,3 +73,16 @@ it('pauses an inactive motion document without changing ordinary iframe prewarmi
   request('warm-hidden-document');
   expect(post).toHaveBeenLastCalledWith({ type: MOTION_PREVIEW_ACTIVITY, id: 'warm-hidden-document', active: true }, '*');
 });
+
+it('sends the app locale with activity replies and re-probes when it changes', async () => {
+  document.documentElement.lang = 'zh-CN';
+  const { post, request } = frame();
+  request('localized');
+  expect(post).toHaveBeenLastCalledWith({ type: MOTION_PREVIEW_ACTIVITY, id: 'localized', active: true, locale: 'zh-CN' }, '*');
+  document.documentElement.lang = 'en';
+  await Promise.resolve();
+  expect(post).toHaveBeenLastCalledWith({ type: MOTION_PREVIEW_PROBE }, '*');
+  request('localized');
+  expect(post).toHaveBeenLastCalledWith({ type: MOTION_PREVIEW_ACTIVITY, id: 'localized', active: true, locale: 'en' }, '*');
+  document.documentElement.removeAttribute('lang');
+});

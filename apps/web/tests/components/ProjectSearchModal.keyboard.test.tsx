@@ -73,6 +73,12 @@ function activeName(): string | undefined {
 }
 
 describe('ProjectSearchModal keyboard navigation', () => {
+  it('shows the localized label for the daemon shared-project placeholder name', () => {
+    renderPalette(vi.fn(), vi.fn(), [project('pulling', '共享项目', 1_000)]);
+    expect(activeName()).toBe('Shared project');
+    expect(document.body.textContent).not.toContain('共享项目');
+  });
+
   it('searches personal drafts together with shared workspace projects', () => {
     const personalProject = project('personal-white-shoes', '白色慢跑鞋棚拍商品图', 4_000);
     const sharedProject = project('shared-blue-shoes', '共享蓝色跑鞋', 3_000);

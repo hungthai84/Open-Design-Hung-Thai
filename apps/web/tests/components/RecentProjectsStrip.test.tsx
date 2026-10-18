@@ -365,6 +365,19 @@ describe('RecentProjectsStrip', () => {
     expect(avatar?.src).toBe('https://example.com/elian.png');
   });
 
+  it('shows the localized fallback instead of the shared-project placeholder on the card', () => {
+    const { container } = render(
+      <RecentProjectsStrip
+        projects={[project({ id: 'project-shared', name: '共享项目' })]}
+        onOpen={() => {}}
+      />,
+    );
+
+    const name = container.querySelector('.recent-projects__card-name');
+    expect(name?.textContent).not.toBe('共享项目');
+    expect(name?.textContent?.trim()).toBeTruthy();
+  });
+
   it('refreshes only the card named by team-project-content-ready', async () => {
     MockWorkspaceEventSource.instances = [];
     vi.stubGlobal('EventSource', MockWorkspaceEventSource as unknown as typeof EventSource);

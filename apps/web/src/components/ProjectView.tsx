@@ -138,6 +138,7 @@ import { agentDisplayName, agentModelDisplayName } from '../utils/agentLabels';
 import { isMacPlatform } from '../utils/platform';
 import {
   canAutoRenameProjectFromPrompt,
+  SHARED_PROJECT_PLACEHOLDER_NAME,
   summarizeProjectNameFromPrompt,
 } from '../utils/projectName';
 import {
@@ -2083,8 +2084,6 @@ function artifactWithHtml(
         html,
       };
 }
-
-const SHARED_PROJECT_PLACEHOLDER_NAME = '共享项目';
 
 export type ProjectNameAuthorityResolution =
   | { kind: 'resolved'; name: string | null }

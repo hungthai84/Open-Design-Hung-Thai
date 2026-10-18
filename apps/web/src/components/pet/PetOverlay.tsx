@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../../i18n';
+import { displayProjectName } from '../../utils/projectName';
 import type { PetConfig } from '../../types';
 import {
   pickAmbientRow,
@@ -583,6 +584,7 @@ function TaskGroup({
   onOpenProject?: (projectId: string) => void;
   openTitle: (projectName: string) => string;
 }) {
+  const t = useT();
   if (tasks.length === 0) return null;
   return (
     <section className="pet-task-group">
@@ -592,14 +594,14 @@ function TaskGroup({
           key={task.projectId}
           clickable={Boolean(onOpenProject)}
           onClick={onOpenProject ? () => onOpenProject(task.projectId) : undefined}
-          title={openTitle(task.projectName)}
+          title={openTitle(displayProjectName(task.projectName, t))}
         >
           <span
             className="pet-task-dot"
             data-pet-task-status={task.status}
             aria-hidden
           />
-          <span className="pet-task-name">{task.projectName}</span>
+          <span className="pet-task-name">{displayProjectName(task.projectName, t)}</span>
           {task.count > 1 ? (
             <span className="pet-task-count">{task.count}</span>
           ) : null}
@@ -620,6 +622,7 @@ function RecentTaskGroup({
   onOpenProject?: (projectId: string) => void;
   openTitle: (projectName: string) => string;
 }) {
+  const t = useT();
   if (tasks.length === 0) return null;
   return (
     <section className="pet-task-group">
@@ -629,14 +632,14 @@ function RecentTaskGroup({
           key={`${task.projectId}:${task.updatedAt}`}
           clickable={Boolean(onOpenProject)}
           onClick={onOpenProject ? () => onOpenProject(task.projectId) : undefined}
-          title={openTitle(task.projectName)}
+          title={openTitle(displayProjectName(task.projectName, t))}
         >
           <span
             className="pet-task-dot"
             data-pet-task-status={task.status}
             aria-hidden
           />
-          <span className="pet-task-name">{task.projectName}</span>
+          <span className="pet-task-name">{displayProjectName(task.projectName, t)}</span>
         </TaskItem>
       ))}
     </section>

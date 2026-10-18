@@ -540,53 +540,18 @@ export interface AgentRefreshOptions {
 const AMR_SIGN_IN_RESCAN_ATTEMPTS = 4;
 const AMR_SIGN_IN_RESCAN_RETRY_MS = 1500;
 
-function codexPathStrings(locale: Locale) {
-  if (locale === 'zh-CN') {
-    return {
-      repairHint: '当前保存的 Codex 路径不适合继续使用。',
-      useDetected: '使用检测到的 Codex',
-      clearCustom: '清空自定义路径',
-      configuredSuccess: (path: string) => `本次测试使用的是已配置的 Codex 路径：${path}。`,
-      invalidFallback: (configuredPath: string, detectedPath: string) =>
-        `已配置的 Codex 路径无效或不可执行：${configuredPath}。本次测试改用 PATH 中的 Codex CLI：${detectedPath}。建议更新 CODEX_BIN 或清空自定义路径。`,
-      failedFallback: (configuredPath: string, detectedPath: string) =>
-        `已配置的 Codex 路径启动失败：${configuredPath}。本次测试改用 PATH 中的 Codex CLI：${detectedPath}。建议更新 CODEX_BIN 或清空自定义路径。`,
-    };
-  }
-  if (locale === 'zh-TW') {
-    return {
-      repairHint: '目前儲存的 Codex 路徑不適合繼續使用。',
-      useDetected: '使用偵測到的 Codex',
-      clearCustom: '清除自訂路徑',
-      configuredSuccess: (path: string) => `本次測試使用的是已設定的 Codex 路徑：${path}。`,
-      invalidFallback: (configuredPath: string, detectedPath: string) =>
-        `已設定的 Codex 路徑無效或不可執行：${configuredPath}。本次測試改用 PATH 中的 Codex CLI：${detectedPath}。建議更新 CODEX_BIN 或清除自訂路徑。`,
-      failedFallback: (configuredPath: string, detectedPath: string) =>
-        `已設定的 Codex 路徑啟動失敗：${configuredPath}。本次測試改用 PATH 中的 Codex CLI：${detectedPath}。建議更新 CODEX_BIN 或清除自訂路徑。`,
-    };
-  }
-  if (locale === 'ja') {
-    return {
-      repairHint: '保存されている Codex のパスは、このテストで使用すべきバイナリではありません。',
-      useDetected: '検出された Codex を使用',
-      clearCustom: 'カスタムパスをクリア',
-      configuredSuccess: (path: string) => `このテストでは設定済みの Codex パスを使用しました：${path}。`,
-      invalidFallback: (configuredPath: string, detectedPath: string) =>
-        `設定された Codex パスが無効か実行できません：${configuredPath}。このテストでは PATH 上の Codex CLI（${detectedPath}）を使用しました。CODEX_BIN を更新するか、カスタムパスをクリアしてください。`,
-      failedFallback: (configuredPath: string, detectedPath: string) =>
-        `設定された Codex パスの起動に失敗しました：${configuredPath}。このテストは PATH 上の Codex CLI（${detectedPath}）で成功しました。CODEX_BIN を更新するか、カスタムパスをクリアしてください。`,
-    };
-  }
+type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
+
+function codexPathStrings(t: TranslateFn) {
   return {
-    repairHint: 'The saved Codex path is not the binary this test should keep using.',
-    useDetected: 'Use detected Codex',
-    clearCustom: 'Clear custom path',
-    configuredSuccess: (path: string) =>
-      `This test used the configured Codex path: ${path}.`,
+    repairHint: t('settings.codexPath.repairHint'),
+    useDetected: t('settings.codexPath.useDetected'),
+    clearCustom: t('settings.codexPath.clearCustom'),
+    configuredSuccess: (path: string) => t('settings.codexPath.configuredSuccess', { path }),
     invalidFallback: (configuredPath: string, detectedPath: string) =>
-      `Configured Codex path is invalid or not executable: ${configuredPath}. This test used the PATH Codex CLI at ${detectedPath}. Update CODEX_BIN or clear the custom path to use the detected binary.`,
+      t('settings.codexPath.invalidFallback', { configuredPath, detectedPath }),
     failedFallback: (configuredPath: string, detectedPath: string) =>
-      `Configured Codex path failed: ${configuredPath}. This test succeeded with the PATH Codex CLI at ${detectedPath}. Update CODEX_BIN or clear the custom path to use the detected binary.`,
+      t('settings.codexPath.failedFallback', { configuredPath, detectedPath }),
   };
 }
 
@@ -2966,7 +2931,7 @@ export function SettingsDialog({
           ? `${baseMessage} ${t('settings.model')}: ${result.resolvedModel}`
           : baseMessage;
       if (kindForSuccess === 'cli' && cfg.agentId === 'codex') {
-        const codexStrings = codexPathStrings(locale);
+        const codexStrings = codexPathStrings(t);
         if (
           result.usedExecutableSource === 'configured' &&
           result.configuredExecutablePath
@@ -5185,7 +5150,7 @@ export function SettingsDialog({
                                         agentTestState.result,
                                       );
                                       if (!repair) return null;
-                                      const codexStrings = codexPathStrings(locale);
+                                      const codexStrings = codexPathStrings(t);
                                       return (
                                         <div className="settings-test-actions">
                                           <span className="settings-test-actions-hint">

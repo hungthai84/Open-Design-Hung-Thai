@@ -676,6 +676,12 @@ export const zhCN: Dict = {
   "settings.modelPickerFallbackHint":
     "正在显示内置默认值。点击“重新扫描”可从 CLI 拉取实时模型。",
   "settings.cliEnvTitle": "高级：代理与自定义路径",
+  "settings.codexPath.repairHint": "当前保存的 Codex 路径不适合继续使用。",
+  "settings.codexPath.useDetected": "使用检测到的 Codex",
+  "settings.codexPath.clearCustom": "清空自定义路径",
+  "settings.codexPath.configuredSuccess": "本次测试使用的是已配置的 Codex 路径：{path}。",
+  "settings.codexPath.invalidFallback": "已配置的 Codex 路径无效或不可执行：{configuredPath}。本次测试改用 PATH 中的 Codex CLI：{detectedPath}。建议更新 CODEX_BIN 或清空自定义路径。",
+  "settings.codexPath.failedFallback": "已配置的 Codex 路径启动失败：{configuredPath}。本次测试改用 PATH 中的 Codex CLI：{detectedPath}。建议更新 CODEX_BIN 或清空自定义路径。",
   "settings.cliEnvHint":
     "用于覆盖所选 CLI 的底层环境变量：API key、代理 base URL、自定义 home 或非标准可执行文件路径。不填 base URL 时，CLI 会使用自己的默认接口地址。密钥只保存在本地应用配置中，并且只传给所选 CLI。",
   "settings.cliEnvClaudeConfigDir": "Claude Code 配置目录",
@@ -1435,6 +1441,8 @@ export const zhCN: Dict = {
   "pluginCard.use": "使用",
   "pluginCard.useWithQuery": "带查询使用",
   "pluginCard.applying": "正在应用…",
+  "pluginCard.pluginActive": "插件已启用",
+  "pluginCard.reloadExampleQuery": "重新加载示例请求",
   "pluginCard.duplicate": "Remix",
   "pluginCard.duplicating": "正在 Remix…",
   "pluginCard.duplicateFailed": "无法 Remix 这个模板。",

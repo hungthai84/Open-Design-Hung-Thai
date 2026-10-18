@@ -315,6 +315,7 @@ function promptActionTitle(action: PromptNextStepAction, t: TranslateFn): string
 }
 
 function promptActionPrompt(action: PromptNextStepAction, locale: string): string {
+  if (locale === 'zh-TW') return promptActionPromptZhTw(action);
   if (locale !== 'zh-CN') return action.prompt;
   switch (action.id) {
     case 'project-continue':
@@ -325,6 +326,21 @@ function promptActionPrompt(action: PromptNextStepAction, locale: string): strin
       return '使用 AI 提取继续原地优化这个设计系统。读取当前 DESIGN.md、brand.json、source context、tokens、字体、色板、资产和组件套件预览；如果有链接的网站或源文件，请重新测量。保持同一个设计系统 id，不要创建重复系统。重点强化 token 角色、品牌语气、组件指导、明暗主题套件质量和可复用实现说明。最后总结改动和更新的文件。';
     case 'design-system-audit-kit':
       return '审查这个设计系统是否已经可用。检查 DESIGN.md、brand.json、variables.css、theme.json、kit.html、kit.dark.html、生成产物、色彩对比度、字体样张、间距/圆角规则和组件覆盖度。直接修复最高影响的问题，保持同一个已注册设计系统 id，并在发布或用于其他项目之前报告剩余缺口。';
+    default:
+      return (action as PromptNextStepAction).prompt;
+  }
+}
+
+function promptActionPromptZhTw(action: PromptNextStepAction): string {
+  switch (action.id) {
+    case 'project-continue':
+      return '從已停止或未完成的回合繼續處理。先閱讀目前的對話、專案檔案和可見錯誤，再執行下一個具體步驟。如果主要產物已經存在，就在原檔案上更新；否則建立缺少的主要產物，並簡要總結改了什麼。';
+    case 'project-generate-artifact':
+      return '現在產生缺少的專案產物。根據目前的對話和專案脈絡建立主要的可預覽交付物；依需求儲存成簡短的語意化檔名，例如 investor-pitch-deck.html、refund-dashboard.html 或 pricing-page.html。只有固定執行環境約定或入口概覽頁才使用 index.html。把檔案儲存到目前的專案中，並簡要說明建立了哪些檔案。';
+    case 'design-system-ai-refine':
+      return '使用 AI 擷取繼續原地優化這個設計系統。讀取目前的 DESIGN.md、brand.json、source context、tokens、字型、色票、資產和元件套件預覽；如果有連結的網站或來源檔案，請重新測量。保持同一個設計系統 id，不要建立重複的系統。重點強化 token 角色、品牌語氣、元件指引、明暗主題套件品質和可重複使用的實作說明。最後總結改動和更新的檔案。';
+    case 'design-system-audit-kit':
+      return '審查這個設計系統是否已經可用。檢查 DESIGN.md、brand.json、variables.css、theme.json、kit.html、kit.dark.html、產生的產物、色彩對比度、字型樣張、間距/圓角規則和元件涵蓋度。直接修正影響最大的問題，保持同一個已註冊的設計系統 id，並在發布或用於其他專案之前回報剩餘的缺口。';
     default:
       return (action as PromptNextStepAction).prompt;
   }

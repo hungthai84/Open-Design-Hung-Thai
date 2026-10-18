@@ -12,6 +12,7 @@ import type {
 import { Icon } from './Icon';
 import { navigate } from '../router';
 import { useT } from '../i18n';
+import { displayProjectName } from '../utils/projectName';
 import { localizeRunFailureReason } from '../i18n/runErrors';
 import type { Dict } from '../i18n/types';
 import { useAnalytics } from '../analytics/provider';
@@ -576,9 +577,9 @@ export function RoutinesSection({ onClose }: RoutinesSectionProps) {
 
   const projectsById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const p of projects) map.set(p.id, p.name);
+    for (const p of projects) map.set(p.id, displayProjectName(p.name, t));
     return map;
-  }, [projects]);
+  }, [projects, t]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -811,7 +812,7 @@ export function RoutinesSection({ onClose }: RoutinesSectionProps) {
                 <option value="">{t('routines.pickProject')}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}
+                    {displayProjectName(p.name, t)}
                   </option>
                 ))}
               </select>
