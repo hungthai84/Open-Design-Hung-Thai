@@ -2,6 +2,25 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { promises as fsPromises } from 'node:fs';
+
+// bundled.ts reads tree bytes for its content digest through fs.promises
+// readFile (a wiring no ESM namespace can vi.spyOn), so the digest is counted
+// through a module mock that otherwise leaves every fs behavior untouched.
+const fsPromisesReadCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      readFile: async (...args: Parameters<typeof actual.promises.readFile>) => {
+        fsPromisesReadCalls.count += 1;
+        return actual.promises.readFile(...args);
+      },
+    },
+  };
+});
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -298,6 +317,113 @@ describe('registerBundledPlugins', () => {
     expect(second?.installedAt).toBe(1_000);
     expect(second?.updatedAt).toBe(2_000);
 
+    nowSpy.mockRestore();
+  });
+
+  // Stat-fingerprint gate (perf follow-up to #5362): the content digest reads
+  // and hashes every file in every bundled folder on every boot (~2s of
+  // serialized SHA-256 across the full catalog). These cases pin the gate's
+  // contract: reuse only when the persisted stat fingerprint matches the
+  // current tree, enroll pre-migration rows on their first post-upgrade boot,
+  // and never let size alone stand in for content.
+  it('populates the stat fingerprint and preserves it across a no-op reboot', async () => {
+    const folder = path.join(tmpRoot, 'atoms', 'sample');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'open-design.json'), SAMPLE_MANIFEST('sample'));
+    await writeFile(path.join(folder, 'SKILL.md'), SAMPLE_SKILL('sample'));
+
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const digestRow = (): { bundled_content_digest: string | null; bundled_stat_digest: string | null } =>
+      db
+        .prepare(`SELECT bundled_content_digest, bundled_stat_digest FROM installed_plugins WHERE id = ?`)
+        .get('sample') as { bundled_content_digest: string | null; bundled_stat_digest: string | null };
+    const first = digestRow();
+    expect(first.bundled_content_digest).toBeTruthy();
+    expect(first.bundled_stat_digest).toBeTruthy();
+
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const second = digestRow();
+    expect(second.bundled_stat_digest).toBe(first.bundled_stat_digest);
+    expect(second.bundled_content_digest).toBe(first.bundled_content_digest);
+  });
+
+  it('skips the full content re-hash on a no-op reboot', async () => {
+    const folder = path.join(tmpRoot, 'atoms', 'sample');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'open-design.json'), SAMPLE_MANIFEST('sample'));
+    await writeFile(path.join(folder, 'SKILL.md'), SAMPLE_SKILL('sample'));
+
+    fsPromisesReadCalls.count = 0;
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const coldReads = fsPromisesReadCalls.count;
+
+    fsPromisesReadCalls.count = 0;
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    // The resolver still reads the manifest/SKILL it parses on every boot, but
+    // the digest walk's per-file reads must be gone: strictly fewer reads than
+    // a cold registration.
+    expect(fsPromisesReadCalls.count).toBeLessThan(coldReads);
+  });
+
+  it('enrolls a pre-migration row on its first post-upgrade boot while preserving timestamps', async () => {
+    const folder = path.join(tmpRoot, 'atoms', 'sample');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'open-design.json'), SAMPLE_MANIFEST('sample'));
+    await writeFile(path.join(folder, 'SKILL.md'), SAMPLE_SKILL('sample'));
+
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValue(1_000);
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    // Simulate a row persisted by the build before the stat-fingerprint gate
+    // shipped: content digest set, stat digest still NULL.
+    db.prepare(`UPDATE installed_plugins SET bundled_stat_digest = NULL WHERE id = ?`).run('sample');
+
+    nowSpy.mockReturnValue(2_000);
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const [second] = listInstalledPlugins(db);
+    // Null prior fingerprint falls through to the full hash; the computed
+    // digest equals the stored one, so timestamps are still preserved — the
+    // gate must not make an upgraded install forget its no-op guarantee.
+    expect(second?.installedAt).toBe(1_000);
+    expect(second?.updatedAt).toBe(1_000);
+    const enrolled = db
+      .prepare(`SELECT bundled_stat_digest FROM installed_plugins WHERE id = ?`)
+      .get('sample') as { bundled_stat_digest: string | null };
+    expect(enrolled.bundled_stat_digest).toBeTruthy();
+    nowSpy.mockRestore();
+  });
+
+  it('detects a same-length content edit — the fingerprint is not size-only', async () => {
+    const folder = path.join(tmpRoot, 'atoms', 'sample');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'open-design.json'), SAMPLE_MANIFEST('sample'));
+    await writeFile(path.join(folder, 'SKILL.md'), SAMPLE_SKILL('sample'));
+
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValue(1_000);
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const [first] = listInstalledPlugins(db);
+    const staleDigest = db
+      .prepare(`SELECT bundled_content_digest FROM installed_plugins WHERE id = ?`)
+      .get('sample') as { bundled_content_digest: string };
+
+    // Same frontmatter, same version, same SIZE — only one body character
+    // differs. A size-only fingerprint would miss this; the stat fingerprint
+    // also covers mtime, which the write bumps.
+    const tamperedBody = SAMPLE_SKILL('sample').replace('# sample', '# sanple');
+    expect(tamperedBody.length).toBe(SAMPLE_SKILL('sample').length);
+    expect(tamperedBody).not.toBe(SAMPLE_SKILL('sample'));
+    await writeFile(path.join(folder, 'SKILL.md'), tamperedBody);
+
+    nowSpy.mockReturnValue(2_000);
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const [second] = listInstalledPlugins(db);
+    expect(second?.installedAt).toBe(1_000);
+    expect(second?.updatedAt).toBe(2_000);
+    const freshDigest = db
+      .prepare(`SELECT bundled_content_digest FROM installed_plugins WHERE id = ?`)
+      .get('sample') as { bundled_content_digest: string };
+    expect(freshDigest.bundled_content_digest).not.toBe(staleDigest.bundled_content_digest);
     nowSpy.mockRestore();
   });
 

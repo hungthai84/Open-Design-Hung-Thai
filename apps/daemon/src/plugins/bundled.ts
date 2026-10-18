@@ -193,6 +193,43 @@ async function computeBundledContentDigest(folder: string): Promise<string> {
   return hash.digest('hex');
 }
 
+/**
+ * A cheap gate over computeBundledContentDigest. The content digest reads and
+ * hashes every file (~70MB across the whole bundled catalog), which on every
+ * boot costs ~2s of serialized SHA-256 before app.listen() — the dominant
+ * in-process share of daemon startup. Instead of redoing that on every boot,
+ * hash what the files' stat tuples say (resolved path, size, mtimeMs) and
+ * persist that alongside the content digest: identical tuples mean the tree's
+ * on-disk shape is unchanged, so the previous boot's content digest is still
+ * valid and can be reused directly.
+ *
+ * The residual window — same-length content swapped in with the old mtime
+ * restored — requires deliberately tampering with shipped, install-time-immutable
+ * payload, and the worst case is a stale `updatedAt` timestamp on a catalog row;
+ * any later genuine change misses the fingerprint and full-hashes again. If this
+ * digest is ever promoted to a security boundary, drop the gate and always
+ * full-hash.
+ */
+async function computeBundledStatFingerprint(folder: string): Promise<string> {
+  const hash = createHash('sha256');
+  const relPaths = (await listFilesRecursive(folder, folder))
+    .map((p) => p.split(path.sep).join('/'))
+    .sort();
+  for (const rel of relPaths) {
+    let sizeMs: string;
+    try {
+      const stats = await fsp.stat(path.join(folder, ...rel.split('/')));
+      sizeMs = `${stats.size}\0${stats.mtimeMs}`;
+    } catch {
+      // A vanished entry can't be a stable tree; mark it with a sentinel every
+      // real stat outcome avoids so the fingerprint can't equal a prior run's.
+      sizeMs = 'vanished';
+    }
+    hash.update(rel).update('\0').update(sizeMs).update('\0');
+  }
+  return hash.digest('hex');
+}
+
 function getBundledContentDigest(db: SqliteDb, id: string): string | null {
   const row = db
     .prepare(`SELECT bundled_content_digest FROM installed_plugins WHERE id = ?`)
@@ -202,6 +239,17 @@ function getBundledContentDigest(db: SqliteDb, id: string): string | null {
 
 function setBundledContentDigest(db: SqliteDb, id: string, digest: string): void {
   db.prepare(`UPDATE installed_plugins SET bundled_content_digest = ? WHERE id = ?`).run(digest, id);
+}
+
+function getBundledStatDigest(db: SqliteDb, id: string): string | null {
+  const row = db
+    .prepare(`SELECT bundled_stat_digest FROM installed_plugins WHERE id = ?`)
+    .get(id) as { bundled_stat_digest: string | null } | undefined;
+  return row?.bundled_stat_digest ?? null;
+}
+
+function setBundledStatDigest(db: SqliteDb, id: string, digest: string): void {
+  db.prepare(`UPDATE installed_plugins SET bundled_stat_digest = ? WHERE id = ?`).run(digest, id);
 }
 
 async function registerOne(args: {
@@ -264,13 +312,27 @@ async function registerOne(args: {
   // fields), so a prose-only SKILL.md edit would be invisible to a
   // manifest-equality check while still being a real content change.
   const existing = getInstalledPlugin(args.input.db, record.id);
-  const contentDigest = await computeBundledContentDigest(args.folder);
-  const existingDigest = existing ? getBundledContentDigest(args.input.db, record.id) : null;
-  if (existing && existingDigest === contentDigest) {
+  const statFingerprint = await computeBundledStatFingerprint(args.folder);
+  const priorContentDigest = existing ? getBundledContentDigest(args.input.db, record.id) : null;
+  const priorStatDigest = existing ? getBundledStatDigest(args.input.db, record.id) : null;
+  // Stat-fingerprint gate: when the persisted fingerprint matches this boot's
+  // tree and a content digest was already persisted, the tree's stat shape is
+  // unchanged — reuse the stored content digest instead of re-reading and
+  // re-hashing ~70MB. A null priorStatDigest (row predating this column) or a
+  // null priorContentDigest (first ever registration) falls through to the
+  // full hash, so an upgraded install pays the hash exactly once and then
+  // boots from the gate. bundled_content_digest keeps its exact semantics —
+  // this gate only decides whether re-computation is needed.
+  const contentDigest =
+    priorContentDigest != null && priorStatDigest === statFingerprint
+      ? priorContentDigest
+      : await computeBundledContentDigest(args.folder);
+  if (existing && priorContentDigest === contentDigest) {
     record = { ...record, installedAt: existing.installedAt, updatedAt: existing.updatedAt };
   }
   upsertInstalledPlugin(args.input.db, record);
   setBundledContentDigest(args.input.db, record.id, contentDigest);
+  setBundledStatDigest(args.input.db, record.id, statFingerprint);
   args.seenFolderIds.add(record.id);
   args.out.push(record);
 }

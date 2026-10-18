@@ -194,6 +194,12 @@ export function migratePlugins(db: SqliteDb): void {
     // changed" from "SKILL.md was edited" without touching the parsed
     // manifest/version fields other InstalledPluginRecord consumers rely on.
     ['bundled_content_digest', `ALTER TABLE installed_plugins ADD COLUMN bundled_content_digest TEXT`],
+    // Stat-fingerprint gate over bundled_content_digest (bundled.ts): "is the
+    // on-disk tree still the shape the last full hash was computed from?"
+    // Kept as a separate column so bundled_content_digest itself preserves its
+    // exact content-hash semantics; the fingerprint only decides whether that
+    // hash needs re-computing this boot.
+    ['bundled_stat_digest', `ALTER TABLE installed_plugins ADD COLUMN bundled_stat_digest TEXT`],
   ] as const) {
     if (!installedCols.some((c) => c['name'] === name)) db.exec(ddl);
   }
