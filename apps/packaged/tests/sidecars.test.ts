@@ -35,6 +35,7 @@ import {
   registerPackagedWebUrl,
   retireExistingSidecar,
   resolveDaemonStatusTimeoutMs,
+  resolveNodeCompileCacheEnv,
   resolvePackagedChildBaseEnv,
   resolvePackagedElectronNodeCommand,
   resolvePackagedPathEnv,
@@ -189,6 +190,47 @@ describe('packaged web URL registration', () => {
       [daemonStamp, 'register-web-url', { url: 'http://127.0.0.1:64248' }, { timeoutMs: 1200 }],
       [daemonStamp, 'register-web-url', { url: 'http://127.0.0.1:53421' }, { timeoutMs: 1200 }],
     ]);
+  });
+});
+
+describe('packaged sidecar compile cache', () => {
+  const cachePaths = (): Pick<PackagedNamespacePaths, 'cacheRoot'> => ({
+    cacheRoot: join('/packaged/ns', 'cache'),
+  });
+
+  it('points each child at a per-app directory under the namespace cache root', () => {
+    // Per-app, not shared: the daemon and web children are separate processes
+    // with disjoint module graphs, so one directory would let them evict each
+    // other's entries.
+    expect(resolveNodeCompileCacheEnv(cachePaths(), APP_KEYS.DAEMON, {}))
+      .toEqual({ NODE_COMPILE_CACHE: join('/packaged/ns/cache', 'node-compile-cache', 'daemon') });
+    expect(resolveNodeCompileCacheEnv(cachePaths(), APP_KEYS.WEB, {}))
+      .toEqual({ NODE_COMPILE_CACHE: join('/packaged/ns/cache', 'node-compile-cache', 'web') });
+  });
+
+  it('keeps the cache inside the namespace cache root, never a cwd-relative or userData path', () => {
+    // The packaged path contract requires runtime/cache paths to be
+    // namespace-scoped and independent from daemon/web ports.
+    const cacheRoot = join('/packaged/ns', 'cache');
+    for (const app of [APP_KEYS.DAEMON, APP_KEYS.WEB]) {
+      const { NODE_COMPILE_CACHE } = resolveNodeCompileCacheEnv({ cacheRoot }, app, {});
+      expect(NODE_COMPILE_CACHE.startsWith(cacheRoot)).toBe(true);
+      expect(NODE_COMPILE_CACHE).not.toMatch(/:\d{4,5}/);
+    }
+  });
+
+  it('defers to an inherited NODE_COMPILE_CACHE so an operator can redirect or disable it', () => {
+    expect(resolveNodeCompileCacheEnv(cachePaths(), APP_KEYS.DAEMON, {
+      NODE_COMPILE_CACHE: join('/custom', 'ncc'),
+    })).toEqual({});
+  });
+
+  it('treats an empty inherited NODE_COMPILE_CACHE as unset rather than as a real path', () => {
+    // An empty value would otherwise be forwarded as a directory-less cache
+    // root and silently degrade to a per-launch compile instead of caching.
+    expect(resolveNodeCompileCacheEnv(cachePaths(), APP_KEYS.DAEMON, {
+      NODE_COMPILE_CACHE: '',
+    })).toEqual({ NODE_COMPILE_CACHE: join('/packaged/ns/cache', 'node-compile-cache', 'daemon') });
   });
 });
 
