@@ -627,8 +627,12 @@ export function resolvePackagedChildBaseEnv(
  * it namespace-scoped and port-independent per the packaged path contract.
  * It is per-app so the daemon and web graphs cannot evict each other.
  *
- * An explicit inherited `NODE_COMPILE_CACHE` wins, so an operator or a local
- * run can redirect or disable the cache without patching code.
+ * An explicit inherited `NODE_COMPILE_CACHE` wins: it is forwarded into the
+ * child env verbatim, so an operator or a local run can redirect or disable the
+ * cache without patching code. Forwarding is required rather than passive
+ * inheritance because packaged children do not receive the outer environment —
+ * `resolvePackagedChildBaseEnv` forwards an allowlist only, and the `childEnv`
+ * spread below is the child's entire environment.
  *
  * Node keys the cache by its own version and the source file contents, so a
  * runtime upgrade, an app update, or an edited bundle all miss automatically
@@ -638,9 +642,19 @@ export function resolveNodeCompileCacheEnv(
   paths: Pick<PackagedNamespacePaths, "cacheRoot">,
   app: string,
   env: NodeJS.ProcessEnv = process.env,
-): { NODE_COMPILE_CACHE: string } | Record<string, never> {
+): NodeJS.ProcessEnv {
   const inherited = env.NODE_COMPILE_CACHE;
-  if (inherited != null && inherited.length > 0) return {};
+  const disableSwitch = env.NODE_DISABLE_COMPILE_CACHE;
+  if (inherited != null && inherited.length > 0) {
+    return disableSwitch != null && disableSwitch.length > 0
+      ? { NODE_COMPILE_CACHE: inherited, NODE_DISABLE_COMPILE_CACHE: disableSwitch }
+      : { NODE_COMPILE_CACHE: inherited };
+  }
+  // An explicit operator disable opts the child out of our cache entirely, so
+  // no directory is provisioned for it and spawning creates nothing.
+  if (disableSwitch != null && disableSwitch.length > 0) {
+    return { NODE_DISABLE_COMPILE_CACHE: disableSwitch };
+  }
   return { NODE_COMPILE_CACHE: join(paths.cacheRoot, NODE_COMPILE_CACHE_DIRNAME, app) };
 }
 
