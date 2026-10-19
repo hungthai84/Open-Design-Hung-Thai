@@ -8,6 +8,7 @@ import { BrowserWindow, nativeImage } from "electron";
 import type { DesktopRenderSlidesInput, DesktopRenderSlidesResult } from "@open-design/sidecar-proto";
 
 import { waitForPrintableContent } from "./pdf-export.js";
+import { showBackgroundRenderWindow } from './background-render-window.js';
 import { bgraBitmapHasPaint, FROZEN_MOTION_CSS } from "./static-capture.js";
 import { findRealTagEnd, findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
 
@@ -291,10 +292,7 @@ export async function renderDeckSlides(
     // against a stable viewport.
     window.setContentSize(requestedStage.w, requestedStage.h);
 
-    // Paint invisibly: opacity 0 before showInactive => compositor renders the
-    // page (so capturePage returns real pixels) with zero on-screen flash.
-    window.setOpacity(0);
-    window.showInactive();
+    showBackgroundRenderWindow(window);
 
     // Cheap, NON-mutating slide count first — the deck-only DOM mutations
     // (hiding chrome, freezing animations) must not touch the document until we

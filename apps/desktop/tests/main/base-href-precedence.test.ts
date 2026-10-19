@@ -51,6 +51,9 @@ vi.mock('electron', () => {
     getContentSize(): [number, number] { return [1440, 900]; }
     isDestroyed(): boolean { return false; }
     setContentSize(): void {}
+    setFocusable(): void {}
+    setHiddenInMissionControl(): void {}
+    setIgnoreMouseEvents(): void {}
     setOpacity(): void {}
     showInactive(): void {}
   }

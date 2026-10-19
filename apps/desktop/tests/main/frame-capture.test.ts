@@ -60,6 +60,9 @@ describe('deterministic Electron frame capture', () => {
       destroy: vi.fn(),
       isDestroyed: vi.fn(() => false),
       setContentSize: vi.fn(),
+      setFocusable: vi.fn(),
+      setHiddenInMissionControl: vi.fn(),
+      setIgnoreMouseEvents: vi.fn(),
       setOpacity: vi.fn(),
       showInactive: vi.fn(),
       webContents: {
@@ -124,6 +127,9 @@ describe('deterministic Electron frame capture', () => {
       destroy: vi.fn(),
       isDestroyed: vi.fn(() => false),
       setContentSize: vi.fn(),
+      setFocusable: vi.fn(),
+      setHiddenInMissionControl: vi.fn(),
+      setIgnoreMouseEvents: vi.fn(),
       setOpacity: vi.fn(),
       showInactive: vi.fn(),
       webContents: {
@@ -186,6 +192,9 @@ describe('deterministic Electron frame capture', () => {
       destroy: vi.fn(),
       isDestroyed: vi.fn(() => false),
       setContentSize: vi.fn(),
+      setFocusable: vi.fn(),
+      setHiddenInMissionControl: vi.fn(),
+      setIgnoreMouseEvents: vi.fn(),
       setOpacity: vi.fn(),
       showInactive: vi.fn(),
       webContents: {
@@ -241,13 +250,27 @@ describe('deterministic Electron frame capture', () => {
     await expect(readFile(frameFilePath(outputDir, 1))).rejects.toThrow();
   });
 
-  test('[P0] real Electron captures a multi-second WebGL timeline without background paint stalls', async () => {
+  test('[P0] real Electron captures WebGL frames and slides without interactive render windows', async () => {
     const result = await probeRealElectronWebGlCapture();
     expect(result.frameCount).toBe(210);
     expect(result.lastFrameBytes).toBeGreaterThan(0);
     expect(result.firstFrameSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(result.lastFrameSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(result.lastFrameSha256).not.toBe(result.firstFrameSha256);
+    const nonInteractiveWindow = {
+      focusable: process.platform === 'linux' ? null : false,
+      hiddenInMissionControl: process.platform === 'darwin' ? true : null,
+    };
+    expect(result.renderWindows).toEqual([nonInteractiveWindow, nonInteractiveWindow]);
+    expect(result.remainingWindows).toBe(0);
+    expect(result.slideImage.width).toBeGreaterThanOrEqual(640);
+    expect(result.slideImage.height).toBeGreaterThanOrEqual(360);
+    expect(result.slideImage.width / result.slideImage.height).toBeCloseTo(16 / 9);
+    expect(result.slideImage.bytes).toBeGreaterThan(0);
+    const [blue, green, red, alpha] = result.slideImage.centerBgra;
+    expect(blue).toBeGreaterThan(green!);
+    expect(green).toBeGreaterThan(red!);
+    expect(alpha).toBe(255);
   }, 120_000);
 });
 
@@ -256,6 +279,9 @@ type ElectronCaptureProbeResult = {
   frameCount: number;
   lastFrameBytes: number;
   lastFrameSha256: string;
+  renderWindows: Array<{ focusable: boolean | null; hiddenInMissionControl: boolean | null }>;
+  remainingWindows: number;
+  slideImage: { bytes: number; centerBgra: number[]; height: number; width: number };
 };
 
 async function probeRealElectronWebGlCapture(): Promise<ElectronCaptureProbeResult> {
@@ -288,8 +314,17 @@ globalThis.__odFrameRenderer={
 };
 </script></body></html>`, 'utf8');
   await writeFile(join(probeDir, 'main.cjs'), `
-const { app } = require('electron');
+const { app, BrowserWindow, nativeImage } = require('electron');
 const { readFile } = require('node:fs/promises');
+const renderWindows = [];
+// The application keeps its editor open between exports; this probe owns only render windows.
+app.on('window-all-closed', () => {});
+app.on('browser-window-created', (_event, window) => {
+  window.once('show', () => renderWindows.push({
+    focusable: process.platform === 'linux' ? null : window.isFocusable(),
+    hiddenInMissionControl: process.platform === 'darwin' ? window.isHiddenInMissionControl() : null,
+  }));
+});
 
 app.whenReady().then(async () => {
   const { renderDeterministicFrames } = await import(process.env.OD_FRAME_CAPTURE_MODULE_URL);
@@ -301,6 +336,24 @@ app.whenReady().then(async () => {
     width: 320,
   });
   if (!capture.ok) throw new Error(capture.error || 'Electron frame capture failed');
+  const { renderDeckSlides } = await import(process.env.OD_DECK_CAPTURE_MODULE_URL);
+  const slides = await renderDeckSlides({
+    deck: true,
+    height: 360,
+    html: '<html><body style="margin:0"><section class="slide" style="width:640px;height:360px;background:#2864dc;color:white">Export test</section></body></html>',
+    outputDir: process.env.OD_DECK_CAPTURE_OUTPUT_DIR,
+    width: 640,
+  });
+  if (!slides.ok || slides.slideFiles?.length !== 1) throw new Error(slides.error || 'Electron slide capture failed');
+  const slideBytes = await readFile(slides.slideFiles[0]);
+  const slideImage = nativeImage.createFromBuffer(slideBytes);
+  const slideSize = slideImage.getSize();
+  const centerOffset = (Math.floor(slideSize.height / 2) * slideSize.width + Math.floor(slideSize.width / 2)) * 4;
+  const centerBgra = [...slideImage.toBitmap().subarray(centerOffset, centerOffset + 4)];
+  process.stdout.write('OD_RENDER_WINDOWS:' + JSON.stringify({
+    renderWindows, remainingWindows: BrowserWindow.getAllWindows().length,
+    slideImage: { ...slideSize, bytes: slideBytes.length, centerBgra },
+  }) + '\\n');
   app.quit();
 }).catch((error) => {
   process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
@@ -322,9 +375,16 @@ app.whenReady().then(async () => {
       OD_FRAME_CAPTURE_HTML_FILE: htmlFile,
       OD_FRAME_CAPTURE_MODULE_URL: pathToFileURL(modulePath).href,
       OD_FRAME_CAPTURE_OUTPUT_DIR: outputDir,
+      OD_DECK_CAPTURE_MODULE_URL: pathToFileURL(join(desktopRoot, 'dist', 'main', 'deck-capture.js')).href,
+      OD_DECK_CAPTURE_OUTPUT_DIR: join(probeDir, 'slides'),
     };
     delete env.ELECTRON_RUN_AS_NODE;
-    await execFileAsync(command, args, { env, timeout: 100_000 });
+    const { stdout } = await execFileAsync(command, args, { env, timeout: 100_000 });
+    const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_RENDER_WINDOWS:'));
+    if (!marker) throw new Error(`Electron capture returned no window state: ${stdout}`);
+    const windowState = JSON.parse(marker.slice('OD_RENDER_WINDOWS:'.length)) as Pick<
+      ElectronCaptureProbeResult, 'renderWindows' | 'remainingWindows' | 'slideImage'
+    >;
     const frameNames = (await readdir(outputDir))
       .filter((name) => /^frame-\d{8}\.png$/.test(name))
       .sort();
@@ -332,6 +392,7 @@ app.whenReady().then(async () => {
     const lastFramePath = join(outputDir, frameNames.at(-1) ?? 'missing-last-frame');
     const lastFrame = await readFile(lastFramePath);
     return {
+      ...windowState,
       firstFrameSha256: createHash('sha256').update(firstFrame).digest('hex'),
       frameCount: frameNames.length,
       lastFrameBytes: (await stat(lastFramePath)).size,
