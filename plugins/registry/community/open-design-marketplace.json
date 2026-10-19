@@ -2,14 +2,14 @@
   "$schema": "https://open-design.ai/schemas/marketplace.v1.json",
   "specVersion": "1.0.0",
   "name": "open-design-community",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "owner": {
     "name": "OpenDesign Community",
     "url": "https://open-design.ai/marketplace/community"
   },
   "metadata": {
     "description": "Default community plugin registry seed. Entries here are discoverable by default but remain restricted until the user installs and trusts them.",
-    "version": "0.2.10"
+    "version": "0.2.11"
   },
   "plugins": [
     {
@@ -139,6 +139,35 @@
         "design-to-code"
       ],
       "description": "Hand an Open Design project off to OpenCode as an offline-complete bundle: a verbatim project mirror, the design system materialized with real font binaries, and a machine-enforced adherence config."
+    },
+    {
+      "name": "community/app-store-assets",
+      "title": "App Store Assets",
+      "version": "0.1.0",
+      "source": "github:nexu-io/open-design@main/plugins/community/app-store-assets",
+      "publisher": {
+        "id": "open-design-community",
+        "github": "nexu-io",
+        "url": "https://github.com/nexu-io/open-design"
+      },
+      "homepage": "https://github.com/marianif/od-plugin-app-store-assets",
+      "license": "MIT",
+      "capabilitiesSummary": [
+        "prompt:inject",
+        "fs:read",
+        "fs:write",
+        "bash",
+        "network"
+      ],
+      "tags": [
+        "community",
+        "app-store",
+        "screenshots",
+        "marketing",
+        "ios",
+        "app-store-connect"
+      ],
+      "description": "Generate, validate and upload App Store screenshots, product-page header, search-results creative and In-App Event media at Apple's exact specs, then place them through the App Store Connect Asset Library."
     }
   ]
 }

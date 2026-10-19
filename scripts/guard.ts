@@ -214,6 +214,12 @@ const residualAllowedPathPrefixes = [
   "docs/design/chat-panel-diagrams/",
   "docs/design/chat-mirror/",
   "test-results/",
+  // Community plugin: App Store Assets ships Node scripts the agent executes
+  // directly (bootstrap / compose / render / validate / refdata / asc-upload).
+  // They are portable single-file modules with no build step, never imported by
+  // the app runtime, and the same scripts also run outside OD - same precedent
+  // as the clipper, figma-plugin and mocks/scripts subprojects.
+  "plugins/community/app-store-assets/scripts/",
   "vendor/",
 ];
 
