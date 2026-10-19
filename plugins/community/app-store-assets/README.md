@@ -14,7 +14,7 @@ applied as a pre-flight check.
   reference data — no hardcoded device list
 - **Upload** to the App Asset Library (`appAssetLibraryImages`,
   `appAssetLibraryPlacements`) with a dry-run and explicit confirmation
-- **Idempotent** — re-runs adopt images and placements already in the library
+- **Revision-aware** — reference names carry a content digest, so a re-rendered file replaces its previous upload instead of being skipped; unchanged files are adopted
 - **No credentials in prompts**: the upload script reads them from a local
   config file or environment variables
 
@@ -105,6 +105,8 @@ node .app-store-assets/scripts/asc-upload.mjs library --app 1234567890
 node .app-store-assets/scripts/refdata.mjs                     # freeze the live catalog
 node .app-store-assets/scripts/asc-upload.mjs upload --plan asset-plan.json --app 1234567890 --version 1.0
 node .app-store-assets/scripts/asc-upload.mjs upload --plan asset-plan.json --app 1234567890 --version 1.0 --execute
+# optional: also remove placements/images for assets no longer in the plan
+node .app-store-assets/scripts/asc-upload.mjs upload --plan asset-plan.json --app 1234567890 --version 1.0 --prune --execute
 ```
 
 `upload` is a dry-run by default; it resolves the version, localization, matches
@@ -115,6 +117,7 @@ it would change. `--execute` performs it. The script never submits for review.
 
 ```bash
 od plugin validate ./od-plugin-app-store-assets
+node scripts/selftest.mjs                             # image gates: bytes vs extension, alpha, dimensions
 pnpm --filter @open-design/plugin-runtime typecheck   # only inside the OD repo
 ```
 
@@ -144,6 +147,20 @@ The HTML preview is served from `preview/index.html` and must return
   submission are deferred — see `ROADMAP.md`.
 - The validator catches mechanical failures. Apple's 4+ content judgment, "one
   clear idea", and claim verification still need human review.
+
+## Registry listings
+
+- **Canonical source** — https://github.com/marianif/od-plugin-app-store-assets
+- **OpenDesign community catalog** — PR
+  [nexu-io/open-design#8857](https://github.com/nexu-io/open-design/pull/8857)
+  (proposal: [#8856](https://github.com/nexu-io/open-design/issues/8856)); adds
+  `plugins/community/app-store-assets` + a catalog entry
+- **skills.sh** — verified install:
+  `npx skills add marianif/od-plugin-app-store-assets --skill app-store-assets`
+- **ClawHub** — dry-run verified; publish with
+  `npx clawhub login` then
+  `npx clawhub skill publish . --slug app-store-assets --name "App Store Assets" --version 0.1.0 --tags app-store,screenshots,ios,marketing`
+- **OpenDesign (local)** — `od plugin install --source ./od-plugin-app-store-assets`
 
 ## License
 
