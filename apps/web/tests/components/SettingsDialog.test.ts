@@ -561,6 +561,27 @@ describe('SettingsDialog provider connection test requirements', () => {
 });
 
 describe('SettingsDialog provider model fetch helpers', () => {
+  it.each(['anthropic', 'openai'] as const)(
+    'restricts the Databricks discovery block to workspace hosts for %s',
+    (protocol) => {
+      const path = protocol === 'anthropic' ? '/ai-gateway/anthropic/v1' : '/ai-gateway/mlflow/v1';
+      for (const [origin, unsupported] of [
+        ['https://gateway.example', false],
+        ['https://acme.cloud.databricks.com.gateway.example', false],
+        ['https://fakeazuredatabricks.net', false],
+        ['http://acme.cloud.databricks.com', false],
+        ['https://acme.cloud.databricks.com', true],
+        ['https://adb-1234567890123456.7.azuredatabricks.net', true],
+        ['https://1234567890123456.7.gcp.databricks.com', true],
+      ] as const) {
+        const baseUrl = `${origin}${path}`;
+        expect(isProviderModelDiscoveryUnsupported(protocol, baseUrl), baseUrl).toBe(unsupported);
+        expect(isProviderModelDiscoveryUnsupported(protocol, `${baseUrl}/`), baseUrl).toBe(unsupported);
+        expect(canFetchProviderModels({ apiKey: 'test-key', baseUrl }, protocol), baseUrl).toBe(!unsupported);
+      }
+    },
+  );
+
   it('requires key, valid base URL, and a supported protocol', () => {
     expect(
       canFetchProviderModels(

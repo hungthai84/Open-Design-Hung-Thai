@@ -732,9 +732,14 @@ export function isProviderModelDiscoveryUnsupported(
   try {
     const url = new URL(baseUrl);
     const host = url.hostname.toLowerCase();
-    return host === 'token-plan-cn.xiaomimimo.com' ||
-      (protocol === 'anthropic' && url.pathname === '/ai-gateway/anthropic/v1') ||
-      (protocol === 'openai' && url.pathname === '/ai-gateway/mlflow/v1');
+    const path = url.pathname.replace(/\/+$/, '');
+    return host === 'token-plan-cn.xiaomimimo.com' || (
+      url.protocol === 'https:' &&
+      /\.(?:cloud\.databricks\.com|azuredatabricks\.net|gcp\.databricks\.com)$/.test(host) && (
+        (protocol === 'anthropic' && path === '/ai-gateway/anthropic/v1') ||
+        (protocol === 'openai' && path === '/ai-gateway/mlflow/v1')
+      )
+    );
   } catch {
     return false;
   }
