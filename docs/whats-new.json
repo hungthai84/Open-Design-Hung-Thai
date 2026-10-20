@@ -1,16 +1,13 @@
 {
-  "id": "0.22.1",
-  "title": "The OpenDesign Product Design Hackathon is here!",
-  "body": "Win up to $1,000 in tokens: Share your website, app, or product design built with OpenDesign on X. The 10 entries with the most likes win prizes!\nRewards for the first 50 submissions: Join the OpenDesign Discord or Feishu community and share your work. The first 50 participants each get $5 in tokens!\n40% better prototype designs: Upgrade to version 0.22.0 or later to experience OpenDesign’s latest design improvements!",
-  "imageUrl": "https://whatsnew.open-design.ai/0.18.0.webp",
-  "linkUrl": "https://open-design.ai/opendesign-hackathon/",
-  "ctaLabel": "Explore the Hackathon",
+  "id": "0.26.0",
+  "title": "OpenDesign 0.26.0 — Share the Work, Bring Feedback Back",
+  "body": "Share work and motion videos with your team or clients to view and comment on in the browser—no download required. Send the feedback you receive to an Agent for the next revision.\nOne link to share work and motion videos\nComment directly on the work to make feedback clearer\nUpdate the work while keeping the same link",
+  "linkUrl": "https://github.com/nexu-io/open-design/releases/tag/open-design-v0.26.0",
   "locales": {
     "zh-CN": {
-      "title": "OpenDesign 产品设计黑客松来了！",
-      "body": "最高获价值 1000 美金 Token：分享用 OpenDesign 做的网页/App/产品设计到 X，点赞 Top 10 均可获奖；\n前50位投稿都有奖：加入OpenDesign Discord/飞书社群分享作品，前 50 名人人可得 $5 Token；\n原型设计效果提升 40%：升级 0.22.0 及以上版本，体验最新OpenDesign设计效果！",
-      "linkUrl": "https://open-design.ai/zh/opendesign-hackathon/",
-      "ctaLabel": "查看活动"
+      "title": "OpenDesign 0.26.0 — 作品发出去，反馈带回来",
+      "body": "把作品和动效视频分享给团队或客户，直接观看、评论，无需下载客户端。收到反馈后，由你交给 Agent 继续修改。\n一个链接，分享作品和动效视频\n在作品上评论，让反馈更清楚\n更新作品，沿用原链接",
+      "linkUrl": "https://github.com/nexu-io/open-design/releases/tag/open-design-v0.26.0"
     }
   }
 }
