@@ -67,6 +67,28 @@ describe('inlineRelativeAssets (FS-backed)', () => {
     expect(out).not.toContain('<link rel="stylesheet" href="a.css">');
   });
 
+  it('decodes named and numeric references before reading asset filenames', async () => {
+    write('theme&dark.css', '.entity{color:red}');
+    write('boot&main.js', 'window.OD_ENTITY = true;');
+    const html = '<link rel="stylesheet" href="theme&amp;dark.css">' +
+      '<script src="boot&#x26;main.js" type="module" defer></script>';
+    const out = await inlineRelativeAssets(html, 'index.html', fsReader());
+
+    expect(out).toContain('.entity{color:red}');
+    expect(out).toContain('window.OD_ENTITY = true;');
+    expect(out).not.toContain('<link');
+    expect(out).not.toContain('src=');
+    expect(out).toContain('type="module" defer');
+  });
+
+  it('still excludes entity-encoded external and root-relative asset URLs', async () => {
+    const html = '<link rel="stylesheet" href="https&#58;//example.com/theme.css">' +
+      '<script src="&#47;app.js"></script>';
+    const out = await inlineRelativeAssets(html, 'index.html', fsReader());
+
+    expect(out).toBe(html);
+  });
+
   it('inlines a top-level <script src> as an inline <script> with the file body', async () => {
     write('app.js', 'window.OD_OK = 1;');
     const html = '<html><head><script src="app.js"></script></head></html>';
