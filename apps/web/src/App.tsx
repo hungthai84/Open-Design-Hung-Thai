@@ -5961,7 +5961,7 @@ function AppInner() {
           && projectRouteWorkspaceContext.failure === 'unavailable' ? (
           <ProjectWorkspaceRecoveryTip />
         ) : null}
-        <div className="workspace-shell__body">
+        <div className="workspace-shell__body" data-cms-content-viewport="true">
           {appMain}
         </div>
       </div>

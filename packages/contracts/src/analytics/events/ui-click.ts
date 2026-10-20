@@ -1,3 +1,4 @@
+import type { CmsTouchpointClickProps } from './cms-touchpoints.js';
 /**
  * @module analytics/events/ui-click
  * ui_click event prop types and their union.
@@ -1694,6 +1695,7 @@ export interface SettingsExternalMcpClickProps {
 
 // Discriminated union of every supported ui_click payload.
 export type UiClickProps =
+  | CmsTouchpointClickProps
   | EntryNavigationClickProps
   | AccountMenuClickProps
   | WorkspaceSwitcherClickProps
