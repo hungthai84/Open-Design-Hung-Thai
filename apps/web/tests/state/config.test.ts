@@ -50,25 +50,25 @@ describe('KNOWN_PROVIDERS', () => {
         label: 'MiniMax — Anthropic',
         protocol: 'anthropic',
         baseUrl: 'https://api.minimax.io/anthropic',
-        preferredModels: expect.arrayContaining(['MiniMax-M3', 'MiniMax-M2.7']),
+        preferredModels: ['MiniMax-M3.1-Flash', 'MiniMax-M3'],
       }),
       expect.objectContaining({
         label: 'MiniMax — Anthropic (CN)',
         protocol: 'anthropic',
         baseUrl: 'https://api.minimaxi.com/anthropic',
-        preferredModels: expect.arrayContaining(['MiniMax-M3', 'MiniMax-M2.7']),
+        preferredModels: ['MiniMax-M3.1-Flash', 'MiniMax-M3'],
       }),
       expect.objectContaining({
         label: 'MiniMax — OpenAI',
         protocol: 'openai',
         baseUrl: 'https://api.minimax.io/v1',
-        preferredModels: expect.arrayContaining(['MiniMax-M3', 'MiniMax-M2.7']),
+        preferredModels: ['MiniMax-M3.1-Flash', 'MiniMax-M3'],
       }),
       expect.objectContaining({
         label: 'MiniMax — OpenAI (CN)',
         protocol: 'openai',
         baseUrl: 'https://api.minimaxi.com/v1',
-        preferredModels: expect.arrayContaining(['MiniMax-M3', 'MiniMax-M2.7']),
+        preferredModels: ['MiniMax-M3.1-Flash', 'MiniMax-M3'],
       }),
     ]);
   });
