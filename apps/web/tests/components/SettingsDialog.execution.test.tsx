@@ -3845,7 +3845,9 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
     expect(within(amrCard).getByRole('button', { name: 'Cancel' })).toBeTruthy();
     const callout = document.querySelector('.settings-cloud-signin-callout');
     if (!(callout instanceof HTMLElement)) throw new Error('missing cloud callout');
-    expect(within(callout).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    // The card and the shared account control load independently. Observing
+    // the card's pending status is not the callout's completion signal.
+    expect(await within(callout).findByRole('button', { name: 'Cancel' })).toBeTruthy();
   });
 
   it('cancels an in-flight AMR sign-in and returns to Authorize after a brief canceled state', async () => {
