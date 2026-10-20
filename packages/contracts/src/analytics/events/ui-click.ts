@@ -140,6 +140,12 @@ export interface HomeChatComposerClickProps {
     // "Recent folders" submenu.
     | 'working_dir_recent'
     | 'task_chip'
+    // The × the composer's type pill reveals on hover: clears the picked task
+    // type back to none (the pill then disappears; the entry point in the
+    // accessory row stays). Fires only once no sub-category is left to clear —
+    // that step sends `subcategory_chip` with `subcategory: 'all'` instead.
+    // `chip_id` is the type being cleared.
+    | 'task_chip_clear'
     // Sub-category filter pill under the task rail (全部 / Landing / Brand /
     // Dashboards / …). `subcategory` carries the picked slug; '全部' sends
     // `subcategory: 'all'`. `chip_id` is the parent task type.
@@ -873,7 +879,16 @@ export interface NextStepActionClickProps {
     | 'chip'
     | 'toolbox_action'
     | 'toolbox_more'
-    | 'share_to_open_design';
+    | 'share_to_open_design'
+    /**
+     * One of the agent-written follow-up suggestions under a delivered turn.
+     * Unlike every element above it, clicking this SENDS the row's sentence as
+     * the user's next message, so its click-through is literally the
+     * second-turn rate. `chip_id` carries the row's 0-based position, never the
+     * text — the text is model-written prose about the user's own project and
+     * has no business in an analytics payload.
+     */
+    | 'suggestion';
   chip_id?: string;
 }
 
@@ -900,8 +915,6 @@ export interface QuestionsFormClickProps {
     | 'submit'
     | 'visual_style_card'
     | 'visual_style_refresh'
-    | 'visual_style_gallery_open'
-    | 'visual_style_category_tab'
     | 'step_back'
     | 'step_next'
     | 'step_skip';
@@ -917,15 +930,18 @@ export interface QuestionsFormClickProps {
   question_id?: string;
   style_id?: string;
   style_context?: 'deck' | 'prototype' | 'document' | 'image' | 'video';
-  interaction_source?: 'inline' | 'gallery';
-  category_id?: 'all' | 'business' | 'editorial' | 'creative' | 'minimal';
+  // visual_style_card only: where the card was picked. The `'gallery'` arm and
+  // the `category_id` it carried retired with the visual-style gallery dialog
+  // (B53) — that dialog was the paging-era overflow surface, and the whole
+  // catalog now lives in the inline stack/grid.
+  interaction_source?: 'inline';
   step_index?: number;
   step_count?: number;
   project_id: string;
 }
 
 // Hosted-AMR nudge shown under a non-AMR agent's model/auth/quota failure.
-// `go_amr` is the link that opens https://open-design.ai/amr.
+// `go_amr` is the link that opens https://open-design.ai/cloud/dashboard.
 export interface RunFailedToastClickProps {
   page_name: 'chat_panel';
   area: 'chat_panel';
@@ -1032,15 +1048,24 @@ export interface ChatPanelResourcesPopoverClickProps {
     | 'customize_in_settings';
 }
 
-// Actions on the queued-send strip ("N queued · to send") that sits above
-// the chat composer while a run is in flight: re-open a queued prompt in the
-// composer (`edit`), promote it to send immediately (`send_now`), or drop it
-// from the queue (`delete`). `queue_length` is the queue size at click time,
-// before the action applies.
+// Actions on the queued-send strip that sits above the chat composer while a
+// run is in flight: re-open a queued prompt in the composer (`edit`), send it
+// now (`steer`, B11 「引导对话」 — stops the turn in flight first when there is
+// one), or drop it from the queue (`delete`).
+//
+// `send_now` is RETIRED, not renamed. The strip's leading button used to have
+// two faces — `steer` while a turn was interruptible, `send_now` otherwise —
+// wired to the same handler under two names. Product collapsed them into the
+// single 「引导对话」 button on 2026-09-08, and the survivor reports `steer`.
+// So from that release on this surface emits no `send_now` at all; the member
+// stays in the union because PostHog still holds the historical events and
+// dashboards that read them must keep type-checking.
+//
+// `queue_length` is the queue size at click time, before the action applies.
 export interface ChatPanelMessageQueueClickProps {
   page_name: 'chat_panel';
   area: 'message_queue';
-  element: 'edit' | 'send_now' | 'delete';
+  element: 'edit' | 'send_now' | 'delete' | 'steer';
   project_id: string;
   queue_length: number;
 }
@@ -1210,6 +1235,8 @@ export interface CommentPopoverClickProps {
   page_name: 'artifact';
   area: 'comment_popover';
   element: 'save_comment' | 'send_to_chat' | 'add_note';
+  /** Saved comments selected at click time; does not imply queue acceptance. */
+  submitted_comment_ids?: string[];
   artifact_id?: string;
   artifact_kind?: TrackingArtifactKind;
   project_id: string;
@@ -1359,6 +1386,15 @@ export interface DeckViewerClickProps {
   slide_count?: number;
 }
 
+export interface ShareGuideClickProps {
+  page_name: 'artifact';
+  area: 'share_guide';
+  element: 'try_share' | 'close' | 'never_show_again';
+  project_id: string;
+  project_kind: TrackingProjectKind | null;
+  artifact_id: string;
+}
+
 export interface ShareOptionPopoverClickProps {
   page_name: 'artifact';
   area: 'share_option_popover';
@@ -1373,6 +1409,8 @@ export interface ShareOptionPopoverClickProps {
     | 'publish_required_guide'
     | 'publish_file'
     | 'copy_publish_link';
+  /** Existing stable alias at click time, if known. */
+  publish_id?: string;
   artifact_id: string;
   artifact_kind: TrackingArtifactKind;
   project_id: string;
@@ -1382,7 +1420,7 @@ export interface ShareOptionPopoverClickProps {
 // Provenance of an HTML file version, mirroring the daemon's
 // ProjectFileVersion.source: 'ai' = written by a run, 'manual' = manual
 // edit/undo/redo, 'restore' = created by restoring an older version.
-export type TrackingFileVersionSource = 'ai' | 'manual' | 'restore';
+export type TrackingFileVersionSource = 'ai' | 'manual' | 'restore' | 'sync';
 
 // Clicks inside the HTML file version history modal (opened via the artifact
 // toolbar `versions` element). `restore` opens the confirm popover;
@@ -1734,6 +1772,7 @@ export type UiClickProps =
   | PresentPopoverClickProps
   | DeckViewerClickProps
   | ShareOptionPopoverClickProps
+  | ShareGuideClickProps
   | FileVersionModalClickProps
   | ConversationForkClickProps
   | AssistantFeedbackButtonClickProps

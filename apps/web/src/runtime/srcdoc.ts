@@ -1,3 +1,4 @@
+import { injectMotionSourcePlayer, markMotionHostedPreview } from '@open-design/contracts/runtime/motion-source-player';
 /**
  * Wrap an artifact's HTML for a sandboxed iframe. Corresponds to
  * buildSrcdoc in packages/runtime/src/index.ts — the reference version also
@@ -32,6 +33,10 @@ import {
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
+  PREVIEW_RUNTIME_STATE_LIMITS,
+  PREVIEW_RUNTIME_STATE_VERSION,
+} from '@open-design/contracts/runtime/preview-runtime-state';
+import {
   PREVIEW_REDIRECT_GUARD_MAX_HOPS,
   PREVIEW_REDIRECT_GUARD_SELF_REFRESH_MIN_DELAY_MS,
   PREVIEW_REDIRECT_GUARD_WINDOW_MS,
@@ -61,8 +66,12 @@ import {
   MANUAL_EDIT_SOURCE_PATH_ATTR,
 } from '../edit-mode/bridge';
 import { isApprovedFontStylesheetHref } from './deck-thumbnail-parser';
+import { ANNOTATED_SELECTOR_HELPERS } from './annotated-selector';
+import { COMMENT_IDENTITY_HELPERS } from '@open-design/contracts';
 
 export type SrcdocOptions = {
+  /** Live embedded motion preview only; do not enable for exports/captures. */
+  motionPreview?: boolean;
   deck?: boolean;
   baseHref?: string;
   initialSlideIndex?: number;
@@ -346,19 +355,13 @@ export function buildSrcdoc(
   const isFullDoc = head.startsWith("<!doctype") || head.startsWith("<html");
   const wrapped = isFullDoc
     ? html
-    : `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-  </head>
-  <body>${html}</body>
-</html>`;
+    : normalizeHtmlFragmentLikeNavigation(html);
   // Sanitize <title> text before any other transformation so that when the
   // user prints the preview iframe (Cmd+P → Save as PDF), Chromium uses the
   // sanitized title as the default filename — one that Microsoft Teams will
   // accept. Only the title text changes; visible page content is untouched.
-  const withSafeTitle = sanitizeTitleInDoc(wrapped);
+  const motionSource = options.motionPreview && !options.freezeMotion ? markMotionHostedPreview(wrapped) : wrapped;
+  const withSafeTitle = sanitizeTitleInDoc(options.freezeMotion ? motionSource : injectMotionSourcePlayer(motionSource));
   const withOdIds = annotateMissingOdIds(withSafeTitle);
   const withSourcePaths = options.editBridge ? annotateManualEditSourcePaths(withOdIds) : withOdIds;
   const withBase = options.baseHref ? injectBaseHref(withSourcePaths, options.baseHref) : withSourcePaths;
@@ -410,6 +413,7 @@ export function buildSrcdoc(
     ? injectSelectionBridge(withDeck, {
         initialCommentMode: !!options.commentBridge,
         initialInspectMode: !!options.inspectBridge,
+        runtimeStateGeneration: options.transportActivationGeneration ?? '',
       })
     : withDeck;
   const withPalette = options.paletteBridge
@@ -437,6 +441,32 @@ export function buildSrcdoc(
 }
 
 /**
+ * Give fragment-shaped artifacts the same document structure and compat mode
+ * they receive when Chromium navigates directly to the raw URL.
+ *
+ * Wrapping every fragment in a standards-mode `<body>` changes two observable
+ * browser behaviours:
+ *   - a source without a doctype switches from URL-load quirks mode to srcDoc
+ *     standards mode; and
+ *   - leading metadata such as `<title>`, `<link>`, and `<style>` becomes a
+ *     body child. Runtime-state handoff later replaces `body.innerHTML`, which
+ *     deletes those authored styles and leaves Edit visibly unstyled.
+ *
+ * DOMParser applies the same tree-builder rules as a document navigation: it
+ * synthesizes html/head/body, promotes leading metadata into head, and retains
+ * the absence of a doctype. In non-DOM environments, leaving the fragment
+ * untouched lets the eventual iframe parser perform that normalization.
+ */
+function normalizeHtmlFragmentLikeNavigation(html: string): string {
+  if (typeof DOMParser === 'undefined') return html;
+  try {
+    return serializeHtmlDocument(new DOMParser().parseFromString(html, 'text/html'));
+  } catch {
+    return html;
+  }
+}
+
+/**
  * Build the lazy transport shell.
  *
  * The shell does two things:
@@ -449,9 +479,9 @@ export function buildSrcdoc(
  *      key-driven re-mount), in which case the message is dropped and the
  *      iframe stays stuck on the empty shell. See #2253.
  */
-export function buildLazySrcdocTransport(): string {
-  return `<!doctype html>
-<html>
+export function buildLazySrcdocTransport(options: { quirksMode?: boolean } = {}): string {
+  const doctype = options.quirksMode ? '' : '<!doctype html>\n';
+  return `${doctype}<html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -471,7 +501,7 @@ export function buildLazySrcdocTransport(): string {
           }
         } catch (_) { /* sandboxed parent — host falls back to onLoad */ }
       }
-      window.addEventListener('message', function(ev){
+      function handleTransportMessage(ev){
         var data = ev && ev.data;
         if (data && data.type === 'od:srcdoc-transport-shell-probe') {
           announceReady();
@@ -479,10 +509,14 @@ export function buildLazySrcdocTransport(): string {
         }
         if (!data || data.type !== 'od:srcdoc-transport-activate' || typeof data.html !== 'string' || typeof data.generation !== 'string' || !data.generation) return;
         stopReadyAnnouncements();
+        if (typeof window.removeEventListener === 'function') {
+          window.removeEventListener('message', handleTransportMessage);
+        }
         document.open();
         document.write(data.html);
         document.close();
-      });
+      }
+      window.addEventListener('message', handleTransportMessage);
       announceReady();
       // A cached app-lifetime Blob can finish long before React attaches the
       // parent's listener. Keep announcing until activation instead of
@@ -591,9 +625,19 @@ function injectSrcdocTransportActivationBridge(doc: string, generation: string):
       return;
     }
     if (!data || data.type !== 'od:srcdoc-transport-activate' || typeof data.html !== 'string' || typeof data.generation !== 'string' || !data.generation) return;
-    document.open();
-    document.write(data.html);
-    document.close();
+    // document.open/write keeps the current Window realm. Re-running an
+    // authored classic script there can fail before execution when it declares
+    // a top-level let/const that the previous document already declared. Ask
+    // the host to remount the shared bootstrap so this generation gets a fresh
+    // realm, then let the one-shot shell perform the initial write.
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'od:srcdoc-transport-reset-required',
+          generation: data.generation
+        }, '*');
+      }
+    } catch (_) { /* sandboxed parent — host recovery will remount on timeout */ }
   });
   announceReady();
 })();</script>`;
@@ -662,6 +706,13 @@ function injectSnapshotBridge(doc: string): string {
       copyComputedStyle(originals[i], clones[i]);
       syncElementState(originals[i], clones[i]);
     }
+  }
+  // Must run AFTER pruneHiddenSnapshotNodes: prune pairs originalRoot/cloneRoot
+  // querySelectorAll('*') lists by index, so removing clone nodes (scripts,
+  // links) before it shifts every later clone under the wrong original and the
+  // misdirected removals can delete the visible content (or the body itself),
+  // yielding a uniform "empty-render" frame.
+  function stripSnapshotResources(cloneRoot){
     var scripts = cloneRoot.querySelectorAll('script');
     for (var s = scripts.length - 1; s >= 0; s--) scripts[s].remove();
     var links = cloneRoot.querySelectorAll('link[rel~="stylesheet"], link[rel~="preload"], link[rel~="preconnect"]');
@@ -672,6 +723,29 @@ function injectSnapshotBridge(doc: string): string {
         .replace(/@import[^;]+;/gi, '')
         .replace(/@font-face\\s*\\{[^}]*\\}/gi, '');
     }
+    // HTML tolerates attribute names XML rejects (@click, :href, {shorthand}).
+    // One such attribute anywhere makes the whole foreignObject SVG unparseable,
+    // so drop any attribute whose name is not a valid XML Name.
+    var XML_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?$/;
+    var all = cloneRoot.querySelectorAll('*');
+    for (var e = 0; e < all.length; e++) {
+      var attrs = all[e].attributes;
+      for (var a = attrs.length - 1; a >= 0; a--) {
+        if (!XML_NAME.test(attrs[a].name)) all[e].removeAttribute(attrs[a].name);
+      }
+    }
+  }
+  // innerHTML uses the HTML serializer, which emits void elements (<br>, <img>)
+  // without self-closing slashes — invalid XML, so the foreignObject SVG image
+  // fails to parse (img.onerror → 'snapshot image failed'). XMLSerializer emits
+  // well-formed XHTML instead.
+  function serializeSnapshotXhtml(node){
+    try {
+      var serializer = new XMLSerializer();
+      var out = '';
+      for (var i = 0; i < node.childNodes.length; i++) out += serializer.serializeToString(node.childNodes[i]);
+      return out;
+    } catch (_) { return node.innerHTML || ''; }
   }
   function pruneHiddenSnapshotNodes(originalRoot, cloneRoot){
     var originals = originalRoot.querySelectorAll('*');
@@ -760,11 +834,12 @@ function injectSnapshotBridge(doc: string): string {
       clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
       inlineSnapshotStyles(document.documentElement, clone);
       pruneHiddenSnapshotNodes(document.documentElement, clone);
+      stripSnapshotResources(clone);
       var scroll = full ? { x: 0, y: 0 } : scrollOffset();
       var cloneBody = clone.querySelector('body');
       var rootStyle = clone.getAttribute('style') || '';
       var bodyStyle = cloneBody ? cloneBody.getAttribute('style') || '' : '';
-      var bodyContent = cloneBody ? cloneBody.innerHTML : clone.innerHTML;
+      var bodyContent = serializeSnapshotXhtml(cloneBody || clone);
       var wrapperStyle = rootStyle + bodyStyle +
         'margin:0;position:relative;left:' + (-scroll.x) + 'px;top:' + (-scroll.y) + 'px;' +
         'width:' + docW + 'px;height:' + docH + 'px;overflow:visible;';
@@ -1397,7 +1472,7 @@ function injectBeforeHeadEnd(doc: string, payload: string): string {
   if (typeof DOMParser !== 'undefined') {
     try {
       const parsed = new DOMParser().parseFromString(doc, 'text/html');
-      if (parsed.head) parsed.head.insertAdjacentHTML('beforeend', payload);
+      if (parsed.head) parsed.head.append(parsed.createRange().createContextualFragment(payload));
       return serializeHtmlDocument(parsed);
     } catch { /* fall through to prepend */ }
   }
@@ -1413,7 +1488,7 @@ function injectBeforeBodyEnd(doc: string, payload: string): string {
   if (typeof DOMParser !== 'undefined') {
     try {
       const parsed = new DOMParser().parseFromString(doc, 'text/html');
-      if (parsed.body) parsed.body.insertAdjacentHTML('beforeend', payload);
+      if (parsed.body) parsed.body.append(parsed.createRange().createContextualFragment(payload));
       return serializeHtmlDocument(parsed);
     } catch { /* fall through to append */ }
   }
@@ -1788,13 +1863,19 @@ function injectPreviewRedirectGuard(
 // damage. Any parent able to postMessage here can already mount the iframe.
 function injectSelectionBridge(
   doc: string,
-  options: { initialCommentMode?: boolean; initialInspectMode?: boolean } = {},
+  options: {
+    initialCommentMode?: boolean;
+    initialInspectMode?: boolean;
+    runtimeStateGeneration?: string;
+  } = {},
 ): string {
   const initialComment = options.initialCommentMode ? 'true' : 'false';
   const initialInspect = options.initialInspectMode ? 'true' : 'false';
+  const runtimeStateGeneration = JSON.stringify(options.runtimeStateGeneration ?? '');
   const script = `<script data-od-selection-bridge>(function(){
   var commentEnabled = ${initialComment};
   var inspectEnabled = ${initialInspect};
+  var runtimeStateGeneration = ${runtimeStateGeneration};
   // Comment mode has two sub-tools (kept on the host side as boardTool):
   //   'picker' — click-to-select an element for annotation.
   //   'pod'    — pointer-drag a freeform stroke that the host turns into a
@@ -1973,11 +2054,8 @@ function injectSelectionBridge(
       };
     } catch (_) { return null; }
   }
-  function annotatedSelectorFor(el){
-    var id = el.getAttribute('data-od-id') || el.getAttribute('data-screen-label');
-    if (!id) return null;
-    return el.hasAttribute('data-od-id') ? '[data-od-id="' + esc(id) + '"]' : '[data-screen-label="' + esc(id) + '"]';
-  }
+${ANNOTATED_SELECTOR_HELPERS}
+${COMMENT_IDENTITY_HELPERS}
   function domSelectorFor(el){
     if (!el || !el.tagName || el === document.documentElement || el === document.body) return null;
     var parts = [];
@@ -2064,10 +2142,16 @@ function meaningfulDomFallbackTarget(el) {
   function generatedRootAnnotation(el, id){
     return id === 'path-0' && el && el.parentElement === document.body && el.id === 'root';
   }
-  function targetFrom(el, allowDomFallback, clickedEl, clickPoint){
-    var id = el.getAttribute('data-od-id') || el.getAttribute('data-screen-label');
+  function targetFrom(el, allowDomFallback, clickedEl, clickPoint, forceCommentIdentity){
+    var id = annotatedElementIdFor(el);
+    var selector = annotatedSelectorFor(el, esc);
+    if ((forceCommentIdentity || (commentEnabled && !inspectEnabled)) && (!clickedEl || clickedEl === el) && el && el.hasAttribute('data-od-comment-id')) {
+      var identity = ownCommentIdentity(el);
+      if (!identity) return null;
+      id = identity.elementId;
+      selector = identity.selector;
+    }
     if (allowDomFallback && id && generatedRootAnnotation(el, id)) return null;
-    var selector = annotatedSelectorFor(el);
     if (!id && allowDomFallback && meaningfulDomFallbackTarget(el)) {
       selector = domSelectorFor(el);
       if (selector) id = 'dom:' + selector;
@@ -2106,7 +2190,7 @@ function meaningfulDomFallbackTarget(el) {
     return payload;
   }
   function allTargets(){
-    var annotatedNodes = document.querySelectorAll('[data-od-id], [data-screen-label]');
+    var annotatedNodes = document.querySelectorAll('[data-od-id], [data-screen-label], [data-od-comment-id]');
     var includeDomFallback = canUseDomFallback();
     var nodes = includeDomFallback
       ? document.querySelectorAll('body *')
@@ -2179,6 +2263,7 @@ function meaningfulDomFallbackTarget(el) {
     window.parent.postMessage({ type: 'od:preview-scroll-request' }, '*');
   }
   function findCommentTargetByIdentity(elementId, selector){
+    if (String(elementId || '').indexOf('cmt:') === 0 || commentSelectorClaimsIdentity(selector)) return strictCommentNode(elementId, selector);
     var el = null;
     if (selector) {
       try { el = document.querySelector(String(selector)); } catch (_) { el = null; }
@@ -2195,7 +2280,10 @@ function meaningfulDomFallbackTarget(el) {
     if (!active() || !activeCommentElementId) return;
     var el = findCommentTargetByIdentity(activeCommentElementId, activeCommentSelector);
     if (!el) return;
-    var payload = targetFrom(el, commentEnabled && mode === 'picker' && !inspectEnabled);
+    var payload = targetFrom(el, commentEnabled && mode === 'picker' && !inspectEnabled, null, null, String(activeCommentElementId).indexOf('cmt:') === 0);
+    // Preserve the selector that actually found the saved target, even when
+    // source annotation gives that DOM node a newer attribute identity.
+    try { if (payload && activeCommentSelector && el.matches(activeCommentSelector)) payload.selector = activeCommentSelector; } catch (_) {}
     if (payload) window.parent.postMessage(Object.assign({}, payload, { type: 'od:comment-active-target-update' }), '*');
   }
   function schedulePostActiveCommentTarget(){
@@ -2283,6 +2371,8 @@ function meaningfulDomFallbackTarget(el) {
     for (var i = 0; i < candidates.length; i++) {
       var clicked = candidates[i];
       var el = clicked;
+      // Only the selected node's OWN authored identity is a comment anchor.
+      if (commentEnabled && !inspectEnabled && clicked && clicked.hasAttribute('data-od-comment-id')) return { target: clicked, clicked: clicked };
       while (el && el !== document.documentElement) {
         if (allowDomFallback && meaningfulDomFallbackTarget(el)) {
           return { target: el, clicked: clicked };
@@ -2328,8 +2418,8 @@ function meaningfulDomFallbackTarget(el) {
     rebuildStyleSheet();
     postOverrides();
   }
-  // Reapply the bounded UI state captured from the URL-loaded twin before
-  // Manual Edit became active. data-od-* stays owned by this srcDoc's bridges.
+  // Reapply the frozen DOM captured from the URL-loaded twin before Manual
+  // Edit became active. srcDoc-only source annotations are retained locally.
   function runtimeStateAttributeAllowed(name){
     return name === 'class' ||
       name === 'style' ||
@@ -2351,50 +2441,154 @@ function meaningfulDomFallbackTarget(el) {
         try { el.removeAttribute(currentName); } catch (_) {}
       }
     }
-    var names = Object.keys(attrs).slice(0, 64);
+    var names = Object.keys(attrs).slice(0, ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributes});
     for (var a = 0; a < names.length; a++) {
       var name = names[a];
       var value = attrs[name];
-      if (!runtimeStateAttributeAllowed(name) || typeof value !== 'string' || value.length > 20000) continue;
+      if (!runtimeStateAttributeAllowed(name) || name.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributeNameLength} || typeof value !== 'string' || value.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributeValueLength}) continue;
       try { el.setAttribute(name, value); } catch (_) {}
     }
   }
+  function runtimeStatePath(el){
+    var path = [];
+    var node = el;
+    while (node && node !== document.body) {
+      var parent = node.parentElement;
+      if (!parent || path.length >= ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathLength}) return null;
+      var index = Array.prototype.indexOf.call(parent.children, node);
+      if (index < 0 || index > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathIndex}) return null;
+      path.unshift(index);
+      node = parent;
+    }
+    return node === document.body ? path : null;
+  }
   function runtimeStateElementAtPath(path){
-    if (!Array.isArray(path) || path.length > 64) return null;
+    if (!Array.isArray(path) || path.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathLength}) return null;
     var node = document.body;
     for (var i = 0; node && i < path.length; i++) {
       var index = Number(path[i]);
-      if (!Number.isInteger(index) || index < 0 || index > 100000) return null;
+      if (!Number.isInteger(index) || index < 0 || index > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathIndex}) return null;
       node = node.children && node.children[index];
     }
     return node || null;
   }
   function runtimeStateElement(entry){
     var el = null;
-    if (entry && typeof entry.id === 'string' && entry.id.length <= 4096) {
+    if (entry && typeof entry.id === 'string' && entry.id.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
       try { el = document.getElementById(entry.id); } catch (_) { el = null; }
     }
-    if (!el && entry && typeof entry.odId === 'string' && entry.odId.length <= 4096) {
+    if (!el && entry && typeof entry.odId === 'string' && entry.odId.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
       try { el = document.querySelector('[data-od-id="' + esc(entry.odId) + '"]'); } catch (_) { el = null; }
     }
     if (!el) el = runtimeStateElementAtPath(entry && entry.path);
     if (!el || String(el.tagName || '').toLowerCase() !== String(entry && entry.tag || '').toLowerCase()) return null;
     return el;
   }
+  function runtimeStateAnnotationElement(annotation){
+    var el = null;
+    var hasStableIdentity = false;
+    if (annotation && typeof annotation.id === 'string' && annotation.id.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
+      hasStableIdentity = true;
+      try { el = document.getElementById(annotation.id); } catch (_) { el = null; }
+      if (!el) return null;
+    }
+    if (annotation && typeof annotation.odId === 'string' && annotation.odId.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
+      var sourcePath = annotation.attrs && annotation.attrs['data-od-source-path'];
+      var generatedOdId = annotation.odId === sourcePath && /^path(?:-[0-9]+)+$/.test(annotation.odId);
+      if (!generatedOdId) hasStableIdentity = true;
+      if (el) {
+        var currentOdId = el.getAttribute && el.getAttribute('data-od-id');
+        // A full-body runtime snapshot may put a different logical screen at
+        // the same DOM path (or even under the same app-shell id). Never copy
+        // the source page's edit identity onto that replacement screen.
+        if (currentOdId && currentOdId !== annotation.odId) return null;
+      } else {
+        try { el = document.querySelector('[data-od-id="' + esc(annotation.odId) + '"]'); } catch (_) { el = null; }
+        // Path-shaped IDs are generated by buildSrcdoc and do not exist in a
+        // URL runtime body's frozen HTML. Fall back to their captured source
+        // path; authored IDs remain hard identity boundaries.
+        if (!el && !generatedOdId) return null;
+      }
+    }
+    if (!el && !hasStableIdentity) el = runtimeStateElementAtPath(annotation && annotation.path);
+    if (!el || String(el.tagName || '').toLowerCase() !== String(annotation && annotation.tag || '').toLowerCase()) return null;
+    return el;
+  }
+  function captureRuntimeStateAnnotations(){
+    if (!document.body) return [];
+    var nodes = document.body.querySelectorAll(
+      '[data-od-source-path], [data-od-id], [data-od-edit], [data-od-label]'
+    );
+    var annotations = [];
+    var count = Math.min(nodes.length, ${PREVIEW_RUNTIME_STATE_LIMITS.maxElements});
+    for (var i = 0; i < count; i++) {
+      var el = nodes[i];
+      var path = runtimeStatePath(el);
+      if (!path) continue;
+      var annotation = {
+        path: path,
+        tag: String(el.tagName || '').toLowerCase(),
+        attrs: Object.create(null)
+      };
+      if (el.id) annotation.id = String(el.id);
+      var odId = el.getAttribute('data-od-id');
+      if (odId) annotation.odId = String(odId);
+      var names = ['data-od-source-path', 'data-od-id', 'data-od-edit', 'data-od-label'];
+      for (var n = 0; n < names.length; n++) {
+        if (el.hasAttribute(names[n])) annotation.attrs[names[n]] = String(el.getAttribute(names[n]) || '');
+      }
+      annotations.push(annotation);
+    }
+    return annotations;
+  }
+  function restoreRuntimeStateAnnotations(annotations){
+    if (!Array.isArray(annotations)) return;
+    for (var i = 0; i < annotations.length; i++) {
+      var annotation = annotations[i];
+      var el = runtimeStateAnnotationElement(annotation);
+      if (!el || !annotation.attrs) continue;
+      var names = Object.keys(annotation.attrs);
+      for (var n = 0; n < names.length; n++) {
+        var name = names[n];
+        if (
+          name !== 'data-od-source-path' &&
+          name !== 'data-od-id' &&
+          name !== 'data-od-edit' &&
+          name !== 'data-od-label'
+        ) continue;
+        // The frozen runtime DOM is authoritative for annotations it already
+        // carries. Source-only markers merely fill gaps on the same logical
+        // element; they must never overwrite a runtime-rendered page identity.
+        if (el.hasAttribute(name)) continue;
+        try { el.setAttribute(name, annotation.attrs[name]); } catch (_) {}
+      }
+    }
+  }
   function restoreRuntimeState(state){
     if (
       !state ||
-      state.version !== 1 ||
+      state.version !== ${PREVIEW_RUNTIME_STATE_VERSION} ||
       !Array.isArray(state.entries) ||
-      state.entries.length > 3500
+      state.entries.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxElements}
     ) return;
-    if (Array.isArray(state.roots) && state.roots.length <= 64) {
+    if (
+      document.body &&
+      typeof state.bodyHtml === 'string' &&
+      state.bodyHtml.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxBodyHtmlLength}
+    ) {
+      // Source annotations describe where an edit must be persisted in the
+      // authored file. The URL document does not carry these srcDoc-only
+      // markers, so retain them across the complete frozen-body replacement.
+      var sourceAnnotations = captureRuntimeStateAnnotations();
+      document.body.innerHTML = state.bodyHtml;
+      restoreRuntimeStateAnnotations(sourceAnnotations);
+    } else if (Array.isArray(state.roots) && state.roots.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxRoots}) {
       var rootHtmlLength = 0;
       for (var r = 0; r < state.roots.length; r++) {
         var root = state.roots[r];
         if (!root || typeof root !== 'object' || typeof root.html !== 'string') continue;
         rootHtmlLength += root.html.length;
-        if (rootHtmlLength > 2097152) break;
+        if (rootHtmlLength > ${PREVIEW_RUNTIME_STATE_LIMITS.maxRootHtmlLength}) break;
         var currentRoot = runtimeStateElement(root);
         if (!currentRoot) continue;
         // Preserve the root node itself: application closures and delegated
@@ -2414,7 +2608,7 @@ function meaningfulDomFallbackTarget(el) {
       if (
         (tag === 'input' || tag === 'textarea' || tag === 'select') &&
         typeof entry.value === 'string' &&
-        entry.value.length <= 100000
+        entry.value.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxValueLength}
       ) {
         try { el.value = entry.value; } catch (_) {}
       }
@@ -2437,36 +2631,81 @@ function meaningfulDomFallbackTarget(el) {
     if (active()) setTimeout(postTargets, 0);
   }
   var runtimeStateRestoreSequence = 0;
-  function cancelScheduledRuntimeStateRestore(){
+  function cancelScheduledRuntimeStateRestore(ev){
+    // Artifact frameworks commonly dispatch synthetic input/change events
+    // while booting. Those are not user intent and must not strand the host's
+    // entry handoff by canceling its final restore acknowledgement.
+    if (!ev || ev.isTrusted !== true) return;
     runtimeStateRestoreSequence += 1;
   }
   // Retried restores help state survive an asynchronous artifact boot, but
   // after the user interacts the live document is authoritative. Invalidate
   // the pending handoff before its rAF/timeout callbacks can replay stale state.
+  // Programmatic scroll events emitted by restoreRuntimeState must not cancel
+  // their own handoff; the iframe remains non-interactive until the final
+  // restore acknowledgement makes it visible.
   document.addEventListener('pointerdown', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('click', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('keydown', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('input', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('change', cancelScheduledRuntimeStateRestore, true);
-  document.addEventListener('scroll', cancelScheduledRuntimeStateRestore, true);
-  function scheduleRuntimeStateRestore(state){
+  function scheduleRuntimeStateRestore(state, onComplete){
     runtimeStateRestoreSequence += 1;
     var sequence = runtimeStateRestoreSequence;
     function restoreIfCurrent(){
-      if (sequence !== runtimeStateRestoreSequence) return;
+      if (sequence !== runtimeStateRestoreSequence) return false;
       restoreRuntimeState(state);
+      return true;
     }
     restoreIfCurrent();
     window.requestAnimationFrame(function(){
       restoreIfCurrent();
-      window.setTimeout(restoreIfCurrent, 80);
+      window.setTimeout(function(){
+        var restored = restoreIfCurrent();
+        // Completion is terminal even when a genuine user interaction canceled
+        // the replay. The host must always be able to retire its inert handoff.
+        if (typeof onComplete === 'function') onComplete(restored);
+      }, 80);
     });
+  }
+  function runtimeStateRestoreGeneration(){
+    if (runtimeStateGeneration) return runtimeStateGeneration;
+    var completionMarker = document.querySelector('template[data-od-srcdoc-transport-body-complete]');
+    return completionMarker
+      ? String(completionMarker.getAttribute('data-od-srcdoc-transport-body-complete') || '')
+      : '';
+  }
+  function postRuntimeStateRestoreReady(){
+    var generation = runtimeStateRestoreGeneration();
+    if (!generation) return;
+    try {
+      window.parent.postMessage({
+        type: 'od:preview-runtime-state-restore-ready',
+        generation: generation
+      }, '*');
+    } catch (_) {}
   }
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || !data.type) return;
     if (data.type === 'od:preview-runtime-state-restore') {
-      scheduleRuntimeStateRestore(data.state);
+      var currentGeneration = runtimeStateRestoreGeneration();
+      if (
+        typeof data.generation !== 'string' ||
+        !data.generation ||
+        data.generation !== currentGeneration
+      ) return;
+      scheduleRuntimeStateRestore(data.state, function(restored){
+        if (typeof data.id !== 'string' || !data.id) return;
+        try {
+          window.parent.postMessage({
+            type: 'od:preview-runtime-state-restored',
+            id: data.id,
+            generation: currentGeneration,
+            outcome: restored ? 'restored' : 'canceled'
+          }, '*');
+        } catch (_) {}
+      });
       return;
     }
     if (data.type === 'od:preview-scroll-capture') {
@@ -2502,7 +2741,28 @@ function meaningfulDomFallbackTarget(el) {
     if (data.type === 'od:comment-active-target') {
       activeCommentElementId = data.elementId ? String(data.elementId) : null;
       activeCommentSelector = data.selector ? String(data.selector) : null;
-      schedulePostActiveCommentTarget();
+      if (data.locate && typeof data.requestId === 'string') {
+        // Saved comments can predate the current annotation identities. Locate
+        // the actual DOM first, then report viewport pixels after scrolling.
+        var target = findCommentTargetByIdentity(activeCommentElementId, activeCommentSelector);
+        // A missing structural path must not scroll to an unrelated element
+        // that inherited the old annotation id. Attribute anchors keep their
+        // existing identity fallback; structural paths require an actual match.
+        if (target && activeCommentSelector && activeCommentSelector.split('>')[0].trim() === 'body') {
+          try { if (!target.matches(activeCommentSelector)) target = null; } catch (_) { target = null; }
+        }
+        var payload = target && targetFrom(target, true, null, null, String(activeCommentElementId).indexOf('cmt:') === 0);
+        if (payload) {
+          try { target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }); } catch (_) {}
+          payload = targetFrom(target, true, null, null, String(activeCommentElementId).indexOf('cmt:') === 0);
+          try { if (payload && activeCommentSelector && target.matches(activeCommentSelector)) payload.selector = activeCommentSelector; } catch (_) {}
+        }
+        window.parent.postMessage(payload
+          ? Object.assign({}, payload, { type: 'od:comment-active-target-update', requestId: data.requestId })
+          : { type: 'od:comment-location-missing', requestId: data.requestId }, '*');
+        schedulePostTargets();
+        schedulePostPreviewScroll();
+      } else schedulePostActiveCommentTarget();
       return;
     }
     if (data.type === 'od:preview-scroll-by') {
@@ -2565,12 +2825,17 @@ function meaningfulDomFallbackTarget(el) {
       return;
     }
   });
+  // The transport head can be challenged and verified before this body-level
+  // bridge has installed its restore listener. Announce the exact generation
+  // only after installation so the host can replay any retained URL snapshot
+  // that an earlier postMessage raced past.
+  postRuntimeStateRestoreReady();
   function pickerActive(){ return inspectEnabled || (commentEnabled && mode === 'picker'); }
   document.addEventListener('mouseover', function(ev){
     if (!pickerActive()) return;
     var result = closestTarget(ev);
     if (!result) return;
-    var payload = targetFrom(result.target, commentEnabled && mode === 'picker' && !inspectEnabled);
+    var payload = targetFrom(result.target, commentEnabled && mode === 'picker' && !inspectEnabled, result.clicked);
     if (!payload || payload.elementId === hoveredId) return;
     hoveredId = payload.elementId;
     window.parent.postMessage(Object.assign({}, payload, { type: 'od:comment-hover' }), '*');

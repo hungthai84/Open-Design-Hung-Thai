@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -11,6 +11,7 @@ import {
   copyResourceTree,
   createMacElectronRebuildOptions,
   renderMacPackagedConfig,
+  toRelativeImportSpecifier,
   validateMacNativeRebuildOutput,
 } from "@/mac/app.js";
 import macBuilderSource from "@/mac/builder.ts?raw";
@@ -73,6 +74,26 @@ afterEach(() => {
   } else {
     process.env.OD_DATA_DIR = envState.odDataDir;
   }
+});
+
+describe("mac prebundle entrypoints", () => {
+  it("canonicalizes symlinked roots before rendering relative imports", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-mac-prebundle-path-"));
+    const physicalRoot = join(root, "physical");
+    const linkedRoot = join(root, "linked");
+    const fromDirectory = join(physicalRoot, "entrypoints");
+    const targetPath = join(physicalRoot, "dist", "entry.js");
+    await mkdir(fromDirectory, { recursive: true });
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, "export {};\n", "utf8");
+    await symlink(physicalRoot, linkedRoot, "dir");
+    try {
+      await expect(toRelativeImportSpecifier(join(linkedRoot, "entrypoints"), targetPath))
+        .resolves.toBe("../dist/entry.js");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
 
 describe("resolveSeededAppConfigPaths", () => {
@@ -366,6 +387,16 @@ describe("runElectronBuilder", () => {
       [
         'import { chmod, mkdir, writeFile } from "node:fs/promises";',
         `const prebuildRoot = ${JSON.stringify(nodePtyPrebuildRoot)};`,
+        `const appRoot = ${JSON.stringify(join(paths.appPath, "Contents", "Resources", "app"))};`,
+        'for (const name of ["sidecar", "platform"]) {',
+        '  const root = appRoot + "/node_modules/@open-design/" + name;',
+        '  await mkdir(root + "/dist", { recursive:true });',
+        '  await writeFile(root + "/package.json", JSON.stringify({name:"@open-design/"+name, main:"dist/index.mjs"}));',
+        '  await writeFile(root + "/dist/index.mjs", "export {};");',
+        '  if (name === "sidecar") await writeFile(root + "/dist/supervisor.mjs", "export {};");',
+        '}',
+        'await writeFile(appRoot + "/main.cjs", "");',
+        'await writeFile(appRoot + "/package.json", "{}");',
         "await mkdir(prebuildRoot, { recursive: true });",
         'await writeFile(new URL("pty.node", `file://${prebuildRoot}/`), Buffer.alloc(32 * 1024, 1));',
         'await writeFile(new URL("spawn-helper", `file://${prebuildRoot}/`), "#!/bin/sh\\nexit 0\\n", "utf8");',
@@ -378,6 +409,7 @@ describe("runElectronBuilder", () => {
     await runElectronBuilder(config, paths, ["dir"]);
 
     return JSON.parse(await readFile(paths.appBuilderConfigPath, "utf8")) as {
+      files: string[];
       afterSign?: string;
       mac?: {
         notarize?: boolean;
@@ -392,6 +424,17 @@ describe("runElectronBuilder", () => {
 
       expect(builderConfig.afterSign).toContain("notarize.cjs");
       expect(builderConfig.mac).not.toHaveProperty("notarize");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("excludes dependency dotenv credentials from the packaged app", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const builderConfig = await prepareElectronBuilderConfig(root, { macNotarize: false });
+
+      expect(builderConfig.files).toEqual(expect.arrayContaining(["!**/.env", "!**/.env.*"]));
     } finally {
       await rm(root, { force: true, recursive: true });
     }

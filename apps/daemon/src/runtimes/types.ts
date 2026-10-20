@@ -71,11 +71,6 @@ export type RuntimeContext = {
   // same Codex Plugin and route itself into another OpenDesign workflow.
   // Operator-wide overrides remain owned by each runtime definition.
   disablePlugins?: boolean;
-  /** Daemon-issued opaque native Child handles for one locked complex Run. */
-  nativeBuildPackageBindings?: readonly {
-    nativeAgentHandle: string;
-    buildPackageId: string;
-  }[];
   /**
    * Enables provider-owned native Child behavior frames for an OD Next mapped
    * Run. Runtime definitions must keep this off for ordinary Runs, and stream
@@ -167,6 +162,18 @@ export type RuntimeAgentDef = {
   compatibilityProbe?: RuntimeCompatibilityProbe;
   helpArgs?: string[];
   capabilityFlags?: Record<string, string>;
+  // Flags the CLI accepts but omits from `--help`, so the substring scan in
+  // `capabilityFlags` can never see them. Probed by invoking each flag with a
+  // value it cannot possibly accept: a build that knows the flag rejects the
+  // *value*, a build that does not rejects the *option*. Both fail before any
+  // model call, which keeps the probe free.
+  hiddenCapabilityFlags?: {
+    // Prefixed to every probe invocation, e.g. `['-p']` for flags that only
+    // exist under a subcommand.
+    probeArgsPrefix: string[];
+    // Flag string -> capability key, same shape as `capabilityFlags`.
+    flags: Record<string, string>;
+  };
   // Adapter reads the composed prompt from a daemon-created temp file.
   // This is intentionally opt-in: stdin-capable adapters keep using
   // `promptViaStdin`, and argv-only adapters keep their argv budget guard
@@ -180,6 +187,12 @@ export type RuntimeAgentDef = {
   // injected into the same stdin without re-spawning the child). Only
   // honored for adapters that also set `promptViaStdin: true`.
   promptInputFormat?: 'text' | 'stream-json';
+  // For whole-prompt stdin adapters (`promptViaStdin: true` with the default
+  // `'text'` input format): the exact bytes the CLI reads from stdin for the
+  // composed prompt, when it wants something other than the raw text (e.g.
+  // Antigravity's one-message NDJSON frame). The result is still handed over
+  // as a complete file-backed stdin at spawn and followed by EOF.
+  encodeStdinPrompt?: (prompt: string) => string;
   eventParser?: string;
   env?: Record<string, string>;
   listModels?: RuntimeListModels;
@@ -332,10 +345,12 @@ export type DetectedAgent = Omit<
   | 'fallbackModels'
   | 'helpArgs'
   | 'capabilityFlags'
+  | 'hiddenCapabilityFlags'
   | 'fallbackBins'
   | 'versionProbeTimeoutMs'
   | 'versionPolicy'
   | 'maxPromptArgBytes'
+  | 'encodeStdinPrompt'
   | 'env'
   // Runtime timeout fields are spawn-time-only hints consumed by chat-run
   // watchdogs. They are not part of the public `/api/agents`

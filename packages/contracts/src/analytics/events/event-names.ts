@@ -25,10 +25,14 @@ export type AnalyticsEventName =
   | 'mcp_tool_finished'
   // Paid media provider request outcome and bounded response retry.
   | 'media_generation_result'
+  // Chat artifact snapshot capture outcome per finished run. Daemon-only;
+  // `source_changed_count` is the correctness alarm inside it.
+  | 'chat_artifact_capture_result'
   // Packaged updater lifecycle
   | 'update_install_result'
   | 'update_check_result'
   | 'update_apply_observed'
+  | 'update_lifecycle_observed'
   // Packaged startup failure — emitted by the packaged MAIN process (not the
   // daemon) when daemon/web sidecars die before reporting status, i.e. the
   // pre-daemon crash class that produces zero telemetry today (issue #4638).
@@ -55,6 +59,7 @@ export type AnalyticsEventName =
   | 'workspace_shared_project_open_result'
   | 'workspace_resource_action_result'
   | 'project_comment_create_result'
+  | 'project_comment_send_result'
   // Message-level conversation forking. Entry clicks stay on `ui_click`;
   // this result event records whether the new conversation was created.
   | 'conversation_fork_result'

@@ -262,6 +262,12 @@ describe('Claude native Child evidence side channel', () => {
       agentCliVersion: '2.1.219 (Claude Code)',
       runtimeAdapterVersion: CLAUDE_CHILD_EVIDENCE_ADAPTER_VERSION,
     });
+    // ⚠️ LEGACY SHAPE, on purpose. These `turn_end`s come from `stop_reason` on
+    // the `assistant` wrapper, which Claude Code 2.1.259 leaves null on every
+    // frame — this fixture is the coverage for older CLIs and argv-compatible
+    // forks that still populate it. For the current shape (stop reason on
+    // `message_delta`) see `w107-claude-turn-boundary-real-cli.test.ts`, which
+    // replays verbatim 2.1.259 recordings.
     expect(mainEvents).toContainEqual({ type: 'turn_end', stopReason: 'tool_use' });
     expect(mainEvents).toContainEqual({ type: 'turn_end', stopReason: 'end_turn' });
   });
@@ -398,12 +404,11 @@ describe('Claude native Child evidence side channel', () => {
     });
   });
 
-  it('attaches a Build Package only through a daemon-owned native agent handle binding', () => {
+  it('records the native agent type without inferring a retired Build Package', () => {
     const facts: ClaudeChildRuntimeFact[] = [];
     const collector = createClaudeChildEvidenceCollector({
       onFact: (fact) => facts.push(fact),
       now: () => 100,
-      nativeBuildPackageBindings: { 'od-package-a': 'package-a' },
     });
     collector.observe({ type: 'system', subtype: 'init', session_id: 'session-package' });
     collector.observe({
@@ -423,9 +428,9 @@ describe('Claude native Child evidence side channel', () => {
       },
     });
 
-    expect(facts[0]).toMatchObject({ buildPackageId: 'package-a' });
+    expect(facts[0]?.buildPackageId).toBeUndefined();
     expect(adapt(facts[0]!)).toMatchObject({
-      attributes: { buildPackageId: 'package-a', nativeAgentType: 'od-package-a' },
+      attributes: { nativeAgentType: 'od-package-a' },
     });
   });
 
