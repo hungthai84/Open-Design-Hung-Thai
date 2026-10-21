@@ -10,7 +10,6 @@ import type {
 } from '@open-design/contracts';
 
 import { listFiles, resolveProjectDir } from './projects.js';
-import { findTouchedLinkedPage } from './artifacts/linked-page-delivery.js';
 
 export type RunDeliverableValidation =
   | 'valid'
@@ -27,8 +26,6 @@ export interface RunDeliverableValidationResult {
   validation: RunDeliverableValidation;
   entryFile?: string;
   artifactKind?: ProjectFileKind;
-  /** Internal syntax-finalization input; entryFile remains the canonical entry. */
-  linkedPage?: string;
 }
 
 interface ValidateRunDeliverableInput {
@@ -40,18 +37,6 @@ interface ValidateRunDeliverableInput {
   /** Exact artifact paths changed by this run. Undefined means the runtime
    *  could not produce a reliable per-file diff (for example contention). */
   touchedPaths?: string[];
-  /** Unambiguous HTML entry observed by the host before this run wrote files. */
-  baselineEntryFile?: string;
-  /** New marker tasks may deliver a separate file without changing the project entry.
-   * Requires exact current-run touched paths; never enables project-wide inference. */
-  allowIndependentOutput?: boolean;
-}
-
-export function inferBaselineHtmlEntry(projectRoot: string, paths: Iterable<string>): string | undefined {
-  const rootHtml = [...paths]
-    .map((file) => path.relative(projectRoot, file).replaceAll(path.sep, '/'))
-    .filter((file) => !file.includes('/') && /\.html?$/i.test(file));
-  return rootHtml.includes('index.html') ? 'index.html' : rootHtml.length === 1 ? rootHtml[0] : undefined;
 }
 
 const PROJECT_KIND_FILE_KINDS: Partial<
@@ -164,63 +149,6 @@ function matchesAcceptedKinds(
 }
 
 /**
- * The two questions a caller can ask about a project's canonical deliverable.
- *
- * `'run'` — did THIS run produce it? Strict on purpose: the answer decides
- * whether the host may accept an Agent's completion claim, so a turn must not
- * be able to pass by pointing at a file an earlier turn wrote.
- *
- * `'project'` — does the user have it, right now? The same filesystem checks
- * without the run-scoped gates. It answers a presentation question ("is there
- * anything to tell the user they lost?"), where the earlier turn's file counts
- * precisely because the user can open it.
- *
- * Splitting them is the whole point: one predicate used to answer both, and
- * the strict answer is the WRONG answer to the loose question. A "继续" turn
- * that verifies finished work and correctly changes nothing scores
- * `no_artifact` under `'run'` — true, and irrelevant to whether the user got
- * their deck.
- */
-export type DeliverableValidationScope = 'run' | 'project';
-
-/** Values `validateProjectDeliverable` can actually produce, narrowed to the
- *  wire union. Run-scoped outcomes are unreachable there; returning null for
- *  one keeps a future enum addition from being reported as a wire value the
- *  client's type does not admit. */
-export function projectDeliverableValidation(
-  validation: RunDeliverableValidation,
-): 'valid' | 'project_missing' | 'entry_missing' | 'entry_unreadable' | 'type_mismatch' | null {
-  switch (validation) {
-    case 'valid':
-    case 'project_missing':
-    case 'entry_missing':
-    case 'entry_unreadable':
-    case 'type_mismatch':
-      return validation;
-    default:
-      return null;
-  }
-}
-
-/**
- * Does this project hold a usable canonical deliverable right now?
- *
- * Same entry resolution, kind contract and readability check as
- * `validateRunDeliverable`, minus every gate that asks about a particular run.
- * Never use it to accept a completion claim — see `DeliverableValidationScope`.
- */
-export async function validateProjectDeliverable(
-  input: Omit<ValidateRunDeliverableInput, 'runStatus' | 'artifactCount' | 'touchedPaths'>,
-): Promise<RunDeliverableValidationResult> {
-  return resolveDeliverable({
-    ...input,
-    runStatus: 'succeeded',
-    artifactCount: 1,
-    scope: 'project',
-  });
-}
-
-/**
  * Resolve and verify the one canonical file a successful run can deliver.
  *
  * `artifactCount` proves this run touched output; it does not prove the
@@ -230,25 +158,10 @@ export async function validateProjectDeliverable(
 export async function validateRunDeliverable(
   input: ValidateRunDeliverableInput,
 ): Promise<RunDeliverableValidationResult> {
-  const primary = await resolveDeliverable({ ...input, scope: 'run' });
-  if (primary.valid || !input.allowIndependentOutput || !input.touchedPaths?.length
-    || !['entry_missing', 'entry_not_touched', 'type_mismatch'].includes(primary.validation)) {
-    return primary;
-  }
-  return resolveDeliverable({ ...input, scope: 'run', independentOutput: true });
-}
-
-async function resolveDeliverable(
-  input: ValidateRunDeliverableInput & { scope: DeliverableValidationScope; independentOutput?: boolean },
-): Promise<RunDeliverableValidationResult> {
-  const runScoped = input.scope === 'run';
-  if (runScoped && input.runStatus !== 'succeeded') {
+  if (input.runStatus !== 'succeeded') {
     return { valid: false, validation: 'not_succeeded' };
   }
-  if (
-    runScoped
-    && (!Number.isFinite(input.artifactCount) || input.artifactCount <= 0)
-  ) {
+  if (!Number.isFinite(input.artifactCount) || input.artifactCount <= 0) {
     return { valid: false, validation: 'no_artifact' };
   }
   if (!input.projectId) {
@@ -270,27 +183,11 @@ async function resolveDeliverable(
     return { valid: false, validation: 'project_missing' };
   }
 
-  const touched = new Set((input.touchedPaths ?? []).flatMap((candidate) => {
-    if (typeof candidate !== 'string' || !candidate) return [];
-    const relative = path.relative(projectRoot, path.resolve(projectRoot, candidate));
-    return !relative || relative.startsWith('..') || path.isAbsolute(relative)
-      ? [] : [relative.replaceAll(path.sep, '/')];
-  }));
-  if (input.independentOutput) files = files.filter(file => touched.has(filePath(file)));
-  const acceptedKinds = input.independentOutput ? null : acceptedDeliverableKinds(input.projectMetadata);
-  const isPrototype = projectKind(input.projectMetadata) === 'prototype';
-  const declared = input.independentOutput ? null : safeRelativeFile(input.projectMetadata?.entryFile);
-  const baselineEntry = !input.independentOutput && isPrototype && input.touchedPaths
-    ? safeRelativeFile(input.baselineEntryFile)
-    : null;
-  const motionSources = input.projectMetadata?.intent === 'motion-design'
-    ? files.filter((file) => file.kind === 'html')
-    : [];
-  const motionSource = motionSources.length === 1 ? motionSources[0] : null;
+  const acceptedKinds = acceptedDeliverableKinds(input.projectMetadata);
+  const declared = safeRelativeFile(input.projectMetadata?.entryFile);
   const selected = declared
     ? files.find((file) => filePath(file) === declared) ?? null
-    : (baselineEntry ? files.find((file) => filePath(file) === baselineEntry) ?? null : null)
-      ?? motionSource ?? inferredEntry(files, acceptedKinds);
+    : inferredEntry(files, acceptedKinds);
   if (!selected) {
     return { valid: false, validation: 'entry_missing' };
   }
@@ -300,20 +197,93 @@ async function resolveDeliverable(
     entryFile,
     artifactKind: selected.kind,
   };
-  let linkedPage: string | null = null;
-  if (runScoped && input.touchedPaths) {
+  if (input.touchedPaths) {
+    const touched = new Set(
+      input.touchedPaths.flatMap((candidate) => {
+        if (typeof candidate !== 'string' || !candidate) return [];
+        const absolute = path.isAbsolute(candidate)
+          ? path.resolve(candidate)
+          : path.resolve(projectRoot, candidate);
+        const relative = path.relative(projectRoot, absolute);
+        if (
+          !relative
+          || relative.startsWith('..')
+          || path.isAbsolute(relative)
+        ) {
+          return [];
+        }
+        return [relative.replaceAll(path.sep, '/')];
+      }),
+    );
     if (!touched.has(entryFile)) {
-      if (isPrototype && selected.kind === 'html') {
-        linkedPage = await findTouchedLinkedPage({
-          projectRoot,
-          entryFile,
-          htmlPaths: new Set(files.filter((file) => file.kind === 'html').map(filePath)),
-          touchedPaths: touched,
-        });
+      // Export-only tasks: the declared entry is intentionally left stale, but a
+      // touched artifact with a complete explicit manifest is a valid deliverable
+      // regardless of the project's declared kind. The candidate must (a) be
+      // touched in this run, (b) carry a persisted (non-inferred) manifest, (c)
+      // have status `complete`, (d) its manifest must be bound to the file's
+      // own path, and (e) the manifest must declare an export task (i.e. carry
+      // a `metadata.task` string). The task marker is what distinguishes a true
+      // export run from a normal prototype run that happens to have a stale
+      // entry and a touched secondary artifact — without it, an ordinary
+      // prototype run would bypass the `entry_not_touched` contract.
+      const exportCandidates = files.filter((file) => {
+        const candidatePath = filePath(file);
+        const manifest = file.artifactManifest;
+        if (!manifest || manifest.status !== 'complete') return false;
+        if (typeof manifest.entry !== 'string' || manifest.entry !== candidatePath) return false;
+        // Only consider artifacts with an explicit persisted manifest, not
+        // inferred legacy manifests that every .html/.md file receives.
+        if (manifest.metadata?.inferred === true) return false;
+        // Require an export task marker so a normal prototype run (whose
+        // touched secondary artifact might still have a complete manifest)
+        // does not bypass the `entry_not_touched` contract.
+        if (typeof manifest.metadata?.task !== 'string' || manifest.metadata.task.length === 0) {
+          return false;
+        }
+        return touched.has(candidatePath);
+      });
+
+      for (const candidate of exportCandidates) {
+        const candidatePath = filePath(candidate);
+        const manifest = candidate.artifactManifest!;
+        // Map the manifest's ArtifactKind namespace to ProjectFileKind so the
+        // result field carries the user-meaningful value. ArtifactKind in
+        // @open-design/contracts only enumerates the eight accepted persisted
+        // kinds (html, deck, react-component, markdown-document, svg, diagram,
+        // code-snippet, mini-app, design-system); the only one that maps to a
+        // different ProjectFileKind is markdown-document → document. Other
+        // manifests (code-snippet, html, ...) report the file-extension kind
+        // directly without rewriting.
+        const candidateArtifactKind: ProjectFileKind =
+          manifest.kind === 'markdown-document' ? 'document' : candidate.kind;
+
+        try {
+          const target = path.resolve(projectRoot, candidatePath);
+          const relative = path.relative(projectRoot, target);
+          if (relative.startsWith('..') || path.isAbsolute(relative)) {
+            continue;
+          }
+          const stat = await fs.stat(target);
+          if (!stat.isFile()) {
+            continue;
+          }
+          const handle = await fs.open(target, 'r');
+          await handle.close();
+          return {
+            valid: true,
+            validation: 'valid',
+            entryFile: candidatePath,
+            artifactKind: candidateArtifactKind,
+          };
+        } catch {
+          continue;
+        }
       }
-      if (!linkedPage) {
-        return { valid: false, validation: 'entry_not_touched', ...facts };
-      }
+      return {
+        valid: false,
+        validation: 'entry_not_touched',
+        ...facts,
+      };
     }
   }
   if (!matchesAcceptedKinds(acceptedKinds, selected.kind)) {
@@ -330,12 +300,6 @@ async function resolveDeliverable(
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
       return { valid: false, validation: 'entry_unreadable', ...facts };
     }
-    if (input.independentOutput) {
-      const realRelative = path.relative(await fs.realpath(projectRoot), await fs.realpath(target));
-      if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
-        return { valid: false, validation: 'entry_unreadable', ...facts };
-      }
-    }
     const stat = await fs.stat(target);
     if (!stat.isFile()) {
       return { valid: false, validation: 'entry_unreadable', ...facts };
@@ -350,6 +314,5 @@ async function resolveDeliverable(
     valid: true,
     validation: 'valid',
     ...facts,
-    ...(linkedPage ? { linkedPage } : {}),
   };
 }
