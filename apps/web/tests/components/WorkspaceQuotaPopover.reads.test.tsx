@@ -120,3 +120,58 @@ it('E12 failure keeps skeleton until data arrives; later failed refresh retains 
   expect(screen.queryByText('$0.00')).toBeNull();
   expect(calls()).toBeGreaterThan(beforeFailure);
 });
+
+it('UI-002 projects scoped server quota windows, including exhausted zero and null reset', async () => {
+  const go = workspaceContextFixture({ workspaceId: 'a', workspaceMemberId: 'member-a', role: 'owner' });
+  read = async () => Response.json({
+    ...response(go, '24'),
+    workspaceSnapshot: {
+      schemaVersion: 1,
+      billingScopeVersion: 2,
+      workspaceId: 'a',
+      workspaceMemberId: 'member-a',
+      billing: { billingState: 'active', planId: 'team_go' },
+      wallet: { balanceUsd: '24', expiresAt: null, updatedAt: null },
+      designPlanWindows: [
+        { kind: '5h', windowStart: null, resetsAt: null, remainingCredits: '0', limitCredits: '1000000000000000000' },
+        { kind: '7d', windowStart: null, resetsAt: '2026-10-23T00:00:00Z', remainingCredits: '750000', limitCredits: '1000000' },
+      ],
+      revisions: { billing: 'b1', wallet: 'w1' },
+    },
+  });
+  await act(async () => { render(<Harness context={go} />); });
+  const bars = screen.getAllByRole('progressbar');
+  expect(bars).toHaveLength(2);
+  expect(bars.map(bar => bar.getAttribute('aria-valuenow'))).toEqual(['0', '75']);
+  expect(screen.queryByText(/Details unavailable|明细暂不可用/)).toBeNull();
+  expect(screen.getAllByText(/Resets at|重置/)).toHaveLength(1);
+});
+
+it('UI-002 leaves empty or zero-limit windows unavailable and clamps over-limit balances', () => {
+  const go = workspaceContextFixture({ workspaceId: 'a', workspaceMemberId: 'member-a', role: 'owner' });
+  const billingResponse: WorkspaceBillingResponse = {
+    ...response(go, '24'),
+    workspaceSnapshot: {
+      schemaVersion: 1,
+      billingScopeVersion: 2,
+      workspaceId: 'a',
+      workspaceMemberId: 'member-a',
+      billing: { billingState: 'active', planId: 'team_go' },
+      wallet: { balanceUsd: '24', expiresAt: null, updatedAt: null },
+      designPlanWindows: [
+        { kind: '5h', windowStart: null, resetsAt: null, remainingCredits: '0', limitCredits: '0' },
+      ],
+      revisions: { billing: 'b1', wallet: 'w1' },
+    },
+  };
+  expect(workspaceQuotaView({ context: go, response: billingResponse, tier: 'team_go' }).windows).toBeNull();
+  const snapshot = billingResponse.workspaceSnapshot!;
+  expect(workspaceQuotaView({ context: go, response: {
+    ...billingResponse, workspaceSnapshot: { ...snapshot, designPlanWindows: [] },
+  }, tier: 'team_go' }).windows).toBeNull();
+  expect(workspaceQuotaView({ context: go, response: {
+    ...billingResponse, workspaceSnapshot: { ...snapshot, designPlanWindows: [
+      { kind: '5h', windowStart: null, resetsAt: null, remainingCredits: '200', limitCredits: '100' },
+    ] },
+  }, tier: 'team_go' }).windows?.[0]?.remainingPercent).toBe(100);
+});

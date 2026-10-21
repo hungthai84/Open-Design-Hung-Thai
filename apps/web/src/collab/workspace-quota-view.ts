@@ -48,16 +48,29 @@ export function workspaceQuotaView({ context, response, tier, balanceUsd }: {
   const scopedTier = snapshotTier || context?.planId?.trim()
     || (context?.billingState === 'free' ? 'free' : null)
     || (response == null ? tier : null);
+  const mappedWindows = snapshot?.designPlanWindows?.flatMap((window) => {
+    if (window.kind !== '5h' && window.kind !== '7d') return [];
+    if (!/^\d+$/.test(window.remainingCredits) || !/^\d+$/.test(window.limitCredits)) return [];
+    const remaining = BigInt(window.remainingCredits);
+    const limit = BigInt(window.limitCredits);
+    if (limit === 0n) return [];
+    // Clamp before converting to Number so even untrusted large decimal strings
+    // produce a bounded, finite percentage.
+    const boundedRemaining = remaining > limit ? limit : remaining;
+    const basisPoints = Number((boundedRemaining * 10_000n) / limit);
+    return [{
+      durationSeconds: window.kind === '5h' ? 18_000 : 604_800,
+      remainingPercent: Math.round(basisPoints / 100),
+      resetsAt: window.resetsAt,
+    }];
+  });
   return {
     tier: workspaceQuotaTier(scopedTier),
     planKnown: Boolean(scopedTier?.trim()),
     loading: balance == null && !response?.workspaceBalance && !response?.workspaceSnapshot,
     balanceUsd: balance,
-    // The current v1 snapshot parser does not expose these
-    // optional fields. Account summary / personal Coding Plan are not substitutes.
-    // Keep unavailable until the daemon exposes the agreed workspace schema.
     planStatus: null,
-    windows: null,
+    windows: mappedWindows?.length ? mappedWindows : null,
     breakdown: null,
     modelRestriction: null,
   };
