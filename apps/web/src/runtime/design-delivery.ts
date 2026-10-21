@@ -4,7 +4,7 @@ import {
   containsUnrenderableQuestionForm,
 } from '../artifacts/question-form';
 import type { AgentEvent, ChatMessage } from '../types';
-import { hasFileMutationToolUse } from './file-ops';
+import { hasFileMutationToolUse, extractSimpleBashDeletes, classifyToolName } from './file-ops';
 import { unfinishedTodosFromEvents } from './todos';
 
 /**
@@ -38,69 +38,6 @@ function hasErroredFileMutation(events: AgentEvent[] | undefined): boolean {
     }
   }
   return false;
-}
-
-// ── Helpers copied from file-ops.ts (keep design-delivery self-contained) ───────
-function classifyToolName(name: string): 'write' | 'edit' | 'delete' | null {
-  if (name === 'Write' || name === 'create_file') return 'write';
-  if (name === 'Edit' || name === 'str_replace_edit' || name === 'MultiEdit' || name === 'multi_edit') return 'edit';
-  if (name === 'Delete' || name === 'delete' || name === 'delete_file' || name === 'remove_file' || name === 'rm_file' || name === 'unlink_file') return 'delete';
-  return null;
-}
-
-function extractSimpleBashDeletes(input: unknown): string[] {
-  if (!input || typeof input !== 'object') return [];
-  const command = (input as { command?: unknown }).command;
-  if (typeof command !== 'string' || !command.trim()) return [];
-  const tokens = shellWords(command);
-  const paths: string[] = [];
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i]!;
-    if (token !== 'rm' && token !== 'unlink') continue;
-    const commandPaths: string[] = [];
-    for (let j = i + 1; j < tokens.length; j += 1) {
-      const next = tokens[j]!;
-      if (isShellSeparator(next)) break;
-      if (token === 'rm' && next.startsWith('-')) continue;
-      if (looksUnsafeForFileList(next)) continue;
-      commandPaths.push(next);
-    }
-    paths.push(...commandPaths);
-  }
-  return [...new Set(paths)];
-}
-
-function shellWords(command: string): string[] {
-  const words: string[] = [];
-  let current = '';
-  let quote: '"' | "'" | null = null;
-  const flushCurrent = () => { if (current) { words.push(current); current = ''; } };
-  for (let i = 0; i < command.length; i += 1) {
-    const char = command[i]!;
-    if (quote) {
-      if (char === quote) { quote = null; }
-      else if (quote === '"' && char === '\\' && i + 1 < command.length) { i += 1; current += command[i]!; }
-      else { current += char; }
-      continue;
-    }
-    if (char === '"' || char === "'") { quote = char; continue; }
-    if (/\s/.test(char)) { flushCurrent(); continue; }
-    if (char === '&' || char === '|') { flushCurrent(); words.push(char); continue; }
-    if (char === ';' || char === '(' || char === ')') { flushCurrent(); words.push(char); continue; }
-    if (char === '<' || char === '>') { flushCurrent(); words.push(char); continue; }
-    current += char;
-  }
-  flushCurrent();
-  return words;
-}
-
-function isShellSeparator(token: string): boolean {
-  return token === '&&' || token === '||' || token === ';' || token === '|' || token === '&';
-}
-
-function looksUnsafeForFileList(token: string): boolean {
-  if (!token || token === '/' || token === '.' || token === '..') return true;
-  return /[*?[\]{}$`<>|&;]/.test(token);
 }
 
 export type DesignDeliveryOutcome =
@@ -226,6 +163,11 @@ export function resolveDesignDeliveryOutcome(
     return 'delivered';
   }
   if (input.persistenceFailed) return 'delivery_failed';
+  // A succeeded Design turn whose only output is a closed, unparseable
+  // <question-form> is a protocol error that must not be treated as a
+  // successful text answer. Restore the unrenderable-question gate that
+  // main runs immediately after persistenceFailed.
+  if (containsUnrenderableQuestionForm(input.content)) return 'no_result';
   // A zero-mutation, text-only turn is a report-only result (image
   // analysis, audit-style reports). A mutation-only turn with no new files
   // — e.g. Bash `rm stale.html` or an in-place Edit that doesn't add files —
