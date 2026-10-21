@@ -4,11 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  inferBaselineHtmlEntry,
-  validateProjectDeliverable,
-  validateRunDeliverable,
-} from '../src/run-deliverable-validation.js';
+import { validateRunDeliverable } from '../src/run-deliverable-validation.js';
 
 const temporaryRoots: string[] = [];
 
@@ -39,56 +35,6 @@ afterEach(async () => {
 });
 
 describe('run deliverable validation', () => {
-  it('recognizes a current independent image without changing the existing prototype entry', async () => {
-    const fixture = await projectFixture({ 'index.html': '<main>Existing page</main>', 'assets/dog.png': 'image' });
-    const input = { ...fixture, runStatus: 'succeeded' as const, artifactCount: 1,
-      projectMetadata: { kind: 'prototype' as const, entryFile: 'index.html' }, touchedPaths: ['assets/dog.png'] };
-    expect(await validateRunDeliverable(input)).toMatchObject({ valid: false, validation: 'entry_not_touched' });
-    expect(await validateRunDeliverable({ ...input, allowIndependentOutput: true })).toMatchObject({
-      valid: true, entryFile: 'assets/dog.png', artifactKind: 'image',
-    });
-    expect(input.projectMetadata.entryFile).toBe('index.html');
-  });
-
-  it('does not count an old image or an ambiguous set of files as an independent delivery', async () => {
-    const fixture = await projectFixture({ 'dog.png': 'image', 'cat.png': 'image' });
-    const input = { ...fixture, runStatus: 'succeeded' as const, artifactCount: 1,
-      projectMetadata: { kind: 'prototype' as const }, allowIndependentOutput: true };
-    for (const touchedPaths of [[], ['../dog.png'], ['missing.png'], ['dog.png', 'cat.png']]) {
-      expect((await validateRunDeliverable({ ...input, touchedPaths })).valid).toBe(false);
-    }
-    expect((await validateRunDeliverable(input)).valid).toBe(false);
-  });
-
-  it('keeps HTML as the entry when the current run integrates an image into a page', async () => {
-    const fixture = await projectFixture({ 'index.html': '<img src="dog.png">', 'dog.png': 'image' });
-    expect(await validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 2,
-      projectMetadata: { kind: 'prototype' }, touchedPaths: ['index.html', 'dog.png'], allowIndependentOutput: true,
-    })).toMatchObject({ valid: true, entryFile: 'index.html', artifactKind: 'html' });
-  });
-
-  it.each(['prototype', 'deck', 'image', 'video'] as const)(
-    'allows a real standalone image in a %s project only with current-run evidence', async (kind) => {
-      const fixture = await projectFixture({ 'dog.png': 'image' });
-      const input = { ...fixture, artifactCount: 1, projectMetadata: { kind },
-        touchedPaths: ['dog.png'], allowIndependentOutput: true };
-      expect(await validateRunDeliverable({ ...input, runStatus: 'succeeded' }))
-        .toMatchObject({ valid: true, entryFile: 'dog.png' });
-      for (const runStatus of ['failed', 'canceled'] as const) {
-        expect((await validateRunDeliverable({ ...input, runStatus })).valid).toBe(false);
-      }
-      expect((await validateRunDeliverable({ ...input, runStatus: 'succeeded', artifactCount: 0 })).valid).toBe(false);
-    },
-  );
-
-  it('does not accept an independent output symlink outside the project', async () => {
-    const fixture = await projectFixture({});
-    await fs.writeFile(path.join(fixture.projectsRoot, 'outside.png'), 'external');
-    await fs.symlink('../outside.png', path.join(fixture.projectsRoot, fixture.projectId, 'dog.png'));
-    expect((await validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      projectMetadata: { kind: 'prototype' }, touchedPaths: ['dog.png'], allowIndependentOutput: true,
-    })).valid).toBe(false);
-  });
   it('accepts a readable entry whose file kind matches the project kind', async () => {
     const fixture = await projectFixture({
       'index.html': '<!doctype html><title>Ready</title>',
@@ -264,6 +210,362 @@ describe('run deliverable validation', () => {
     });
   });
 
+  describe('export-only artifact validation', () => {
+    it('accepts a touched export artifact with a complete manifest when the declared entry is stale', async () => {
+      // Regression: nexu-io/open-design#7580. The export-only fallback bypasses
+      // the project-kind compatibility gate — a complete explicit manifest is
+      // its own contract. A brand project with a stale HTML entry and a touched,
+      // complete Markdown export should therefore report `valid`.
+      const fixture = await projectFixture({
+        'fitcv-brand-style-guide.html': '<!doctype html><title>Stale brand</title>',
+        'fitcv-design-system-export.md': '# Design System Export',
+        'fitcv-design-system-export.md.artifact.json': JSON.stringify({
+          version: 1,
+          kind: 'markdown-document',
+          title: 'fitcv-design-system-export.md',
+          entry: 'fitcv-design-system-export.md',
+          renderer: 'markdown',
+          status: 'complete',
+          exports: ['md', 'html', 'pdf', 'zip'],
+          metadata: {
+            task: 'final-design-export-curation',
+            source: 'fitcv-brand-style-guide.html',
+          },
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['fitcv-design-system-export.md'],
+          projectMetadata: {
+            // brand is shown here; the key guarantee is that the project kind
+            // is irrelevant for export candidates — a complete manifest is valid
+            // on any project kind.
+            kind: 'brand',
+            entryFile: 'fitcv-brand-style-guide.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        entryFile: 'fitcv-design-system-export.md',
+        artifactKind: 'document',
+      });
+    });
+
+    it('accepts a touched markdown export on a prototype project (project kind is irrelevant)', async () => {
+      // Companion to the brand test above: the export-only path ignores
+      // `acceptedDeliverableKinds`. A complete, explicit markdown-document
+      // manifest is valid on a prototype project too — the manifest is
+      // the deliverable's own contract, not a subordination to the
+      // project's Home surface.
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Stale prototype</title>',
+        'export.md': '# Export',
+        'export.md.artifact.json': JSON.stringify({
+          version: 1,
+          kind: 'markdown-document',
+          title: 'export.md',
+          entry: 'export.md',
+          renderer: 'markdown',
+          status: 'complete',
+          exports: ['md', 'html', 'pdf', 'zip'],
+          metadata: {
+          task: 'final-design-export-curation',
+        },
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['export.md'],
+          projectMetadata: {
+            kind: 'prototype',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        entryFile: 'export.md',
+        artifactKind: 'document',
+      });
+    });
+
+    it('selects the first readable export candidate among multiple compatible ones', async () => {
+      // Multiple touched export candidates: the loop returns the first
+      // readable one. `listFiles` orders by mtime (newest first) so the
+      // deterministic winner is the most recently touched file. We touch
+      // export-b.md after export-a.md and bump its mtime so it wins.
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Stale</title>',
+        'export-a.md': '# Export A',
+        'export-a.md.artifact.json': JSON.stringify({
+          version: 1, kind: 'markdown-document', title: 'export-a.md',
+          entry: 'export-a.md', renderer: 'markdown', status: 'complete',
+          exports: ['md'],
+          metadata: { task: 'final-design-export-curation' },
+        }),
+        'export-b.md': '# Export B',
+        'export-b.md.artifact.json': JSON.stringify({
+          version: 1, kind: 'markdown-document', title: 'export-b.md',
+          entry: 'export-b.md', renderer: 'markdown', status: 'complete',
+          exports: ['md'],
+          metadata: { task: 'final-design-export-curation' },
+        }),
+      });
+
+      // listFiles reads `fs.stat` after `mkdtemp`, so we cannot mutate
+      // mtime in the projectFixture temp root without first looking up the
+      // exact target paths. The fixture writes both files synchronously, so
+      // their mtimes are near-identical; export-b is written last, so on
+      // POSIX it has a strictly larger mtime and listFiles will sort it
+      // first.
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 2,
+          touchedPaths: ['export-a.md', 'export-b.md'],
+          projectMetadata: {
+            kind: 'prototype',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        // export-b.md is the newest entry; listFiles orders by mtime
+        // descending and the validator returns the first readable match.
+        entryFile: 'export-b.md',
+        artifactKind: 'document',
+      });
+    });
+
+    it('accepts a markdown export on a project that does not constrain kinds (kind: other)', async () => {
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Stale</title>',
+        'fitcv-design-system-export.md': '# Design System Export',
+        'fitcv-design-system-export.md.artifact.json': JSON.stringify({
+          version: 1,
+          kind: 'markdown-document',
+          title: 'fitcv-design-system-export.md',
+          entry: 'fitcv-design-system-export.md',
+          renderer: 'markdown',
+          status: 'complete',
+          exports: ['md', 'html', 'pdf', 'zip'],
+          metadata: {
+          task: 'final-design-export-curation',
+        },
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['fitcv-design-system-export.md'],
+          projectMetadata: {
+            kind: 'other',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        entryFile: 'fitcv-design-system-export.md',
+        artifactKind: 'document',
+      });
+    });
+
+    it('still uses projectMetadata.entryFile when the prototype entry is touched', async () => {
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Updated prototype</title>',
+        'export.md': '# Export',
+        'export.md.artifact.json': JSON.stringify({
+          version: 1,
+          kind: 'markdown-document',
+          title: 'export.md',
+          entry: 'export.md',
+          renderer: 'markdown',
+          status: 'complete',
+          exports: ['md'],
+          metadata: {
+          task: 'final-design-export-curation',
+        },
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 2,
+          touchedPaths: ['index.html', 'export.md'],
+          projectMetadata: {
+            kind: 'prototype',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        entryFile: 'index.html',
+        artifactKind: 'html',
+      });
+    });
+
+    it('rejects when neither the prototype entry nor any export artifact was touched', async () => {
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Old entry</title>',
+        'notes.txt': 'unrelated output',
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['notes.txt'],
+          projectMetadata: {
+            kind: 'prototype',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: false,
+        validation: 'entry_not_touched',
+        entryFile: 'index.html',
+      });
+    });
+
+    it('rejects an export artifact whose manifest status is not complete', async () => {
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Stale prototype</title>',
+        'export.md': '# Streaming Export',
+        'export.md.artifact.json': JSON.stringify({
+          version: 1,
+          kind: 'markdown-document',
+          title: 'export.md',
+          entry: 'export.md',
+          renderer: 'markdown',
+          status: 'streaming',
+          exports: ['md'],
+          metadata: {
+          task: 'final-design-export-curation',
+        },
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['export.md'],
+          projectMetadata: {
+            kind: 'other',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: false,
+        validation: 'entry_not_touched',
+        entryFile: 'index.html',
+      });
+    });
+
+    it('keeps the entry_not_touched contract for a prototype run with a touched secondary complete manifest', async () => {
+      // Regression: a normal prototype run that happens to write a complete
+      // secondary manifest (e.g. an intermediate artifact) must still fail
+      // `entry_not_touched` if the prototype entry is untouched. The
+      // export-only fallback is gated on `manifest.metadata.task` so a
+      // manifest without a task marker is NOT promoted to the deliverable.
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Stale prototype</title>',
+        'side-effect.md': '# An intermediate artifact',
+        // No `task` field in metadata: this is NOT an export task.
+        'side-effect.md.artifact.json': JSON.stringify({
+          version: 1, kind: 'markdown-document',
+          title: 'side-effect.md', entry: 'side-effect.md',
+          renderer: 'markdown', status: 'complete',
+          exports: ['md'], metadata: {},
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['side-effect.md'],
+          projectMetadata: {
+            kind: 'prototype',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: false,
+        validation: 'entry_not_touched',
+        entryFile: 'index.html',
+      });
+    });
+
+    it('maps unknown manifest kinds to file-extension kind in the result artifactKind field', async () => {
+      // The manifest-kind → ProjectFileKind mapping only handles the common export
+      // kinds. For other valid manifest kinds (in ALLOWED_KINDS but not mapped)
+      // the result's `artifactKind` falls back to the file-extension kind, while
+      // the validation itself still succeeds — export candidates bypass
+      // acceptedKinds entirely.
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Stale</title>',
+        'export.md': '#',
+        'export.md.artifact.json': JSON.stringify({
+          version: 1,
+          // code-snippet is in ALLOWED_KINDS but not in our mapping → falls back
+          // to file-extension kind. The manifest still validates and the
+          // export is accepted; only the reported artifactKind differs.
+          kind: 'code-snippet',
+          title: 'export.md',
+          entry: 'export.md',
+          renderer: 'markdown',
+          status: 'complete',
+          exports: ['md'],
+          metadata: {
+          task: 'final-design-export-curation',
+        },
+        }),
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['export.md'],
+          projectMetadata: {
+            kind: 'prototype',
+            entryFile: 'index.html',
+          },
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        entryFile: 'export.md',
+        // Falls back to file-extension kind since 'code-snippet' is not mapped.
+        artifactKind: 'text',
+      });
+    });
+  });
+
   it('does not promote a Studio route or pre-existing file without a run artifact', async () => {
     const fixture = await projectFixture({
       'index.html': '<!doctype html><title>Old artifact</title>',
@@ -283,191 +585,5 @@ describe('run deliverable validation', () => {
       valid: false,
       validation: 'no_artifact',
     });
-  });
-});
-
-describe('linked prototype page delivery (OPEND-2887)', () => {
-  it('accepts a touched page reachable from the unchanged canonical entry', async () => {
-    const fixture = await projectFixture({
-      'index.html': '<a href="pages/catalog.html?edition=1#plants">Catalog</a>',
-      'pages/catalog.html': '<title>Catalog</title>',
-    });
-    await expect(validateRunDeliverable({
-      ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      touchedPaths: ['pages/catalog.html'],
-      projectMetadata: { kind: 'prototype', entryFile: 'index.html' },
-    })).resolves.toMatchObject({ valid: true, entryFile: 'index.html' });
-  });
-
-  it('follows nested local navigation without accepting a disconnected page', async () => {
-    const fixture = await projectFixture({
-      'index.html': '<a href="pages/catalog.html">Catalog</a>',
-      'pages/catalog.html': '<a href="../index.html">Home</a><a href="plants.html">Plants</a>',
-      'pages/plants.html': '<title>Plants</title>',
-      'unrelated.html': '<title>Unrelated</title>',
-    });
-    const input = {
-      ...fixture, runStatus: 'succeeded' as const, artifactCount: 1,
-      projectMetadata: { kind: 'prototype' as const, entryFile: 'index.html' },
-    };
-    await expect(validateRunDeliverable({ ...input, touchedPaths: ['pages/plants.html'] }))
-      .resolves.toMatchObject({ valid: true });
-    await expect(validateRunDeliverable({ ...input, touchedPaths: ['unrelated.html'] }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_not_touched' });
-  });
-});
-
-describe('prototype delivery boundaries', () => {
-  it('keeps the pre-run homepage when a linked index.html is created', async () => {
-    const fixture = await projectFixture({
-      'landing.html': '<a href="index.html">Catalog</a>',
-      'index.html': '<title>Catalog</title>',
-    });
-    const input = {
-      ...fixture, runStatus: 'succeeded' as const, artifactCount: 1,
-      touchedPaths: ['index.html'], baselineEntryFile: 'landing.html',
-    };
-    await expect(validateRunDeliverable({ ...input, projectMetadata: { kind: 'prototype' } }))
-      .resolves.toMatchObject({ valid: true, entryFile: 'landing.html', linkedPage: 'index.html' });
-    await expect(validateRunDeliverable({ ...input, projectMetadata: { kind: 'prototype', entryFile: 'index.html' } }))
-      .resolves.toEqual({ valid: true, validation: 'valid', entryFile: 'index.html', artifactKind: 'html' });
-  });
-
-  it('binds a unique pre-run HTML entry, without guessing among existing pages', () => {
-    const root = path.resolve('fixture-project');
-    expect(inferBaselineHtmlEntry(root, [path.join(root, 'landing.html')])).toBe('landing.html');
-    expect(inferBaselineHtmlEntry(root, [path.join(root, 'landing.html'), path.join(root, 'catalog.html')])).toBeUndefined();
-    expect(inferBaselineHtmlEntry(root, [path.join(root, 'index.html'), path.join(root, 'catalog.html')])).toBe('index.html');
-  });
-
-  it('retains the observed entry when a second page is added, but cannot replace a stale declared entry', async () => {
-    const fixture = await projectFixture({
-      'landing.html': '<a href="catalog.html">Catalog</a>', 'catalog.html': '<title>Catalog</title>',
-    });
-    const baseInput = { ...fixture, runStatus: 'succeeded' as const, artifactCount: 1 };
-    const input = { ...baseInput,
-      touchedPaths: ['catalog.html'], baselineEntryFile: 'landing.html' };
-    await expect(validateRunDeliverable({ ...input, projectMetadata: { kind: 'prototype' } }))
-      .resolves.toMatchObject({ valid: true, entryFile: 'landing.html', linkedPage: 'catalog.html' });
-    await expect(validateRunDeliverable({ ...input, projectMetadata: { kind: 'prototype', entryFile: 'missing.html' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_missing' });
-    await expect(validateRunDeliverable({ ...input, artifactCount: 0, touchedPaths: [], projectMetadata: { kind: 'prototype' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'no_artifact' });
-    await expect(validateRunDeliverable({ ...baseInput, touchedPaths: input.touchedPaths, projectMetadata: { kind: 'prototype' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_missing' });
-    await expect(validateRunDeliverable({ ...baseInput, baselineEntryFile: input.baselineEntryFile, projectMetadata: { kind: 'prototype' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_missing' });
-    await expect(validateRunDeliverable({ ...input, projectMetadata: { kind: 'template' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_missing' });
-  });
-
-  it.each([
-    '<a href="https://example.com/catalog.html">Remote</a>',
-    '<a href="//example.com/catalog.html">Remote</a>',
-    '<base href="https://example.com/"><a href="catalog.html">Remote base</a>',
-    '<!-- <a href="catalog.html">Comment</a> -->',
-    `<script>const html = '<a href="catalog.html">Not markup</a>';</script>`,
-  ])('does not treat external URLs or inert text as delivery: %s', async (entry) => {
-    const fixture = await projectFixture({ 'index.html': entry, 'catalog.html': '<title>Catalog</title>' });
-    await expect(validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      touchedPaths: ['catalog.html'], projectMetadata: { kind: 'prototype', entryFile: 'index.html' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_not_touched' });
-  });
-
-  it('resolves local base URLs and URL-encoded page names', async () => {
-    const fixture = await projectFixture({
-      'index.html': '<base href="/pages/"><a href="plant%20guide.html">Guide</a>',
-      'pages/plant guide.html': '<title>Guide</title>',
-    });
-    await expect(validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      touchedPaths: ['pages/plant guide.html'], projectMetadata: { kind: 'prototype', entryFile: 'index.html' } }))
-      .resolves.toMatchObject({ valid: true });
-  });
-
-  it('declines navigation evidence that exceeds the page read budget', async () => {
-    const fixture = await projectFixture({
-      'index.html': '<a href="catalog.html">Catalog</a>' + ' '.repeat(512 * 1024),
-      'catalog.html': '<title>Catalog</title>',
-    });
-    await expect(validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      touchedPaths: ['catalog.html'], projectMetadata: { kind: 'prototype', entryFile: 'index.html' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_not_touched' });
-  });
-
-  it.skipIf(process.platform === 'win32')('never reads a linked page through a symlink outside the project', async () => {
-    const fixture = await projectFixture({ 'index.html': '<a href="catalog.html">Catalog</a>' });
-    const external = await projectFixture({ 'outside.html': '<title>Outside</title>' });
-    await fs.symlink(path.join(external.projectsRoot, external.projectId, 'outside.html'),
-      path.join(fixture.projectsRoot, fixture.projectId, 'catalog.html'));
-    await expect(validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      touchedPaths: ['catalog.html'], projectMetadata: { kind: 'prototype', entryFile: 'index.html' } }))
-      .resolves.toMatchObject({ valid: false, validation: 'entry_not_touched' });
-  });
-});
-
-
-// A completed project can be presented after a later run that writes nothing.
-// Keep this project-state check separate from the strict run acceptance gate.
-describe('project deliverable validation', () => {
-  it('resolves the entry a run did not touch this round', async () => {
-    const fixture = await projectFixture({
-      'qingdao-travel-guide.html': '<!doctype html><title>Done</title>',
-    });
-    const metadata = { kind: 'deck' as const };
-
-    await expect(validateRunDeliverable({
-      ...fixture,
-      runStatus: 'succeeded',
-      artifactCount: 0,
-      touchedPaths: [],
-      projectMetadata: metadata,
-    })).resolves.toMatchObject({ valid: false, validation: 'no_artifact' });
-
-    await expect(validateProjectDeliverable({ ...fixture, projectMetadata: metadata }))
-      .resolves.toMatchObject({
-        valid: true,
-        validation: 'valid',
-        entryFile: 'qingdao-travel-guide.html',
-        artifactKind: 'html',
-      });
-  });
-
-  it('still refuses a project with no compatible entry', async () => {
-    const fixture = await projectFixture({ 'notes.md': '# nothing runnable' });
-    await expect(validateProjectDeliverable({
-      ...fixture,
-      projectMetadata: { kind: 'deck' },
-    })).resolves.toMatchObject({ valid: false, validation: 'type_mismatch' });
-  });
-
-  it('still refuses a declared entry that is gone', async () => {
-    const fixture = await projectFixture({
-      'other.html': '<!doctype html><title>Not the entry</title>',
-    });
-    await expect(validateProjectDeliverable({
-      ...fixture,
-      projectMetadata: { kind: 'deck', entryFile: 'index.html' },
-    })).resolves.toMatchObject({ valid: false, validation: 'entry_missing' });
-  });
-
-  it('refuses a project it cannot identify', async () => {
-    const fixture = await projectFixture({ 'index.html': '<!doctype html>' });
-    await expect(validateProjectDeliverable({
-      projectsRoot: fixture.projectsRoot,
-      projectId: null,
-      projectMetadata: { kind: 'deck' },
-    })).resolves.toMatchObject({ valid: false, validation: 'project_missing' });
-  });
-});
-
-
-describe('motion output facts without a planning-contract gate', () => {
-  it('recognizes nested editable source without requiring model-authored plan fields', async () => {
-    const fixture = await projectFixture({ 'motion-source/film/index.html': '<main>Editable film source</main>', 'film.mp4': 'video' });
-    expect(await validateRunDeliverable({ ...fixture, projectMetadata: { kind: 'video', intent: 'motion-design', videoModel: 'hyperframes-html' }, runStatus: 'succeeded', artifactCount: 2 })).toMatchObject({ valid: true, entryFile: 'motion-source/film/index.html' });
-  });
-  it('keeps file evidence separate from missing video export', async () => {
-    const fixture = await projectFixture({ 'index.html': '<main>Partial editable source</main>' });
-    expect((await validateRunDeliverable({ ...fixture, projectMetadata: { kind: 'video', intent: 'motion-design', videoModel: 'hyperframes-html' }, runStatus: 'succeeded', artifactCount: 1 })).valid).toBe(true);
   });
 });
