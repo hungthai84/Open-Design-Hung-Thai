@@ -188,6 +188,32 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 }
 
 describe('od run CLI', () => {
+  describe.each(['start', 'redesign'])('%s reasoning parity', (command) => {
+    it.each(['low', 'medium', 'high', 'xhigh'])('forwards explicit reasoning %s', async (reasoning) => {
+      stub = await startRunStubServer(true);
+      const result = await runCli([
+        'run', command, '--project', 'project-1', '--agent', 'codex',
+        '--model', 'gpt-6.1-sol', '--reasoning', reasoning,
+        '--daemon-url', stub.baseUrl,
+      ]);
+      expect(result.code, result.stderr).toBe(0);
+      const request = stub.requests.find((request) => request.method === 'POST' && request.url === '/api/runs');
+      expect(request).toBeDefined();
+      expect(JSON.parse(request!.body)).toMatchObject({
+        projectId: 'project-1', agentId: 'codex', model: 'gpt-6.1-sol', reasoning,
+      });
+    });
+
+    it('preserves defaults when reasoning is omitted', async () => {
+      stub = await startRunStubServer(true);
+      const result = await runCli(['run', command, '--project', 'project-1', '--daemon-url', stub.baseUrl]);
+      expect(result.code, result.stderr).toBe(0);
+      const request = stub.requests.find((request) => request.method === 'POST' && request.url === '/api/runs');
+      expect(request).toBeDefined();
+      expect(JSON.parse(request!.body)).not.toHaveProperty('reasoning');
+    });
+  });
+
   it('keeps one --skill backward compatible and sends multiple ids canonically', async () => {
     stub = await startRunStubServer(true);
     const single = await runCli([
