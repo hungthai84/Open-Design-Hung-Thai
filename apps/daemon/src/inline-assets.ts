@@ -370,7 +370,9 @@ export function resolveProjectRelativePath(
   ownerFileName: string,
   assetRef: string,
 ): string | null {
-  if (/^(?:https?:|data:|blob:|mailto:|tel:|#|\/)/i.test(assetRef)) return null;
+  // URL parsing trims leading C0/space and treats backslashes as separators.
+  const referenceStart = assetRef.replace(/^[\u0000-\u0020]+/, '');
+  if (/^(?:https?:|data:|blob:|mailto:|tel:|#|[\\/])/i.test(referenceStart)) return null;
   try {
     const url = new URL(assetRef, `https://od.local/${baseDirFor(ownerFileName)}`);
     if (url.origin !== 'https://od.local') return null;

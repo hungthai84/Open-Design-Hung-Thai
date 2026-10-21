@@ -510,6 +510,45 @@ describe('GET /api/projects/:id/export/*?inline=1 route', () => {
     expect($('script').is('[defer]')).toBe(true);
   });
 
+  it('preserves decoded backslash-rooted URLs through the export route', async () => {
+    const id = 'export-backslash-rooted';
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id, name: id, metadata: { kind: 'prototype', entryFile: 'index.html' },
+        skipDiscoveryBrief: true,
+      }),
+    });
+    expect(created.status).toBe(200);
+
+    for (const [name, content] of [
+      ['index.html', '<link rel="stylesheet" href="&#92;app.css">' +
+        '<script src="&#x5c;app.js"></script><script src="sibling.js"></script>'],
+      ['app.css', '.wrong-project-root{color:red}'],
+      ['app.js', 'window.OD_WRONG_PROJECT_ROOT = true;'],
+      ['sibling.js', 'window.OD_RELATIVE_SIBLING = true;'],
+    ]) {
+      const written = await fetch(`${baseUrl}/api/projects/${id}/files`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, content, encoding: 'utf8' }),
+      });
+      expect(written.status).toBe(200);
+      expect(await written.json()).toMatchObject({ file: { name } });
+    }
+
+    const response = await fetch(`${baseUrl}/api/projects/${id}/export/index.html?inline=1`);
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    const $ = load(body);
+    expect($('link').attr('href')).toBe('\\app.css');
+    expect($('script[src]').attr('src')).toBe('\\app.js');
+    expect($('style')).toHaveLength(0);
+    expect(body).not.toContain('OD_WRONG_PROJECT_ROOT');
+    expect(body).toContain('window.OD_RELATIVE_SIBLING = true;');
+  });
+
   beforeAll(async () => {
     const started = (await startServer({ port: 0, returnServer: true })) as {
       url: string;
