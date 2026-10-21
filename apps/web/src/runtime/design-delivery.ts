@@ -226,6 +226,10 @@ export function resolveDesignDeliveryOutcome(
     return 'delivered';
   }
   if (input.persistenceFailed) return 'delivery_failed';
+  // A closed but unparseable question-form should not be treated as a
+  // successful text answer — it must fall through to `no_result` so the user
+  // can still retry, matching the behavior after rebase onto main (#3b0df90).
+  if (containsUnrenderableQuestionForm(input.content)) return 'no_result';
   // A zero-mutation, text-only turn is a report-only result (image
   // analysis, audit-style reports). A mutation-only turn with no new files
   // — e.g. Bash `rm stale.html` or an in-place Edit that doesn't add files —
