@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { readFundingFixture } from './workspace-funding-fixture.ts';
+import { readFundingFixture, readFundingRuntimeFixture } from './workspace-funding-fixture.ts';
 import { verifyFundingLease, withFundingLease } from './workspace-funding-lease.ts';
 import { T } from '../timeouts.ts';
 
@@ -27,7 +27,7 @@ async function recordOdSource(e2eRoot: string, output: string) {
     'lib/tools-dev/runtime.ts', 'ui/workspace-funding-sandbox.test.ts', 'playwright.config.ts',
     'lib/playwright/notice.config.ts', 'lib/playwright/workspace-notice-fixture.ts', 'ui/workspace-notice-sandbox.test.ts',
     'lib/playwright/free-wallet.config.ts', 'lib/playwright/workspace-free-wallet-fixture.ts', 'ui/workspace-free-wallet-sandbox.test.ts',
-    'lib/playwright/workspace-switch.config.ts', 'lib/playwright/workspace-switch-fixture.ts', 'ui/workspace-switch-billing-sandbox.test.ts'];
+    'lib/playwright/workspace-switch.config.ts', 'lib/playwright/workspace-switch-fixture.ts', 'ui/workspace-switch-billing-sandbox.test.ts', 'lib/playwright/depletion.config.ts', 'lib/playwright/workspace-depletion-fixture.ts', 'ui/workspace-depletion-sandbox.test.ts'];
   const sources = await Promise.all(files.map(async path => ({ path, sha256: hash(await readFile(join(e2eRoot, path))) })));
   return { odHead: head.stdout.trim(), trackedDiffPaths: names.stdout.trim().split('\n').filter(Boolean),
     trackedDiffSha256: hash(diff.stdout), sourceDigest: hash(JSON.stringify(sources)), sources };
@@ -74,7 +74,7 @@ export async function runFundingCommand(args: string[], cwd: string, env: NodeJS
 // This explicit entrypoint borrows an existing canonical server-owner lease.
 // It never controls AMR lifecycle and never acquires a replacement lock.
 async function main() {
-  const fixture = await readFundingFixture();
+  const fixture = process.env.OD_FUNDING_CASE==='run005'?await readFundingRuntimeFixture():await readFundingFixture();
   const output = process.env.OD_FUNDING_EVIDENCE_DIR;
   if (!output || !isAbsolute(output)) throw new Error('Explicit absolute OD_FUNDING_EVIDENCE_DIR required');
   await mkdir(output, { recursive: false, mode: 0o700 });
@@ -100,7 +100,8 @@ async function main() {
       const e2eRoot = fileURLToPath(new URL('../..', import.meta.url));
       const args = ['pnpm', 'exec', 'playwright', 'test', '-c', 'lib/playwright/funding.config.ts'];
       const selection = process.env.OD_FUNDING_CASE;
-      if (selection === 'ws005') {
+      if(selection==='run005'){args[args.length-1]='lib/playwright/depletion.config.ts';}
+      else if (selection === 'ws005') {
         args[args.length - 1] = 'lib/playwright/workspace-switch.config.ts';
       } else if (selection === 'view021' || selection === 'view021-after') {
         args[args.length - 1] = 'lib/playwright/free-wallet.config.ts';
