@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { discoveryObservation, discoveryObservationForRun, observeDiscoveryEvent, preserveDiscoveryObservation } from '../../../src/strategies/od-next/discovery-observation.js';
 import { singleSkillShellRead } from '../../../src/strategies/od-next/skill-shell-read.js';
 const skillRoot = '/bundle/scenarios/od-next-strategy/assets/task-profiles';
@@ -74,5 +78,70 @@ describe('Discovery observation is evidence, not selection or completion', () =>
   });
   it('does not infer a reuse or new load merely from native continuation', () => {
     expect(discoveryObservation([{ ...policy, data: { ...policy.data, injected: false } }])).toMatchObject({ skill_discovery_enabled: true, skill_discovery_policy_injected: false, skill_ids_loaded: [] });
+  });
+});
+
+
+describe('compound shell Skill reads', () => {
+  it('observes the final single-file read after literal diagnostic commands', () => {
+    for (const command of [
+      `pwd && ls -la && cat "${skillRoot}/document.md"`,
+      `ls -la; echo 'reading; not a separator'; cat -- "${skillRoot}/document.md"`,
+      `/bin/zsh -lc 'pwd && /bin/cat "${skillRoot}/document.md"'`,
+    ]) {
+      expect(singleSkillShellRead(command)).toBe(`${skillRoot}/document.md`);
+      const shell = { event: 'agent', data: { type: 'tool_use', name: 'Bash', id: 'compound', input: { command } } };
+      expect(discoveryObservation([policy, shell, result('compound')])).toMatchObject({
+        skill_ids_loaded: ['document'],
+        skill_load_events: [expect.objectContaining({ status: 'loaded', content_coverage: 'unknown' })],
+      });
+      expect(discoveryObservation([policy, shell, result('compound', 'failed', true)]).skill_ids_loaded).toEqual([]);
+      expect(discoveryObservation([policy, shell]).skill_ids_loaded).toEqual([]);
+      expect(discoveryObservation([policy, shell, { event: 'agent', data: { type: 'tool_result', toolUseId: 'compound', content: 'not confirmed' } }]).skill_ids_loaded).toEqual([]);
+    }
+  });
+
+  it('does not infer reads across scripts, pipelines, substitutions, or trailing commands', () => {
+    for (const command of [
+      `pwd || cat ${skillRoot}/document.md`, `pwd & cat ${skillRoot}/document.md`,
+      `pwd; cat ${skillRoot}/document.md; echo done`, `pwd && cat ${skillRoot}/document.md | head`,
+      `echo 'cat ${skillRoot}/document.md'`, `cd /tmp; cat ${skillRoot}/document.md`,
+      `false; cat ${skillRoot}/document.md`, `cat ${skillRoot}/ppt.md; cat ${skillRoot}/document.md`,
+      `echo $(pwd); cat ${skillRoot}/document.md`, `pwd # ; cat ${skillRoot}/document.md`,
+      `ls > /tmp/list; cat ${skillRoot}/document.md`, `pwd &&`, `; cat ${skillRoot}/document.md`,
+      `pwd; cat ${skillRoot}/document.md ${skillRoot}/ppt.md`,
+      `pwd; cat ${skillRoot}/document.md\necho done`,
+    ]) expect(singleSkillShellRead(command), command).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('records real local shell execution without turning a failed or unfinished read into loaded', () => {
+    const root = mkdtempSync(join(tmpdir(), 'od-skill-observer-'));
+    const trustedRoot = join(root, 'od-next-strategy/assets/task-profiles');
+    mkdirSync(trustedRoot, { recursive: true });
+    writeFileSync(join(trustedRoot, 'document.md'), '# Document rules\nRead all of these rules.\n');
+    try {
+      for (const prefix of ['pwd && ls -la &&', "ls -la; echo 'reading';"]) {
+        const command = `${prefix} cat -- "${trustedRoot}/document.md"`;
+        const execution = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8', cwd: root });
+        expect(execution.status).toBe(0);
+        expect(execution.stdout).toContain('# Document rules');
+        const value = discoveryObservation([
+          { ...policy, data: { ...policy.data, skillRoot: trustedRoot } },
+          { event: 'agent', data: { type: 'tool_use', name: 'Bash', id: 'real', input: { command } } },
+          { event: 'agent', data: { type: 'tool_result', toolUseId: 'real', content: execution.stdout, isError: execution.status !== 0 } },
+        ]);
+        expect(value.skill_ids_loaded).toEqual(['document']);
+        expect(value.skill_load_events).toEqual([expect.objectContaining({ content_coverage: 'unknown' })]);
+      }
+      rmSync(join(trustedRoot, 'document.md'));
+      const command = `pwd; cat "${trustedRoot}/document.md"`;
+      const failed = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8', cwd: root });
+      expect(failed.status).not.toBe(0);
+      expect(discoveryObservation([
+        { ...policy, data: { ...policy.data, skillRoot: trustedRoot } },
+        { event: 'agent', data: { type: 'tool_use', name: 'Bash', id: 'failed', input: { command } } },
+        { event: 'agent', data: { type: 'tool_result', toolUseId: 'failed', content: failed.stdout + failed.stderr, isError: true } },
+      ])).toMatchObject({ skill_ids_loaded: [], skill_load_events: [expect.objectContaining({ status: 'failed' })] });
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

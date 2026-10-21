@@ -1,5 +1,5 @@
 import { DELIVERABLE_SKILL_CATALOG_VERSION, DELIVERABLE_SKILLS } from '@open-design/contracts';
-import { singleSkillShellRead } from './skill-shell-read.js';
+import { skillShellRead } from './skill-shell-read.js';
 
 type Event = { event?: string; data?: unknown };
 type Load = { skill_id: string; version: string; tool_use_id: string; source: 'file_read' | 'shell_read'; status: 'requested' | 'loaded' | 'failed' | 'unknown'; content_coverage?: 'complete' | 'unknown' };
@@ -9,6 +9,7 @@ const MAX_LOADS = 128;
 function createObserver() {
   const reads = new Map<string, Load>();
   const ranged = new Set<string>();
+  const compound = new Set<string>();
   let enabled = false;
   let injected = false;
   let partial = false;
@@ -24,8 +25,9 @@ function createObserver() {
       }
       if (data.type === 'tool_use' && typeof data.id === 'string') {
         const input = data.input as Record<string, unknown> | undefined;
-        const shellFile = ['Bash', 'exec_command'].includes(String(data.name))
-          ? singleSkillShellRead(input?.command ?? input?.cmd) : undefined;
+        const shellRead = ['Bash', 'exec_command'].includes(String(data.name))
+          ? skillShellRead(input?.command ?? input?.cmd) : undefined;
+        const shellFile = shellRead?.path;
         const rawFile = shellFile ?? input?.filePath ?? input?.file_path ?? input?.path;
         const file = typeof rawFile === 'string' ? rawFile.replaceAll('\\', '/') : undefined;
         const match = file ? /\/od-next-strategy\/assets\/task-profiles\/([a-z-]+)\.md$/.exec(file) : null;
@@ -35,6 +37,7 @@ function createObserver() {
           if (!reads.has(data.id)) reads.set(data.id, { skill_id: skill.id, version: skill.version,
             tool_use_id: data.id, source: shellFile ? 'shell_read' : 'file_read', status: 'requested' });
           if (input?.offset !== undefined || input?.limit !== undefined || input?.start_line !== undefined || input?.end_line !== undefined) ranged.add(data.id);
+          if (shellRead?.compound) compound.add(data.id);
         } else if (JSON.stringify(input ?? {}).includes('/task-profiles/')) partial = true;
       }
       if (data.type === 'tool_result' && typeof data.toolUseId === 'string') {
@@ -42,10 +45,11 @@ function createObserver() {
         if (!read) return;
         read.status = data.isError === true ? 'failed'
           : typeof data.content !== 'string' || !data.content.trim() || ranged.has(data.toolUseId)
+            || (compound.has(data.toolUseId) && data.isError !== false)
             ? 'unknown' : 'loaded';
         // Some adapters truncate only the observability copy after a successful
         // native Read. Record that real event, but never claim full body coverage.
-        read.content_coverage = read.status === 'loaded' && typeof data.content === 'string'
+        read.content_coverage = read.status === 'loaded' && !compound.has(data.toolUseId) && typeof data.content === 'string'
           && !/\[truncated\]|output truncated|lines? omitted|\[REDACTED:/i.test(data.content)
           ? 'complete' : 'unknown';
       }
