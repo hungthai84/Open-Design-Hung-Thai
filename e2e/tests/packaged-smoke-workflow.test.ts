@@ -2030,7 +2030,13 @@ process.stdin.on("end", () => {
       .map(([file]) => file)
       .sort();
 
-    expect(playwrightConfig).toContain("testIgnore: 'visual-*.test.ts'");
+    const explicitIgnores = playwrightConfig.match(/testIgnore:\s*\[([^\]]*)\]/)?.[1];
+    expect(explicitIgnores, "Keep visual ownership and private real-service lanes outside the generic UI pool").toBeDefined();
+    expect([...explicitIgnores!.matchAll(/'([^']+)'/g)].map((match) => match[1])).toEqual([
+      "visual-*.test.ts", "workspace-funding-sandbox.test.ts", "workspace-concurrency-sandbox.test.ts",
+      "workspace-concurrency-retry-sandbox.test.ts", "workspace-api-wallet-sandbox.test.ts",
+      "workspace-api-wallet-readback-sandbox.test.ts",
+    ]);
     expect(benchmarkWorkflow).toContain("  workflow_call:");
     expect(benchmarkWorkflow).toContain('description: "Exact git ref to validate. Prerelease passes its resolved build commit."');
     expect(benchmarkWorkflow).toContain("ref: ${{ inputs.ref || github.sha }}");
