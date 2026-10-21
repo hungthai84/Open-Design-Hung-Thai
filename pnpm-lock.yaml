@@ -848,6 +848,9 @@ importers:
 
   tools/dev:
     dependencies:
+      '@open-design/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@open-design/platform':
         specifier: workspace:*
         version: link:../../packages/platform

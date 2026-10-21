@@ -1,5 +1,7 @@
-const CLI_COMMANDS = new Set(["start", "run", "status", "stop", "restart", "logs", "inspect", "check", "help"]);
+const CLI_COMMANDS = new Set(["start", "run", "status", "stop", "restart", "logs", "inspect", "check", "verify", "help"]);
 const OPTIONS_WITH_VALUE = new Set([
+  "--trace-id",
+  "--odeval-profile",
   "--daemon-port",
   "--env-file",
   "--expr",

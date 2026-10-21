@@ -16,7 +16,8 @@
     "@open-design/platform": "workspace:*",
     "@open-design/sidecar": "workspace:*",
     "@open-design/sidecar-proto": "workspace:*",
-    "cac": "6.7.14"
+    "cac": "6.7.14",
+    "@open-design/contracts": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.12.2",

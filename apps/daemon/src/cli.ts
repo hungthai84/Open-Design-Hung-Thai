@@ -407,6 +407,7 @@ const SUBCOMMAND_MAP = {
   brand: runBrand,
   brands: runBrand,
   project: runProject,
+  telemetry: runTelemetry,
   strategy: runStrategy,
   workspace: runWorkspace,
   automation: runAutomation,
@@ -656,6 +657,17 @@ function printStrategyRolloutStatus(status) {
   console.log(`Requested mode\t${status.requestedMode}`);
   if (status.requestedModeSource) console.log(`Requested by\t${status.requestedModeSource}`);
   console.log(`Effective mode\t${status.effectiveMode}`);
+}
+
+async function runTelemetry(args) {
+  const usage = 'Usage: od telemetry status [--daemon-url <url>] [--json]';
+  if (args.includes('--help') || args.includes('-h')) { console.log(usage); return; }
+  if (args[0] !== 'status') throw new Error(usage);
+  const flags = parseFlags(args.slice(1), { string: STRATEGY_STRING_FLAGS, boolean: STRATEGY_BOOLEAN_FLAGS });
+  const base = (await cliDaemonUrl(flags)).replace(/\/$/, '');
+  const response = await fetch(`${base}/api/telemetry/diagnostics`, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) return structuredHttpFailure(response);
+  console.log(JSON.stringify(await response.json(), null, 2));
 }
 
 async function runStrategy(args) {

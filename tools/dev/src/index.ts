@@ -1,3 +1,4 @@
+import { readTelemetryStatus, queryOdevalTrace, verifyTelemetryTrace, telemetrySummary } from './telemetry.js';
 import { spawn } from "node:child_process";
 import { lstat, mkdir, open, readdir, rm, symlink, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -974,6 +975,18 @@ async function status(config: ToolDevConfig, appName: string | undefined) {
   return { apps, namespace: config.namespace, status: summarizeStatus(apps) };
 }
 
+async function checkTelemetry(config: ToolDevConfig, traceId?: string) {
+  const runtime = await inspectDaemonRuntime(runtimeLookup(config));
+  return { ...await readTelemetryStatus(runtime?.url ?? null, traceId), namespace: config.namespace,
+    configuration: { loadedFiles: localEnvResult.loadedFiles, scope: 'current_cli_invocation',
+      note: 'Environment files affect newly started processes; restart the daemon after changing configuration.' } };
+}
+
+async function reportTelemetryAfterStart(config: ToolDevConfig): Promise<void> {
+  const result = await checkTelemetry(config);
+  process.stderr.write(`${telemetrySummary(result)}\n`);
+}
+
 async function restartTargets(config: ToolDevConfig, appName: string | undefined, options: CliOptions) {
   if (appName === APP_KEYS.DAEMON) return await restartDaemon(config, options);
   const stopTargets = resolveStopApps(appName);
@@ -1128,6 +1141,7 @@ async function runForeground(config: ToolDevConfig, appName: string | undefined,
   });
   const started = await runSequential(targets, (target) => startApp(config, target, foregroundOptions, { targets }));
   printRunForegroundResult(started, options);
+  if (targets.includes(APP_KEYS.DAEMON)) await reportTelemetryAfterStart(config);
 
   let shuttingDown = false;
   const keepAlive = setInterval(() => undefined, 60_000);
@@ -1190,6 +1204,7 @@ addPortOptions(addSharedOptions(cli.command("start [app]", "Start daemon, web, d
         (target) => startApp(config, target, startOptions, { targets }),
       );
       printStartResult(result, startOptions);
+      if (targets.includes(APP_KEYS.DAEMON)) await reportTelemetryAfterStart(config);
     },
   );
 
@@ -1202,7 +1217,13 @@ addPortOptions(addSharedOptions(cli.command("run [app]", "Start apps and keep th
 
 addSharedOptions(cli.command("status [app]", "Show app status for daemon, web, desktop, or all")).action(
   async (appName: string | undefined, options: CliOptions) => {
-    printStatusResult(await status(resolveToolDevConfig(options), appName), options, appName);
+    const config = resolveToolDevConfig(options);
+    const result = await status(config, appName);
+    if (appName == null || appName === APP_KEYS.DAEMON) {
+      const telemetry = await checkTelemetry(config);
+      printStatusResult({ ...result, telemetry }, options, appName);
+      if (!options.json) process.stdout.write(`${telemetrySummary(telemetry)}\n`);
+    } else printStatusResult(result, options, appName);
   },
 );
 
@@ -1218,7 +1239,9 @@ addSharedOptions(cli.command("stop [app]", "Stop daemon, web, desktop, or all wh
 addPortOptions(addSharedOptions(cli.command("restart [app]", "Restart daemon, web, desktop, or all when app is omitted"))).action(
   async (appName: string | undefined, options: CliOptions) => {
     assertSupportedNodeRuntimeForStart();
-    printRestartResult(await restartTargets(resolveToolDevConfig(options), appName, options), options);
+    const config = resolveToolDevConfig(options);
+    printRestartResult(await restartTargets(config, appName, options), options);
+    if (appName == null || appName === APP_KEYS.DAEMON) await reportTelemetryAfterStart(config);
   },
 );
 
@@ -1248,6 +1271,12 @@ addSharedOptions(
 addSharedOptions(cli.command("check [app]", "Print status and recent logs for quick diagnostics")).action(
   async (appName: string | undefined, options: CliOptions) => {
     const config = resolveToolDevConfig(options);
+    if (appName === 'telemetry') {
+      const result = await checkTelemetry(config);
+      output(result, options);
+      if (result.status !== 'ready') process.exitCode = 1;
+      return;
+    }
     const targets = resolveTargetApps(appName, DEFAULT_START_APPS);
     const apps = Object.fromEntries(
       await Promise.all(targets.map(async (target) => [target, await inspectAppStatus(config, target)] as const)),
@@ -1255,15 +1284,33 @@ addSharedOptions(cli.command("check [app]", "Print status and recent logs for qu
     const logs = Object.fromEntries(
       await Promise.all(targets.map(async (target) => [target, await readLogs(config, target)] as const)),
     );
-    printCheckResult({ apps, diagnostics: createLogDiagnostics(logs), logs, namespace: config.namespace }, options);
+    const telemetry = await checkTelemetry(config);
+    printCheckResult({ apps, diagnostics: createLogDiagnostics(logs), logs, namespace: config.namespace, telemetry }, options);
+    if (!options.json) process.stdout.write(`${telemetrySummary(telemetry)}\n`);
   },
 );
+
+addSharedOptions(cli.command('verify <target>', 'Verify an exact local Task trace through ODEval (read-only)'))
+  .option('--trace-id <id>', 'Persisted local exporter Trace ID')
+  .option('--odeval-profile <name>', 'Existing ODEval query profile')
+  .action(async (target: string, options: CliOptions & { traceId?: string; odevalProfile?: string }) => {
+    if (target !== 'telemetry' || !options.traceId) throw new Error('Usage: tools-dev verify telemetry --trace-id <id>');
+    const check = await checkTelemetry(resolveToolDevConfig(options), options.traceId);
+    const local = check.diagnostics?.recentTasks.find((task) => task.traceId === options.traceId);
+    const verification = check.status !== 'ready'
+      ? { status: 'configuration_not_ready', reason: check.diagnostics?.blockedReason ?? check.status, traceId: options.traceId }
+      : local
+      ? await verifyTelemetryTrace(local, (id) => queryOdevalTrace(id, options.odevalProfile))
+      : { status: 'local_trace_not_found', traceId: options.traceId };
+    output({ namespace: check.namespace, configurationStatus: check.status, verification }, options);
+    if (verification.status !== 'verified') process.exitCode = 1;
+  });
 
 cli.help();
 
 const rawCliArgs = process.argv.slice(2);
 const cliArgs = rawCliArgs[0] === "--" ? rawCliArgs.slice(1) : rawCliArgs;
-loadWorkspaceLocalEnv({
+const localEnvResult = loadWorkspaceLocalEnv({
   args: cliArgs,
   log: (message) => process.stderr.write(`${message}\n`),
   workspaceRoot: WORKSPACE_ROOT,

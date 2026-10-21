@@ -44,6 +44,7 @@ describe("tools-dev CLI argument rewriting", () => {
   });
 
   it("preserves explicit commands", () => {
+    assert.deepEqual(rewriteCliArgsForDefaultStart(["verify", "telemetry", "--trace-id", "t"]), ["verify", "telemetry", "--trace-id", "t"]);
     assert.deepEqual(rewriteCliArgsForDefaultStart(["status", "--json"]), ["status", "--json"]);
     assert.deepEqual(rewriteCliArgsForDefaultStart(["--namespace", "demo", "logs"]), ["--namespace", "demo", "logs"]);
   });

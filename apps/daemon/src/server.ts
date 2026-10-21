@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { registerTelemetryDiagnosticsRoutes } from './routes/telemetry-diagnostics.js';
+import { readTelemetryDiagnostics } from './observability/telemetry-diagnostics.js';
 import { assertCommentFileNotPending } from './collab/comment-file-retirements.js';
 import { captureJsonBodySize } from './http/json-body-size.js';
 
@@ -8416,6 +8418,11 @@ export async function startServer({
         langfuse_attempt_count: 0,
       });
     },
+  });
+  registerTelemetryDiagnosticsRoutes(app, {
+    requireLocalDaemonRequest,
+    readDiagnostics: async (traceId) => readTelemetryDiagnostics(db,
+      (await readAppConfig(RUNTIME_DATA_DIR)).telemetry ?? {}, taskObservationRollout.diagnostic(), traceId),
   });
   console.info(
     '[telemetry] effective task observation rollout',

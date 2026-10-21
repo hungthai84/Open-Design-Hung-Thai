@@ -534,6 +534,8 @@ describe('task observation rollout', () => {
       ],
     });
     expect(batch.filter((event) => event.type === 'span-create')).toHaveLength(1);
+    expect(db.prepare('SELECT trace_id, protocol FROM strategy_task_trace_receipts WHERE task_execution_id = ?').get('task-1'))
+      .toEqual({ trace_id: 'strategy-task:task-1', protocol: 'legacy-v1' });
   });
 
   it('rebuilds safe Run quality from durable facts before exporting the Task payload', async () => {
@@ -2034,6 +2036,12 @@ describe('task observation rollout', () => {
     const body = String(fetchImpl.mock.calls[0]![1]!.body);
     expect(body).toContain('synthetic-test');
     expect(body).toContain('od-next-task-v1');
+    const sent = JSON.parse(body);
+    const sentTraceId = exporterMode === 'otlp'
+      ? sent.resourceSpans[0].scopeSpans[0].spans[0].traceId
+      : sent.batch.find((event: { type: string }) => event.type === 'trace-create').body.id;
+    expect(db.prepare('SELECT trace_id, protocol FROM strategy_task_trace_receipts WHERE task_execution_id = ?').get('task-1'))
+      .toEqual({ trace_id: sentTraceId, protocol: exporterMode === 'otlp' ? 'otlp-v4' : 'legacy-v1' });
     if (exporterMode === 'otlp') {
       expect(body).toContain('deployment.environment.name');
       expect(body).toContain('langfuse.trace.metadata.rollout_tag');

@@ -1,3 +1,4 @@
+import { initializeTaskTraceReceipts, recordTaskTraceReceipt } from './telemetry-diagnostics.js';
 import { evidenceStore, reconcileTaskObjectReasons } from '../services/evidence-delivery.js';
 import { createHash } from 'node:crypto';
 import { taskRunUsage, projectTaskTrace, type TaskRunTraceProjection } from './task-trace-projection.js';
@@ -60,6 +61,7 @@ import {
 } from './task-observation-aggregation.js';
 import {
   exportTaskObservationAggregate,
+  otlpTaskTraceId,
   readTaskObservationExporterConfig,
   type TaskObservationDeliveryState,
 } from './task-observation-otlp-exporter.js';
@@ -701,6 +703,7 @@ export function createTaskObservationRolloutService(
        SET status = 'pending', crash_window = 0, finalized_at = NULL
      WHERE status = 'in_flight' AND crash_window = 1
   `).run();
+  initializeTaskTraceReceipts(options.db);
   const env = options.env ?? process.env;
   const config = readTaskObservationRolloutConfig(env);
   const now = options.now ?? Date.now;
@@ -1053,6 +1056,9 @@ export function createTaskObservationRolloutService(
     if (sink.kind === 'langfuse') {
       const direct = readTaskObservationExporterConfig(sink, env);
       if (direct) {
+        recordTaskTraceReceipt(options.db, aggregate.root.taskExecutionId,
+          direct.mode === 'otlp' ? otlpTaskTraceId(aggregate.root.taskExecutionId) : aggregate.root.observationId,
+          direct.mode === 'otlp' ? 'otlp-v4' : 'legacy-v1');
         return exportTaskObservationAggregate(aggregate, {
           prefs,
           config: { ...direct, retries: Math.min(direct.retries, 1) },
@@ -1077,6 +1083,7 @@ export function createTaskObservationRolloutService(
         langfuse_attempt_count: 0,
       };
     }
+    recordTaskTraceReceipt(options.db, aggregate.root.taskExecutionId, aggregate.root.observationId, 'legacy-v1');
     const batch = buildLegacyTaskObservationPayload(aggregate, context);
     if (Buffer.byteLength(JSON.stringify({ batch }), 'utf8') > HARD_BATCH_MAX_BYTES) {
       return {
