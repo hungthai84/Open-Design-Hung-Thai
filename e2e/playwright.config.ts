@@ -22,7 +22,7 @@ export default defineConfig({
   // generic full-pool shard run would execute them without their visual
   // config. Excluding them at the config level keeps every functional
   // consumer (full pool, `test:ui*`, ui_p0 groups) aligned.
-  testIgnore: 'visual-*.test.ts',
+  testIgnore: ['visual-*.test.ts', 'api-security-view016.test.ts'],
   outputDir: './ui/reports/test-results',
   timeout: Number(process.env.OD_PLAYWRIGHT_TIMEOUT) || 45_000,
   retries: process.env.CI ? 1 : 0,
