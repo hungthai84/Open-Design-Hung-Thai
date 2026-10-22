@@ -162,6 +162,7 @@ function RegistryDesignSystemKitPreview({
     projectId,
     body: detail?.body,
     packageInfo: detail?.packageInfo,
+    detailPending: !detailResolved,
     swatches: system.swatches,
     showcaseHtml: null,
     editable: isUserSystem(system),

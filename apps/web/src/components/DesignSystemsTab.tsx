@@ -1596,6 +1596,7 @@ function DesignSystemDetail({
     projectId,
     body: detail?.body,
     packageInfo: detail?.packageInfo,
+    detailPending: !detailResolved,
     swatches: system.swatches,
     showcaseHtml: null,
     // Read-only is enforced by withholding the edit handlers below — not by
