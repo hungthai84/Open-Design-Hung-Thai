@@ -120,3 +120,51 @@ it('E12 failure keeps skeleton until data arrives; later failed refresh retains 
   expect(screen.queryByText('$0.00')).toBeNull();
   expect(calls()).toBeGreaterThan(beforeFailure);
 });
+
+function snapshotWithWindows(designPlanWindows?: unknown) {
+  return {
+    schemaVersion: 1,
+    workspaceId: a.workspaceId,
+    workspaceMemberId: a.workspaceMemberId,
+    billingScopeVersion: 2,
+    billing: { billingState: 'active', planId: 'team_go' },
+    wallet: { balanceUsd: '100', expiresAt: null, updatedAt: null },
+    revisions: { billing: 'b1', wallet: 'w1' },
+    ...(designPlanWindows === undefined ? {} : { designPlanWindows }),
+  };
+}
+
+it('renders shared Design Plan windows as remaining percentages (UI-002(a))', async () => {
+  read = async () => Response.json({
+    ...response(a, '100'),
+    workspaceSnapshot: snapshotWithWindows([
+      { kind: '5h', windowStart: null, resetsAt: null, remainingCredits: '40', limitCredits: '100' },
+      { kind: '7d', windowStart: null, resetsAt: null, remainingCredits: '1', limitCredits: '3' },
+    ]),
+  });
+  await act(async () => { render(<Harness context={a} />); });
+  expect(screen.getByText('剩余 40%')).toBeTruthy();
+  expect(screen.getByText('剩余 33%')).toBeTruthy();
+  expect(screen.getAllByRole('progressbar').map(bar => bar.getAttribute('aria-valuenow'))).toEqual(['40', '33']);
+  expect(screen.queryByText('明细暂不可用')).toBeNull();
+});
+
+it('keeps both shared Design Plan windows unavailable when the field is absent', async () => {
+  read = async () => Response.json({
+    ...response(a, '100'),
+    workspaceSnapshot: snapshotWithWindows(),
+  });
+  await act(async () => { render(<Harness context={a} />); });
+  expect(screen.getAllByText('明细暂不可用')).toHaveLength(2);
+  expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+});
+
+it('keeps both shared Design Plan windows unavailable for an explicit empty array', async () => {
+  read = async () => Response.json({
+    ...response(a, '100'),
+    workspaceSnapshot: snapshotWithWindows([]),
+  });
+  await act(async () => { render(<Harness context={a} />); });
+  expect(screen.getAllByText('明细暂不可用')).toHaveLength(2);
+  expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+});

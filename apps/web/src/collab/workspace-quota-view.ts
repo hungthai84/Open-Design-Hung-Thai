@@ -20,6 +20,58 @@ export interface WorkspaceQuotaView {
   modelRestriction: string | null;
 }
 
+const DESIGN_PLAN_WINDOWS_FIELD = 'designPlanWindows';
+
+type WorkspaceQuotaWindow = NonNullable<WorkspaceQuotaView['windows']>[number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Map the additive server field only when every window is well-formed. */
+export function workspaceDesignPlanWindows(snapshot: unknown): WorkspaceQuotaView['windows'] {
+  if (!isRecord(snapshot)) return null;
+  const rawWindows = snapshot[DESIGN_PLAN_WINDOWS_FIELD];
+  if (!Array.isArray(rawWindows) || rawWindows.length === 0) return null;
+
+  const seenKinds = new Set<string>();
+  const windows: WorkspaceQuotaWindow[] = [];
+  for (const rawWindow of rawWindows) {
+    if (!isRecord(rawWindow)) return null;
+    const { kind, remainingCredits, limitCredits, resetsAt } = rawWindow;
+    const windowStart = rawWindow.windowStart;
+    if (
+      (kind !== '5h' && kind !== '7d')
+      || seenKinds.has(kind)
+      || typeof remainingCredits !== 'string'
+      || !/^(0|[1-9]\d*)$/.test(remainingCredits)
+      || typeof limitCredits !== 'string'
+      || !/^(0|[1-9]\d*)$/.test(limitCredits)
+      || limitCredits === '0'
+      || (resetsAt !== null && typeof resetsAt !== 'string')
+      || (windowStart !== null && typeof windowStart !== 'string')
+    ) {
+      return null;
+    }
+
+    const remaining = BigInt(remainingCredits);
+    const limit = BigInt(limitCredits);
+    if (remaining > limit) return null;
+    seenKinds.add(kind);
+
+    const used = limit - remaining;
+    const basisPoints = Number((used * 10_000n) / limit);
+    const usedPercent = Math.min(100, Math.max(0, Math.round(basisPoints / 100)));
+    windows.push({
+      durationSeconds: kind === '5h' ? 18_000 : 604_800,
+      remainingPercent: 100 - usedPercent,
+      resetsAt: typeof resetsAt === 'string' && resetsAt ? resetsAt : null,
+    });
+  }
+
+  return windows.sort((left, right) => left.durationSeconds - right.durationSeconds);
+}
+
 export function workspaceQuotaTier(raw: string | null | undefined): WorkspaceQuotaTier | null {
   const parts = raw?.trim().toLowerCase().split(/[_-]+/) ?? [];
   return (['free', 'go', 'plus', 'pro', 'max'] as const).find(tier => parts.includes(tier)) ?? null;
@@ -53,26 +105,9 @@ export function workspaceQuotaView({ context, response, tier, balanceUsd }: {
     planKnown: Boolean(scopedTier?.trim()),
     loading: balance == null && !response?.workspaceBalance && !response?.workspaceSnapshot,
     balanceUsd: balance,
-    // Only the exact workspace/member snapshot may provide shared windows.
-    // Account summaries and personal Coding Plan are not substitutes.
+    // Account summary / personal Coding Plan are not substitutes for workspace data.
     planStatus: null,
-    windows: snapshot?.designPlanWindows?.flatMap(window => {
-      // Keep unreadable shares unavailable; never turn missing quota into zero.
-      if ((window.kind !== '5h' && window.kind !== '7d')
-        || !/^(0|[1-9]\d*)$/.test(window.remainingCredits)
-        || !/^(0|[1-9]\d*)$/.test(window.limitCredits)) return [];
-      const remaining = BigInt(window.remainingCredits);
-      const limit = BigInt(window.limitCredits);
-      if (limit === 0n || remaining > limit) return [];
-      // Match the existing personal quota widget's whole-percent presentation.
-      // Compute the ratio before Number conversion: credit counts can be large.
-      const usedBasisPoints = Number(((limit - remaining) * 10_000n) / limit);
-      return [{
-        durationSeconds: window.kind === '5h' ? 18_000 : 604_800,
-        remainingPercent: 100 - Math.round(usedBasisPoints / 100),
-        resetsAt: window.resetsAt,
-      }];
-    }) ?? null,
+    windows: workspaceDesignPlanWindows(snapshot),
     breakdown: null,
     modelRestriction: null,
   };

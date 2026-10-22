@@ -1799,7 +1799,7 @@ export function workspaceBillingSnapshotForContext(
   response: WorkspaceBillingResponse | null | undefined,
   context: WorkspaceCollabContext | null | undefined,
 ): WorkspaceBillingSnapshot | null {
-  if (!response || !context || context.workspaceType !== 'team') return null;
+  if (!response || !context) return null;
   const snapshot = response.workspaceSnapshot;
   if (
     !snapshot ||
