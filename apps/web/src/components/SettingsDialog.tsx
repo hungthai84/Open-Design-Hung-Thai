@@ -76,9 +76,13 @@ import {
 } from './modelOptions';
 import {
   BYOK_PROVIDER_PRESETS,
+  databricksGatewayBaseUrl,
+  databricksWorkspaceUrl,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_ORBIT,
   defaultKnownProviderModel,
+  isDatabricksGatewayBaseUrl,
+  isDatabricksPreset,
   isStoredMediaProviderEntryEmpty,
   isStoredMediaProviderEntryPresent,
   KNOWN_PROVIDERS,
@@ -726,8 +730,16 @@ export function isProviderModelDiscoveryUnsupported(
 ): boolean {
   if (protocol === 'azure' || protocol === 'ollama') return true;
   try {
-    const host = new URL(baseUrl).hostname.toLowerCase();
-    return host === 'token-plan-cn.xiaomimimo.com';
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.replace(/\/+$/, '');
+    return host === 'token-plan-cn.xiaomimimo.com' || (
+      url.protocol === 'https:' &&
+      /\.(?:cloud\.databricks\.com|azuredatabricks\.net|gcp\.databricks\.com)$/.test(host) && (
+        (protocol === 'anthropic' && path === '/ai-gateway/anthropic/v1') ||
+        (protocol === 'openai' && path === '/ai-gateway/mlflow/v1')
+      )
+    );
   } catch {
     return false;
   }
@@ -967,7 +979,7 @@ function siblingProviderForProtocol(
   providerBaseUrl: string | null | undefined,
   protocol: ApiProtocol,
 ): KnownProvider | null {
-  if (!providerBaseUrl) return null;
+  if (!providerBaseUrl || isDatabricksPreset(providerBaseUrl)) return null;
   const currentProvider = KNOWN_PROVIDERS.find(
     (p) => p.baseUrl === providerBaseUrl,
   );
@@ -1871,6 +1883,7 @@ export function SettingsDialog({
         initial.mode !== 'api' ||
         protocol === 'azure' ||
         protocol === 'ollama' ||
+        isProviderModelDiscoveryUnsupported(protocol, initial.baseUrl) ||
         missingByokModelFetchFields(initial, protocol).length > 0 ||
         !isValidApiBaseUrl(initial.baseUrl)
       ) {
@@ -2325,7 +2338,7 @@ export function SettingsDialog({
       applyDraftUiState(undefined);
       return updateCurrentApiProtocolConfig(switchedWithCurrentDraft, {
         ...(providerChanged ? { apiKey: '' } : {}),
-        baseUrl: provider.baseUrl,
+        baseUrl: isDatabricksPreset(provider.baseUrl) ? '' : provider.baseUrl,
         model: provider.preferredModels[0] ?? '',
         apiProviderBaseUrl: provider.baseUrl,
       });
@@ -3092,7 +3105,10 @@ export function SettingsDialog({
           provider.protocol === apiProtocol &&
           provider.baseUrl === cfg.apiProviderBaseUrl,
       ) ?? customByokProvider;
-  const baseUrlValid = isValidApiBaseUrl(cfg.baseUrl);
+  const baseUrlValid = isDatabricksPreset(cfg.apiProviderBaseUrl)
+    ? (apiProtocol === 'anthropic' || apiProtocol === 'openai') &&
+      isDatabricksGatewayBaseUrl(cfg.baseUrl, apiProtocol)
+    : isValidApiBaseUrl(cfg.baseUrl);
   const baseUrlInvalid = Boolean(cfg.baseUrl.trim() && !baseUrlValid);
   const byokRequiredLabel = (field: ByokRequiredField): string => {
     switch (field) {
@@ -3483,7 +3499,7 @@ export function SettingsDialog({
       }
       return (
         p.baseUrl === cfg.apiProviderBaseUrl &&
-        (p.baseUrl === cfg.baseUrl || (apiProtocol === 'azure' && p.baseUrl === ''))
+        (p.baseUrl === cfg.baseUrl || isDatabricksPreset(p.baseUrl) || (apiProtocol === 'azure' && p.baseUrl === ''))
       );
     });
   const selectedProvider = selectedProviderIndex >= 0 ? protocolProviders[selectedProviderIndex] : undefined;
@@ -3517,7 +3533,11 @@ export function SettingsDialog({
           : cfg.apiProtocolConfigs?.[provider.protocol]
       );
     if (!entry) return false;
-    if (provider.baseUrl) {
+    if (isDatabricksPreset(provider.baseUrl)) {
+      if (entry.apiProviderBaseUrl !== provider.baseUrl ||
+          (provider.protocol !== 'anthropic' && provider.protocol !== 'openai') ||
+          !isDatabricksGatewayBaseUrl(entry.baseUrl, provider.protocol)) return false;
+    } else if (provider.baseUrl) {
       if (entry.baseUrl !== provider.baseUrl) return false;
     } else if (provider.protocol !== 'azure' && entry.baseUrl !== provider.baseUrl) {
       return false;
@@ -3551,6 +3571,7 @@ export function SettingsDialog({
       {
         requiresApiKey: byokRequiresApiKey,
         keyValidationBaseUrl: byokKeyValidationBaseUrl,
+        databricksGateway: isDatabricksPreset(cfg.apiProviderBaseUrl),
       },
     ),
     [
@@ -3558,6 +3579,7 @@ export function SettingsDialog({
       byokKeyValidationBaseUrl,
       byokRequiresApiKey,
       cfg.apiKey,
+      cfg.apiProviderBaseUrl,
       cfg.baseUrl,
       cfg.model,
     ],
@@ -3591,6 +3613,7 @@ export function SettingsDialog({
         requiresApiKey: byokRequiresApiKey,
         requireModel: false,
         keyValidationBaseUrl: byokKeyValidationBaseUrl,
+        databricksGateway: isDatabricksPreset(cfg.apiProviderBaseUrl),
       },
     ),
     [
@@ -3598,6 +3621,7 @@ export function SettingsDialog({
       byokKeyValidationBaseUrl,
       byokRequiresApiKey,
       cfg.apiKey,
+      cfg.apiProviderBaseUrl,
       cfg.baseUrl,
       cfg.model,
     ],
@@ -3876,11 +3900,14 @@ export function SettingsDialog({
     );
   const baseUrlReadOnly =
     (apiProtocol === 'anthropic' || apiProtocol === 'google') &&
+    !isDatabricksPreset(cfg.apiProviderBaseUrl) &&
     cfg.apiProviderBaseUrl !== null &&
     Boolean(cfg.baseUrl.trim()) &&
     !baseUrlInvalid;
   const baseUrlPlaceholder =
-    apiProtocol === 'azure'
+    isDatabricksPreset(cfg.apiProviderBaseUrl)
+      ? 'https://your-workspace.cloud.databricks.com'
+      : apiProtocol === 'azure'
       ? t('settings.azureBaseUrlPlaceholder')
       : apiProtocol === 'ollama'
         ? 'http://localhost:11434'
@@ -5590,7 +5617,7 @@ export function SettingsDialog({
                   onProviderSelect={(p) => {
                     setApiModelCustomEditing(false);
                     updateApiConfig({
-                      baseUrl: p.baseUrl,
+                      baseUrl: isDatabricksPreset(p.baseUrl) ? '' : p.baseUrl,
                       model: defaultKnownProviderModel(p),
                       apiProviderBaseUrl: p.baseUrl,
                     });
@@ -5646,13 +5673,16 @@ export function SettingsDialog({
                 <ByokProviderBaseUrl
                   apiProtocol={apiProtocol}
                   inputRef={baseUrlInputRef}
-                  baseUrl={cfg.baseUrl}
+                  baseUrl={isDatabricksPreset(cfg.apiProviderBaseUrl) &&
+                    (apiProtocol === 'anthropic' || apiProtocol === 'openai')
+                      ? databricksWorkspaceUrl(cfg.baseUrl, apiProtocol)
+                      : cfg.baseUrl}
                   baseUrlError={baseUrlErrorMessage}
                   baseUrlInvalid={Boolean(baseUrlErrorMessage)}
                   baseUrlPlaceholder={baseUrlPlaceholder}
                   baseUrlReadOnly={baseUrlReadOnly}
                   labels={{
-                    baseUrl: t('settings.baseUrl'),
+                    baseUrl: isDatabricksPreset(cfg.apiProviderBaseUrl) ? t('settings.databricksWorkspaceUrl') : t('settings.baseUrl'),
                     required: t('settings.required'),
                     customize: t('settings.baseUrlCustomize'),
                     invalid: t('settings.baseUrlInvalid'),
@@ -5662,8 +5692,13 @@ export function SettingsDialog({
                   onBlur={commitProviderModelsInputs}
                   onChange={(value) =>
                     updateApiConfig({
-                      baseUrl: value,
-                      apiProviderBaseUrl: apiProtocol === 'azure' ? '' : null,
+                      baseUrl: isDatabricksPreset(cfg.apiProviderBaseUrl) &&
+                        (apiProtocol === 'anthropic' || apiProtocol === 'openai')
+                          ? databricksGatewayBaseUrl(value, apiProtocol) ?? value
+                          : value,
+                      apiProviderBaseUrl: isDatabricksPreset(cfg.apiProviderBaseUrl)
+                        ? cfg.apiProviderBaseUrl
+                        : apiProtocol === 'azure' ? '' : null,
                     })
                   }
                   onCustomize={() => {
@@ -5703,14 +5738,20 @@ export function SettingsDialog({
                 customInputRef={customModelInputRef}
                 labels={{
                   customModel: t('settings.modelCustom'),
-                  customModelLabel: apiProtocol === 'azure'
+                  customModelLabel: isDatabricksPreset(cfg.apiProviderBaseUrl)
+                    ? t('settings.databricksModelServiceName')
+                    : apiProtocol === 'azure'
                     ? t('settings.azureCustomDeploymentName')
                     : t('settings.modelCustomLabel'),
-                  customModelPlaceholder: apiProtocol === 'azure'
+                  customModelPlaceholder: isDatabricksPreset(cfg.apiProviderBaseUrl)
+                    ? 'system.ai.claude-sonnet-4-5'
+                    : apiProtocol === 'azure'
                     ? t('settings.azureDeploymentModel')
                     : t('settings.modelCustomPlaceholder'),
                   fetchModelsUnsupported: t('settings.fetchModelsUnsupported'),
-                  model: apiProtocol === 'azure'
+                  model: isDatabricksPreset(cfg.apiProviderBaseUrl)
+                    ? t('settings.databricksModelServiceName')
+                    : apiProtocol === 'azure'
                     ? t('settings.azureDeploymentModel')
                     : t('settings.model'),
                   required: t('settings.required'),
@@ -5744,7 +5785,7 @@ export function SettingsDialog({
                     : null
                 }
                 providerModelsFailureMessage={providerModelsFailureMessage}
-                forceTextInput={apiProtocol === 'azure'}
+                forceTextInput={apiProtocol === 'azure' || isDatabricksPreset(cfg.apiProviderBaseUrl)}
                 showAzureModelFetchHint={apiProtocol === 'azure'}
                 showFetchModelsUnsupportedHint={
                   apiProtocol !== 'azure' &&
