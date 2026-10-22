@@ -143,8 +143,8 @@
     {
       "name": "community/8b-website-template",
       "title": "8B Website Templates",
-      "version": "0.1.0",
-      "source": "github:8bsite/8b-ai-website-builder@templates-v0.1.0/templates/skills/8b-website-template",
+      "version": "0.1.1",
+      "source": "github:8bsite/8b-ai-website-builder@templates-v0.1.1/templates/skills/8b-website-template",
       "publisher": {
         "id": "8b",
         "github": "8bsite",
@@ -154,7 +154,9 @@
       "license": "MIT",
       "capabilitiesSummary": [
         "prompt:inject",
-        "fs:write"
+        "fs:write",
+        "network",
+        "bash"
       ],
       "tags": [
         "community",
