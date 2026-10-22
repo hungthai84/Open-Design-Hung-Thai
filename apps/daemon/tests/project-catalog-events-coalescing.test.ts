@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import {
+  closeDatabase,
   deleteProject,
+  deleteWorkspaceProject,
+  ensureWorkspaceProject,
   insertProject,
   onProjectCatalogMutation,
+  openDatabase,
+  rebindWorkspaceProject,
   updateProject,
+  updateWorkspaceProject,
 } from '../src/db.js';
 import { createProjectCatalogEvents } from '../src/routes/project-catalog-events.js';
 
@@ -130,6 +139,52 @@ describe('onProjectCatalogMutation', () => {
 
     off();
     insertProject(watched as never, project('p2'));
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('onProjectCatalogMutation for workspace bindings', () => {
+  let dir: string;
+  let db: ReturnType<typeof openDatabase>;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'od-catalog-binding-'));
+    db = openDatabase(dir, { dataDir: dir });
+    insertProject(db, { id: 'p1', name: 'p1', createdAt: 1, updatedAt: 1 });
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('fires when a project is bound, shared, moved between workspaces, and unbound', () => {
+    const listener = vi.fn();
+    onProjectCatalogMutation(db, listener);
+
+    ensureWorkspaceProject(db, { projectId: 'p1', workspaceId: 'ws-a', visibility: 'personal' });
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    updateWorkspaceProject(db, 'ws-a', 'p1', { visibility: 'team' });
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    rebindWorkspaceProject(db, 'p1', { workspaceId: 'ws-b' });
+    expect(listener).toHaveBeenCalledTimes(3);
+
+    deleteWorkspaceProject(db, 'ws-b', 'p1');
+    expect(listener).toHaveBeenCalledTimes(4);
+  });
+
+  it('stays silent for binding rewrites that change nothing the list shows', () => {
+    ensureWorkspaceProject(db, { projectId: 'p1', workspaceId: 'ws-a', visibility: 'team' });
+    const listener = vi.fn();
+    onProjectCatalogMutation(db, listener);
+
+    updateWorkspaceProject(db, 'ws-a', 'p1', { visibility: 'team', version: 7 });
+    rebindWorkspaceProject(db, 'p1', { workspaceId: 'ws-a' });
+    ensureWorkspaceProject(db, { projectId: 'p1', workspaceId: 'ws-a', visibility: 'team' });
+    deleteWorkspaceProject(db, 'ws-a', 'someone-elses-project');
+
     expect(listener).not.toHaveBeenCalled();
   });
 });
