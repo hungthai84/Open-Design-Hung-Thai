@@ -7,15 +7,42 @@ import {
 
 type ProjectCatalogSink = (payload: ProjectCatalogChangedSsePayload) => void;
 
+// One create/import/run writes several rows and touches `updated_at` many
+// times. Clients only need to know "re-read the list", so every mutation inside
+// one window collapses into a single signal delivered when the window closes.
+// Delivering at the end (not the start) also lets the writes that belong to the
+// same operation commit before the client reads.
+const DEFAULT_WINDOW_MS = 250;
+
 export interface ProjectCatalogEvents {
   subscribe(sink: ProjectCatalogSink): () => void;
-  emitChanged(): void;
+  /** Record that something the project list shows may have changed. */
+  notify(): void;
 }
 
 export function createProjectCatalogEvents(
-  now: () => number = Date.now,
+  options: { windowMs?: number; now?: () => number } = {},
 ): ProjectCatalogEvents {
+  const windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
+  const now = options.now ?? Date.now;
   const sinks = new Set<ProjectCatalogSink>();
+  let pending: ReturnType<typeof setTimeout> | null = null;
+
+  function flush() {
+    pending = null;
+    const payload: ProjectCatalogChangedSsePayload = {
+      type: PROJECT_CATALOG_CHANGED_EVENT,
+      at: now(),
+    };
+    for (const sink of Array.from(sinks)) {
+      try {
+        sink(payload);
+      } catch {
+        sinks.delete(sink);
+      }
+    }
+  }
+
   return {
     subscribe(sink) {
       sinks.add(sink);
@@ -23,18 +50,10 @@ export function createProjectCatalogEvents(
         sinks.delete(sink);
       };
     },
-    emitChanged() {
-      const payload: ProjectCatalogChangedSsePayload = {
-        type: PROJECT_CATALOG_CHANGED_EVENT,
-        at: now(),
-      };
-      for (const sink of Array.from(sinks)) {
-        try {
-          sink(payload);
-        } catch {
-          sinks.delete(sink);
-        }
-      }
+    notify() {
+      if (pending || sinks.size === 0) return;
+      pending = setTimeout(flush, windowMs);
+      pending.unref?.();
     },
   };
 }

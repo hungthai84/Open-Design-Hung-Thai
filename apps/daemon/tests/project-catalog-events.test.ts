@@ -2,11 +2,15 @@ import type http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
+import {
+  openProjectCatalogStream,
+  type ProjectCatalogStream,
+} from './helpers/project-catalog-stream.js';
 
-// Projects created through any entry point (web UI, `od` CLI, MCP bridge) go
-// through POST /api/projects. The web shell only learns about projects it
-// created itself, so the daemon must announce every creation on a catalog-wide
-// stream or externally created projects stay invisible until a manual reload.
+// Every client of one daemon (web UI, `od` CLI, MCP bridge) changes the same
+// project catalogue, but the web shell only learns about changes it made
+// itself. The daemon therefore announces any change to what the project list
+// shows on a catalogue-wide stream, and the web re-reads the list on receipt.
 describe('GET /api/project-catalog/events', () => {
   let server: http.Server;
   let baseUrl: string;
@@ -22,62 +26,48 @@ describe('GET /api/project-catalog/events', () => {
 
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-  async function readUntil(
-    reader: ReadableStreamDefaultReader<Uint8Array>,
-    predicate: (text: string) => boolean,
-  ): Promise<string> {
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (!predicate(buffer)) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error(`stream ended early; buffer so far:\n${buffer}`);
-      buffer += decoder.decode(value, { stream: true });
-    }
-    return buffer;
-  }
+  const SIGNAL = 'event: project-catalog-changed';
 
-  async function createProject(id: string) {
+  const openStream = () => openProjectCatalogStream(baseUrl);
+
+  async function createProject(id: string, name = id) {
     const resp = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name: id }),
+      body: JSON.stringify({ id, name }),
     });
     expect(resp.status).toBe(200);
+    return (await resp.json()) as { project: { id: string } };
+  }
+
+  async function listedProjects() {
+    const resp = await fetch(`${baseUrl}/api/projects`);
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { projects: Array<{ id: string; name: string }> };
+    return body.projects;
+  }
+
+  async function withStream(run: (stream: ProjectCatalogStream) => Promise<void>) {
+    const stream = await openStream();
+    try {
+      await run(stream);
+    } finally {
+      await stream.close();
+    }
   }
 
   it('announces a project created by another client without leaking its content', async () => {
-    const controller = new AbortController();
-    const resp = await fetch(`${baseUrl}/api/project-catalog/events`, {
-      signal: controller.signal,
-    });
-    expect(resp.status).toBe(200);
-    expect(resp.headers.get('content-type')).toContain('text/event-stream');
-    const reader = resp.body!.getReader();
-    try {
-      await readUntil(reader, (text) => text.includes('event: ready'));
-
+    await withStream(async (stream) => {
       await createProject('catalog-events-created');
+      await stream.nextSignal();
 
-      const framed = await readUntil(reader, (text) =>
-        text.includes('event: project-catalog-changed'),
-      );
-      expect(framed).toContain('"type":"project-catalog-changed"');
-      expect(framed).not.toContain('catalog-events-created');
-    } finally {
-      controller.abort();
-      await reader.cancel().catch(() => undefined);
-    }
+      expect(stream.raw).toContain('"type":"project-catalog-changed"');
+      expect(stream.raw).not.toContain('catalog-events-created');
+    });
   });
 
   it('does not announce a create that the daemon rejected', async () => {
-    const controller = new AbortController();
-    const resp = await fetch(`${baseUrl}/api/project-catalog/events`, {
-      signal: controller.signal,
-    });
-    const reader = resp.body!.getReader();
-    try {
-      await readUntil(reader, (text) => text.includes('event: ready'));
-
+    await withStream(async (stream) => {
       const rejected = await fetch(`${baseUrl}/api/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,16 +75,64 @@ describe('GET /api/project-catalog/events', () => {
       });
       expect(rejected.ok).toBe(false);
 
-      // The next accepted create is the first frame the stream may carry; the
-      // rejected one must not have queued a frame ahead of it.
       await createProject('catalog-events-after-rejection');
-      const framed = await readUntil(reader, (text) =>
-        text.includes('event: project-catalog-changed'),
+      await stream.nextSignal();
+
+      expect(stream.raw.split(SIGNAL).length - 1).toBe(1);
+    });
+  });
+
+  it('announces a rename so the list shows the new name', async () => {
+    await withStream(async (stream) => {
+      await createProject('catalog-events-rename', 'Before rename');
+      await stream.nextSignal();
+
+      const patched = await fetch(`${baseUrl}/api/projects/catalog-events-rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'After rename' }),
+      });
+      expect(patched.ok).toBe(true);
+
+      await stream.untilSeen(async () =>
+        (await listedProjects()).some(
+          (project) => project.id === 'catalog-events-rename' && project.name === 'After rename',
+        ),
       );
-      expect(framed.match(/event: project-catalog-changed/g)).toHaveLength(1);
-    } finally {
-      controller.abort();
-      await reader.cancel().catch(() => undefined);
-    }
+    });
+  });
+
+  it('announces a delete so the list stops showing the project', async () => {
+    await withStream(async (stream) => {
+      await createProject('catalog-events-delete');
+      await stream.nextSignal();
+
+      const deleted = await fetch(`${baseUrl}/api/projects/catalog-events-delete`, {
+        method: 'DELETE',
+      });
+      expect(deleted.ok).toBe(true);
+
+      await stream.untilSeen(async () =>
+        (await listedProjects()).every((project) => project.id !== 'catalog-events-delete'),
+      );
+    });
+  });
+
+  it('announces a duplicate so the copy appears in the list', async () => {
+    await withStream(async (stream) => {
+      await createProject('catalog-events-duplicate-source', 'Original');
+      await stream.nextSignal();
+
+      const duplicated = await fetch(
+        `${baseUrl}/api/projects/catalog-events-duplicate-source/duplicate`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      expect(duplicated.ok).toBe(true);
+      const { project } = (await duplicated.json()) as { project: { id: string } };
+
+      await stream.untilSeen(async () =>
+        (await listedProjects()).some((listed) => listed.id === project.id),
+      );
+    });
   });
 });

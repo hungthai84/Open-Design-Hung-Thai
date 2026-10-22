@@ -831,6 +831,7 @@ import {
   updateRoutine,
   updateRoutineRun,
   clearAgentSession,
+  onProjectCatalogMutation,
   upsertAgentSession,
   upsertDeployment,
   upsertMessage,
@@ -8322,6 +8323,8 @@ export async function startServer({
   const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
   const strategyWriteEvidence = createStrategyRunWriteEvidenceRecorder(db);
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
+  const projectCatalogEvents = createProjectCatalogEvents();
+  onProjectCatalogMutation(db, () => projectCatalogEvents.notify());
   const design = {
     runs: createChatRunService({
       createSseResponse,
@@ -8337,6 +8340,11 @@ export async function startServer({
         if (incidentId) run.diagnosticIncidentIds = [...new Set([...(run.diagnosticIncidentIds ?? []), incidentId])].slice(-100);
       },
       onEventEmitted: (run, record) => {
+        // The list badges a project as running/idle from run state, which does
+        // not write a project row, so the run's own lifecycle has to announce it.
+        if (run.projectId && (record.event === 'start' || record.event === 'end')) {
+          projectCatalogEvents.notify();
+        }
         if (record.event === 'start') automaticDiagnostics?.trackRun(run.id, {
           sourceId: `run:${run.id}:interrupted:${run.manualResumeAttemptCount ?? 0}:${record.timestamp}`,
           kind: 'active_run', at: record.timestamp, runId: run.id, agentId: run.agentId,
@@ -8917,12 +8925,7 @@ export async function startServer({
     listProjects,
     listUnboundProjects,
   };
-  const projectCatalogEvents = createProjectCatalogEvents();
-  const projectEventDeps = {
-    subscribeFileEvents,
-    activeProjectEventSinks,
-    emitProjectCatalogChanged: () => projectCatalogEvents.emitChanged(),
-  };
+  const projectEventDeps = { subscribeFileEvents, activeProjectEventSinks };
   const importDeps = { importClaudeDesignZip, projectDir, detectEntryFile };
   const projectExportDeps = {
     createProjectArchiveStream,

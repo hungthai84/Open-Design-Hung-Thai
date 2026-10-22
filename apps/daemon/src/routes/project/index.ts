@@ -2247,7 +2247,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
   const { listLatestProjectRunStatuses, listProjectsAwaitingInput, normalizeProjectDisplayStatus, composeProjectDisplayStatus, listProjects, listUnboundProjects } = ctx.status;
-  const { subscribeFileEvents, activeProjectEventSinks, emitProjectCatalogChanged } = ctx.events;
+  const { subscribeFileEvents, activeProjectEventSinks } = ctx.events;
   const { randomId } = ctx.ids;
   const { validateProjectDesignSystemId, validateProjectSkillId } = ctx.validation;
   const { collabSync, teamProjectCatalog, workspaceTypes } = ctx;
@@ -4570,7 +4570,6 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           : {}),
       };
       res.json(body);
-      emitProjectCatalogChanged?.();
     } catch (err: any) {
       if (err instanceof ProjectCreatePreparationTimeoutError) {
         return sendApiError(

@@ -1006,7 +1006,7 @@ function AppInner() {
   );
   workspaceContextStateRef.current = workspaceContextState;
   const listCurrentWorkspaceProjects = useCallback(
-    (options?: { throwOnError?: boolean; workspaceView?: WorkspaceProjectListView }) => {
+    (options?: { throwOnError?: boolean; workspaceView?: WorkspaceProjectListView; fresh?: boolean }) => {
       const context = workspaceContextRef.current;
       return listProjects({
         ...options,
@@ -2579,12 +2579,13 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const refreshProjectsStrict = useCallback(async () => {
+  const refreshProjectsStrict = useCallback(async (options?: { fresh?: boolean }) => {
     const request = beginProjectListRequest(workspaceProjectView);
     try {
       const list = await listCurrentWorkspaceProjects({
         throwOnError: true,
         workspaceView: workspaceProjectView,
+        ...(options?.fresh ? { fresh: true } : {}),
       });
       reconcileFetchedProjects(list, request);
     } catch (error) {
@@ -2615,10 +2616,12 @@ function AppInner() {
   }, [refreshProjectsStrict]);
   refreshProjectCatalogRef.current = refreshProjectsAfterTeamCatalogChange;
 
-  // Projects created by other clients (`od` CLI, MCP bridge) never pass through
-  // this shell's own create path, so the daemon announces them instead.
+  // Changes made by other clients of this daemon (`od` CLI, MCP bridge, another
+  // window) never pass through this shell's own mutation paths, so the daemon
+  // announces them instead. The read must be fresh: a cached or in-flight one
+  // may predate the change that triggered the signal.
   useProjectCatalogEvents(() => {
-    void refreshProjects();
+    void refreshProjectsStrict({ fresh: true }).catch(() => {});
   });
 
   useEffect(() => {
