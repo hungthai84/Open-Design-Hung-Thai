@@ -47,7 +47,7 @@ export const WORKSPACE_BUILD_COMMANDS = [
   { args: ["--filter", "@open-design/packaged", "run", "build"] },
 ] as const;
 
-export const WORKSPACE_BUILD_CACHE_SCHEMA_VERSION = 11;
+export const WORKSPACE_BUILD_CACHE_SCHEMA_VERSION = 12;
 
 /**
  * V8 old-space ceiling (MB) for the packaged closure build, the stage that runs
@@ -206,6 +206,7 @@ function workspaceBuildOutputFiles(config: ToolPackConfig): string[] {
     "packages/platform/dist/index.d.ts",
     "packages/sidecar/dist/index.mjs",
     "packages/sidecar/dist/supervisor.mjs",
+    "packages/sidecar/dist/adopted-supervisor.mjs",
     "packages/sidecar/dist/index.d.ts",
     "packages/download/dist/index.mjs",
     "packages/download/dist/index.d.ts",
