@@ -617,6 +617,7 @@ const CANONICAL_AGENT_ORDER = [
   'qoder',
   'copilot',
   'pi',
+  'omp',
   'kiro',
   'kilo',
   'vibe',
