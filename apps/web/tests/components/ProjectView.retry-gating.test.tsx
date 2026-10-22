@@ -992,6 +992,21 @@ describe('2026-09-14 retry replaces the old error surface without erasing histor
     };
   }
 
+  it('shows admission rejection when retry does not create a Run', async () => {
+    const getRun = captureRun();
+    await renderRealChat();
+    fireEvent.click(screen.getByTestId('chat-error-retry'));
+    await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await getRun().handlers.onError(Object.assign(new Error('Previous execution is still being confirmed'), {
+        code: 'run_recovery_pending',
+      }));
+    });
+    await waitFor(() => expect(screen.getByText('Previous execution is still being confirmed')).toBeTruthy());
+    expect(chatSurface.props?.messages.some((message) => message.role === 'assistant' && message.id !== cloudFailedAssistant.id)).toBe(false);
+    expectOriginalFailurePreserved();
+  });
+
   it('accepting retry removes the old card before the replacement has a run id', async () => {
     captureRun();
     await renderRealChat();

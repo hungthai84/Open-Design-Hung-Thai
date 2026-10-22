@@ -22,10 +22,10 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-async function runMedia(args: string[], env: NodeJS.ProcessEnv = {}) {
+async function runMedia(args: string[], env: NodeJS.ProcessEnv = {}, network = rejectNetwork) {
   try {
     const result = await exec(process.execPath, [
-      '--import', 'tsx', '--import', rejectNetwork, cliEntry, 'media', ...args,
+      '--import', 'tsx', '--import', network, cliEntry, 'media', ...args,
     ], {
       cwd: daemonRoot,
       timeout: 10_000,
@@ -60,6 +60,20 @@ function expectHelp(result: Awaited<ReturnType<typeof runMedia>>) {
 }
 
 describe('od media help', () => {
+  it('returns a running task when a bounded wait expires', async () => {
+    const network = 'data:text/javascript,' + encodeURIComponent(
+      'globalThis.fetch = async () => { await new Promise(r => setTimeout(r, 20)); return new Response(JSON.stringify({status:"running", nextSince:0, progress:[]})); };',
+    );
+    const result = await runMedia(['wait', 'task-fixture', '--budget-ms', '50'], {}, network);
+    expect(result.code).toBe(2);
+    expect(result.stdout).toContain('task-fixture');
+    expect(result.stdout).toContain('running');
+  });
+  it('rejects an invalid wait budget before contacting a daemon', async () => {
+    const result = await runMedia(['wait', 'task-fixture', '--budget-ms', '0']);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('--budget-ms must be an integer');
+  });
   it.each(['--help', '--h'])('prints generate %s before requiring project or generation parameters', async flag => {
     expectHelp(await runMedia(['generate', flag]));
   });

@@ -2193,6 +2193,7 @@ async function exitWithMediaHttpFailure(resp) {
 
 async function runMediaWait(rawArgs) {
   const stringFlags = new Set([
+    'budget-ms',
     'since',
     'daemon-url',
     'workspace',
@@ -2212,8 +2213,13 @@ async function runMediaWait(rawArgs) {
   const taskId = positionalArgs(rawArgs, stringFlags)[0];
   if (!taskId) {
     console.error(
-      'usage: od media wait <taskId> [--since <n>] [--workspace <id> --workspace-member <id>] [--daemon-url <url>]',
+      'usage: od media wait <taskId> [--since <n>] [--budget-ms <1..120000>] [--workspace <id> --workspace-member <id>] [--daemon-url <url>]',
     );
+    process.exit(2);
+  }
+  const budget = flags['budget-ms'] == null ? 120_000 : Number(flags['budget-ms']);
+  if (!Number.isInteger(budget) || budget < 1 || budget > 120_000) {
+    console.error('--budget-ms must be an integer from 1 to 120000');
     process.exit(2);
   }
   const daemonUrl = await cliDaemonUrl(flags);
@@ -2222,7 +2228,7 @@ async function runMediaWait(rawArgs) {
     : 0;
   const token = process.env.OD_TOOL_TOKEN;
   await pollUntilDoneOrBudget(daemonUrl, taskId, since, {
-    totalBudgetMs: 120_000,
+    totalBudgetMs: budget,
     requestHeaders: token
       ? { authorization: `Bearer ${token}` }
       : workspaceHeadersFromExplicitFlags(flags) ?? {},
@@ -2479,6 +2485,7 @@ async function cliDaemonBaseUrl(flags) {
 function printMediaHelp() {
   console.log(`Usage: od media scaffold --composition-dir .hyperframes-cache/<id> [opts]
        od media generate --surface <image|video|audio> --model <id> [opts]
+       od media wait <taskId> [--budget-ms <1..120000>]
        "$OD_NODE_BIN" "$OD_BIN" media generate --surface <image|video|audio> --model <id> [opts]
 
 Scaffold:

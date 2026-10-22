@@ -1,0 +1,40 @@
+FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS build
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+WORKDIR /source
+RUN corepack enable && pnpm config set store-dir /pnpm/store
+COPY . .
+ENV CI=true
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked pnpm install --frozen-lockfile --ignore-scripts --filter @open-design/daemon...
+RUN pnpm --filter @open-design/daemon... rebuild better-sqlite3 esbuild node-pty
+RUN pnpm --filter @open-design/daemon... --if-present run build
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked pnpm --filter @open-design/daemon deploy --legacy --prod --ignore-scripts /payload/daemon
+RUN cd /payload/daemon && npm rebuild better-sqlite3
+RUN cd /payload/daemon/node_modules/node-pty && node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --nodedir=/usr/local && node scripts/post-install.js
+
+FROM fc-e2b-registry.cn-shanghai.cr.aliyuncs.com/runtime/base@sha256:7fc0a62b7142494333ea3ad54d61299b1a531a287d5bad138c23c692708a3c16
+USER root
+RUN for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do if [ -f "$source" ]; then sed -i 's#http://mirrors.aliyun.com/debian-security#https://deb.debian.org/debian-security#g; s#http://mirrors.aliyun.com/debian#https://deb.debian.org/debian#g' "$source"; fi; done
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install -y --no-install-recommends chromium ffmpeg fonts-noto-core fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
+RUN useradd --uid 1002 --gid 1000 --no-create-home --home-dir /tmp/sandbox-media/home --shell /bin/sh od-media
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
+COPY --from=build /payload/daemon /opt/open-design/daemon
+COPY --from=build /source/skills /opt/open-design/resources/skills
+COPY --from=build /source/design-templates /opt/open-design/resources/design-templates
+COPY --from=build /source/design-systems /opt/open-design/resources/design-systems
+COPY --from=build /source/craft /opt/open-design/resources/craft
+COPY --from=build /source/plugins/_official /opt/open-design/resources/plugins/_official
+COPY --from=build /source/prompt-templates /opt/open-design/resources/prompt-templates
+COPY --from=build /source/assets/frames /opt/open-design/resources/assets/frames
+COPY --from=build /source/assets/community-pets /opt/open-design/resources/assets/community-pets
+COPY --from=build /source/data/plugin-previews /opt/open-design/resources/data/plugin-previews
+RUN ln -s /opt/open-design/daemon/bin/od.mjs /usr/local/bin/od
+ENV OD_RESOURCE_ROOT=/opt/open-design/resources \
+    OD_NODE_BIN=/usr/local/bin/node \
+    OD_BIN=/opt/open-design/daemon/bin/od.mjs \
+    OD_DAEMON_URL=http://127.0.0.1:7456 \
+    HYPERFRAMES_BROWSER_PATH=/usr/bin/chromium \
+    HYPERFRAMES_FFMPEG_PATH=/usr/bin/ffmpeg
+RUN node --version && od --help >/dev/null && chromium --version && ffmpeg -version >/dev/null
+ARG REVISION
+LABEL org.opencontainers.image.revision=$REVISION

@@ -10208,6 +10208,13 @@ export function ProjectView({
                   tone: 'error',
                   scope: 'chat-pane',
                 });
+              } else if (retryTarget) {
+                setProjectActionsToast({
+                  message: err.message,
+                  details: null,
+                  tone: 'error',
+                  scope: 'chat-pane',
+                });
               }
               activeCompletionNotificationRunsRef.current.delete(assistantId);
               setConversations((current) =>

@@ -3,6 +3,10 @@ export function createCloudDeviceLogin(
   browser: Pick<Window, 'open' | 'location'> | undefined = typeof window === 'undefined' ? undefined : window,
 ) {
   const enabled = process.env.NEXT_PUBLIC_OD_CLOUD_POC === '1' && Boolean(browser);
+  const configuredBase = process.env.NEXT_PUBLIC_OD_CLOUD_AUTH_BASE_URL;
+  const activationBases = configuredBase
+    ? [configuredBase]
+    : ['https://open-design.powerformer.net/cloud', 'https://open-design.ai/cloud'];
   let generation = 0;
   let popup: Window | null = null;
   let completed = false;
@@ -33,9 +37,15 @@ export function createCloudDeviceLogin(
       if (attempt !== generation || !enabled || !popup || popup.closed || !value || value === activationUrl) return;
       try {
         const url = new URL(value);
-        if (url.protocol !== 'https:' || url.username || url.password || url.port
-          || !['open-design.powerformer.net', 'open-design.ai'].includes(url.hostname)
-          || url.pathname !== '/cloud/cli/activate') return;
+        const allowed = activationBases.some((base) => {
+          const expected = new URL(base);
+          return expected.protocol === 'https:' && !expected.username && !expected.password
+            && !expected.port && !expected.search && !expected.hash
+            && ['/', '/cloud', '/cloud/'].includes(expected.pathname)
+            && url.origin === expected.origin
+            && url.pathname === `${expected.pathname.replace(/\/$/, '')}/cli/activate`;
+        });
+        if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !allowed) return;
         popup.location.replace(url.href);
         activationUrl = value;
       } catch { close(); }

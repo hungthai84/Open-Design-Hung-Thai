@@ -65,3 +65,25 @@ it('ignores delayed cleanup and URLs from a cancelled attempt after a new click'
   login.activate(activation, next);
   expect(popup.location.replace).toHaveBeenCalledExactlyOnceWith(activation);
 });
+
+it('pins a deployed build to its configured activation authority', () => {
+  vi.stubEnv('NEXT_PUBLIC_OD_CLOUD_POC', '1');
+  vi.stubEnv('NEXT_PUBLIC_OD_CLOUD_AUTH_BASE_URL', 'https://odcloud-amr.inner.nexu.space/cloud');
+  const { login, popup } = fixture();
+  login.begin();
+  for (const url of [activation, 'https://amr-4114.inner.nexu.space/cloud/cli/activate?deviceId=test', 'https://odcloud-amr.inner.nexu.space.evil.test/cloud/cli/activate',
+    'https://odcloud-amr.inner.nexu.space/cloud/cli/activate#other',
+    'https://odcloud-amr.inner.nexu.space/cli/activate']) login.activate(url);
+  expect(popup.location.replace).not.toHaveBeenCalled();
+  const isolated = 'https://odcloud-amr.inner.nexu.space/cloud/cli/activate?deviceId=test&userCode=ABC123';
+  login.activate(isolated);
+  expect(popup.location.replace).toHaveBeenCalledExactlyOnceWith(isolated);
+});
+
+it('does not fall back to another authority when isolated configuration is invalid', () => {
+  vi.stubEnv('NEXT_PUBLIC_OD_CLOUD_POC', '1');
+  vi.stubEnv('NEXT_PUBLIC_OD_CLOUD_AUTH_BASE_URL', 'https://user:secret@auth.example.test/cloud');
+  const { login, popup } = fixture();
+  login.begin(); login.activate(activation);
+  expect(popup.location.replace).not.toHaveBeenCalled();
+});
