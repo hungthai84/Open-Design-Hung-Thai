@@ -3091,12 +3091,43 @@ function OnboardingView({
         alertEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
         return true;
       }
-      const focusableField = document.querySelector<HTMLElement>(
-        '.onboarding-view__setup-panel input:not([disabled]), .onboarding-view__setup-panel select:not([disabled]), .onboarding-view__setup-panel button:not([disabled])',
+      if (runtime === 'byok') {
+        const missingFieldSelector =
+          !config.apiKey.trim()
+            ? '[data-onboarding-field="apiKey"]'
+            : !config.baseUrl.trim()
+              ? '[data-onboarding-field="baseUrl"]'
+              : !config.model.trim()
+                ? '[data-onboarding-field="model"]'
+                : null;
+
+        if (missingFieldSelector) {
+          const fieldEl = document.querySelector<HTMLElement>(missingFieldSelector);
+          if (fieldEl) {
+            fieldEl.focus();
+            fieldEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+            return true;
+          }
+        }
+      }
+
+      if (runtime === 'local') {
+        const agentEl = document.querySelector<HTMLElement>(
+          '.onboarding-view__agent-strip button.is-selected, .onboarding-view__agent-strip button:not([disabled])',
+        );
+        if (agentEl) {
+          agentEl.focus();
+          agentEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+          return true;
+        }
+      }
+
+      const fallbackInput = document.querySelector<HTMLElement>(
+        '.onboarding-view__setup-panel input:not([disabled]):not([type="button"]):not([type="submit"]), .onboarding-view__setup-panel select:not([disabled])',
       );
-      if (focusableField) {
-        focusableField.focus();
-        focusableField.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      if (fallbackInput) {
+        fallbackInput.focus();
+        fallbackInput.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
         return true;
       }
       return false;
@@ -4326,6 +4357,7 @@ function OnboardingByokSetupPanel({
         <span className="onboarding-view__field-row">
           <input
             type={apiKeyVisible ? 'text' : 'password'}
+            data-onboarding-field="apiKey"
             placeholder={API_KEY_PLACEHOLDERS[apiProtocol]}
             value={apiKey}
             onChange={(event) => onApiKeyChange(event.target.value)}
@@ -4341,6 +4373,7 @@ function OnboardingByokSetupPanel({
           <input
             type="url"
             inputMode="url"
+            data-onboarding-field="baseUrl"
             value={baseUrl}
             placeholder={selectedProvider?.baseUrl ?? 'https://api.anthropic.com'}
             onChange={(event) => onBaseUrlChange(event.target.value)}
@@ -4349,6 +4382,7 @@ function OnboardingByokSetupPanel({
         {modelOptions.length > 0 && !useDeploymentInput ? (
           <OnboardingDropdown
             label={t('settings.model')}
+            triggerDataField="model"
             placeholder={defaultKnownProviderModel(selectedProvider) || 'claude-sonnet-4-5'}
             value={model}
             options={modelOptions}
@@ -4367,6 +4401,7 @@ function OnboardingByokSetupPanel({
             </span>
             <input
               type="text"
+              data-onboarding-field="model"
               value={model}
               placeholder={
                 useDeploymentInput
@@ -4606,6 +4641,7 @@ type OnboardingDropdownBaseProps = {
    * installed Ollama model).
    */
   allowCustomValue?: boolean;
+  triggerDataField?: string;
 };
 
 type OnboardingDropdownProps =
@@ -4634,6 +4670,7 @@ export function OnboardingDropdown(props: OnboardingDropdownProps) {
     sourceTone,
     allowEmptyValue = false,
     allowCustomValue = false,
+    triggerDataField,
   } = props;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -4782,6 +4819,7 @@ export function OnboardingDropdown(props: OnboardingDropdownProps) {
       </span>
       <button
         type="button"
+        data-onboarding-field={triggerDataField}
         className={`onboarding-view__select-trigger${open ? ' is-open' : ''}${
           hasValue ? ' has-value' : ''
         }`}

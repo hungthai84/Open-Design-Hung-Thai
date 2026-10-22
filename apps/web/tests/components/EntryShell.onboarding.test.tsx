@@ -2374,6 +2374,111 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
   });
 
+  it('focuses the API key input when clicking Continue with an empty API key (#9016)', async () => {
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    renderOnboarding({
+      config: baseConfig({
+        mode: 'api',
+        apiProtocol: 'openai',
+        apiKey: '',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-test',
+      }),
+    });
+
+    await openByokRuntimeSetup();
+    const continueButton = screen.getByRole('button', { name: /^Continue$/i });
+    expect(continueButton.getAttribute('aria-disabled')).toBe('true');
+
+    fireEvent.click(continueButton);
+
+    const apiKeyInput = document.querySelector('[data-onboarding-field="apiKey"]');
+    expect(apiKeyInput).toBeTruthy();
+    expect(document.activeElement).toBe(apiKeyInput);
+  });
+
+  it('focuses the Base URL input when clicking Continue with an empty Base URL (#9016)', async () => {
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    renderOnboarding({
+      config: baseConfig({
+        mode: 'api',
+        apiProtocol: 'openai',
+        apiKey: 'sk-test-key',
+        baseUrl: '',
+        model: 'gpt-test',
+      }),
+    });
+
+    await openByokRuntimeSetup();
+    const continueButton = screen.getByRole('button', { name: /^Continue$/i });
+    expect(continueButton.getAttribute('aria-disabled')).toBe('true');
+
+    fireEvent.click(continueButton);
+
+    const baseUrlInput = document.querySelector('[data-onboarding-field="baseUrl"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(document.activeElement).toBe(baseUrlInput);
+  });
+
+  it('focuses the Model input when clicking Continue with an empty Model (#9016)', async () => {
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    renderOnboarding({
+      config: baseConfig({
+        mode: 'api',
+        apiProtocol: 'openai',
+        apiKey: 'sk-test-key',
+        baseUrl: 'https://api.openai.com/v1',
+        model: '',
+      }),
+    });
+
+    await openByokRuntimeSetup();
+    const continueButton = screen.getByRole('button', { name: /^Continue$/i });
+    expect(continueButton.getAttribute('aria-disabled')).toBe('true');
+
+    fireEvent.click(continueButton);
+
+    const modelInput = document.querySelector('[data-onboarding-field="model"]');
+    expect(modelInput).toBeTruthy();
+    expect(document.activeElement).toBe(modelInput);
+  });
+
   it('drops a BYOK validation that lands after its inputs changed', async () => {
     // The inputs stay editable while the test is in flight. A success for the
     // key the user has already replaced must not complete onboarding.
