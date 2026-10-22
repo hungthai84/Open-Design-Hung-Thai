@@ -613,8 +613,13 @@ describe('ChatComposer /search command', () => {
     expect(css).toContain('.staged-preview-card');
     expect(css).toContain('max-height: calc(100vh - 48px);');
     expect(css).toContain('.staged-preview-head');
-    expect(css).toContain('.staged-preview-card > img');
-    expect(css).toContain('object-fit: contain;');
+    expect(css).toContain(`.staged-preview-card > img,
+.staged-preview-card > video {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: min(70vh, 640px);
+  object-fit: contain;`);
   });
 
   it('expands /search into a first-action research command prompt', async () => {
