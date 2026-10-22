@@ -11,7 +11,8 @@ import {
 } from '../src/prompts/od-next-strategy.js';
 
 import { composeSystemPrompt } from '../src/prompts/system.js';
-import { composeOdNextMarkerProductionTurn } from '../src/prompts/od-next-production-marker.js';
+import { composeOdNextMarkerProductionTurn, renderOdNextProductionReadyInstructions } from '../src/prompts/od-next-production-marker.js';
+import { renderChatTurnHostProtocolInstructions } from '../src/prompts/chat-turn-host-protocol.js';
 
 const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
@@ -35,6 +36,17 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
     { name: 'generate', atoms: [{ name: 'file-write' }, { name: 'live-artifact' }] },
   ],
 };
+
+describe('comment identity host contract', () => {
+  it.each(['API/BYOK legacy', 'API/BYOK OD Next', 'OD Next host'] as const)('carries the conditional edit rule in %s', (path) => {
+    const prompt = path === 'OD Next host'
+      ? composeOdNextStrategyRequestPromptV2(recipe)
+      : composeSystemPrompt(path === 'API/BYOK legacy' ? {} : { odNextStrategyRecipe: recipe });
+    expect(prompt).toContain('Only when editing HTML that already contains data-od-comment-id');
+    expect(prompt).toContain('mint a fresh UUID for every copied or new node');
+    expect(prompt).toContain('never recycle a deleted identity');
+  });
+});
 
 describe('OD Next V2 prompt recipe', () => {
   it('reports runtime capabilities without restricting deliverables to the scene catalog', () => {
@@ -191,6 +203,7 @@ describe('OD Next V2 prompt recipe', () => {
         "## Native filesystem execution",
         "## Versioned recipe identity",
         "## Discovery, planning, and Build surface",
+        "## Stable request planning and Build context",
         "## OD Next core strategy",
         "# Core",
         "## OD Next general orchestration",
@@ -487,6 +500,7 @@ describe('OD Next V2 prompt recipe', () => {
     const bundle = composeOdNextStrategyBundleHeadV2(recipe);
     const production = composeOdNextMarkerProductionTurn({
       taskExecutionId: 'task-1', taskRunIndex: 1,
+      hostProtocolText: renderChatTurnHostProtocolInstructions('abc123', 'od_next_production').text,
     });
 
     expect(stableContext).toContain(context.memoryBody);
@@ -494,6 +508,15 @@ describe('OD Next V2 prompt recipe', () => {
     expect(core).toContain(recipe.coreStrategy);
     expect(request).toContain(recipe.coreStrategy);
     expect(production).toContain('This is the production turn');
+    expect(production).toContain("Use the language of the user's latest request");
+    expect(production).toContain('including the first progress update');
+    expect(production).toContain('Do not narrate internal Skill IDs');
+    expect(production).toContain('provide the requested plan and stop');
+    expect(production).toContain('Use the already loaded deliverable Skills');
+    expect(production).toContain('Core-authorized bounded check');
+    expect(production).toContain('<od-done key="abc123"/>');
+    expect(production).toContain('<od-next key="abc123"');
+    expect(production).toContain('<od-focus key="abc123"');
     for (const prompt of [core, stableContext, request, JSON.stringify(bundle), production]) {
       expect(prompt).not.toContain('task-brief');
       expect(prompt).not.toContain('rule-proposal');
@@ -544,7 +567,9 @@ describe('handheld device shell in the stable request context', () => {
   it('omits both facts when no shell was resolved', () => {
     expect(composeOdNextStrategyStableRequestContextV2({ memoryBody: 'Remember the operator audience.' }))
       .not.toContain('device-frame');
-    expect(composeOdNextStrategyStableRequestContextV2({})).toBe('');
+    const withoutShell = composeOdNextStrategyStableRequestContextV2({});
+    expect(withoutShell).not.toContain('device-frame');
+    expect(withoutShell).toContain('name="comment-identity-edit"');
   });
 });
 
@@ -634,4 +659,13 @@ describe('runtime plan tool in the stable request context', () => {
     expect(composeOdNextStrategyStableRequestContextV2({ agentId: 'kimi', planToolNote: '' }))
       .not.toContain('runtime-plan-tool');
   });
+});
+
+
+it('keeps planning progress in the user language without exposing host protocol details', () => {
+  const prompt = renderOdNextProductionReadyInstructions('a1b2');
+  expect(prompt).toContain('<od-production-ready key="a1b2" />');
+  expect(prompt).toContain('FIRST progress sentence');
+  expect(prompt).toContain('Keep the visible plan brief and result-focused');
+  expect(renderOdNextProductionReadyInstructions('invalid key')).toBe('');
 });
