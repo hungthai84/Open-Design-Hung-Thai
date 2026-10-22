@@ -1,4 +1,4 @@
-import { publicPath } from '@/runtime/web-path';
+import { publicPath } from '../runtime/web-path';
 import type { Dict } from '../i18n/types';
 import type { NotificationsConfig } from '../types';
 

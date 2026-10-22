@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from './web-path';
 import type {
   AmrWalletSnapshot,
   WorkspaceCollabContext,

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useEffect, useState } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import styles from './SketchEnginePrewarm.module.css';

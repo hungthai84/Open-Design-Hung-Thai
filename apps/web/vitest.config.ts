@@ -6,7 +6,6 @@ export default defineConfig({
     alias: {
       '@excalidraw/excalidraw': resolve(__dirname, 'tests/helpers/excalidraw-mock.tsx'),
       'motion/react': resolve(__dirname, 'tests/helpers/motion-mock.tsx'),
-      '@': resolve(__dirname, 'src'),
     },
   },
   test: {

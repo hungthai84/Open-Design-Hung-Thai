@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import {
   CLIENT_EXPERIENCE_DIAGNOSTIC_EVENT,
   parseClientExperienceDiagnostic,

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   TeamProject,

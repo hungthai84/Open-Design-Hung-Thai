@@ -13,7 +13,7 @@
 
 'use client';
 
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useEffect, useRef, useState } from 'react';
 
 interface XaiAuthStatus {

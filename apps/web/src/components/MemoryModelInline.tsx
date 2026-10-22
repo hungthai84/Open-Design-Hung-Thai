@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Inline "Memory model" picker — sits right next to the chat model
 // dropdown (both in CLI mode and BYOK mode) inside Settings →
 // Execution mode.

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // The ONE read of the team-shared project catalog
 // (`GET /api/workspace/projects/team`).
 //

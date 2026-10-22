@@ -1,4 +1,4 @@
-import { apiFetch, apiEventSource } from '@/runtime/web-path';
+import { apiFetch, apiEventSource } from '../runtime/web-path';
 import {
   useCallback,
   useEffect,

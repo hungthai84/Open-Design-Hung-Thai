@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from './web-path';
 // `useBrandExtract` — kick off a programmatic-first brand extraction.
 //
 // Extraction is no longer an in-place SSE pipeline. `POST /api/brands { url }`

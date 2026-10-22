@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CollabMemberRole } from '@open-design/contracts';
 import { navigate } from '../router';

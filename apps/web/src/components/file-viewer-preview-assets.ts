@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 /**
  * Root-relative project asset handling for FileViewer's srcDoc HTML preview.
  *

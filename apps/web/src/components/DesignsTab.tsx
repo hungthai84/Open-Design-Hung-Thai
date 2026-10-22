@@ -12,7 +12,7 @@ import {
 } from "../analytics/events";
 import { useT } from "../i18n";
 import { useWorkspaceContext } from "../collab/useWorkspaceContext";
-import { workspaceIdentityCacheKey } from "../collab/workspace-identity";
+import { currentWorkspaceAccountGeneration, workspaceIdentityCacheKey } from "../collab/workspace-identity";
 import {
 	getProjectCoverSnapshot,
 	projectCoverSnapshotKey,
@@ -37,6 +37,9 @@ import {
 import { LiveArtifactBadges } from "./LiveArtifactBadges";
 import { Toast } from "./Toast";
 import { apiPath } from "../runtime/web-path";
+import { ProjectDeleteConfirmDialog } from "./project-actions/ProjectDeleteConfirmDialog";
+import { useProjectDeleteFlow } from "./project-actions/useProjectDeleteFlow";
+import { useBatchProjectShareCount } from "./project-actions/useBatchProjectShareCount";
 import {
 	HtmlProjectCoverFrame,
 	coverFromProjectFile,
@@ -142,6 +145,7 @@ export function DesignsTab({
 	const t = useT();
 	const analytics = useAnalytics();
 	const { context: workspaceContext, loading: workspaceContextLoading } = useWorkspaceContext();
+	const deleteFlow = useProjectDeleteFlow({ onDelete, analyticsPage: "all_projects", workspaceContext });
 	// P0 page_view page_name=projects — fire once when the tab mounts so
 	// `/projects` landings register even before the user clicks anything.
 	// ref-keyed to survive re-renders that flip parent state without
@@ -185,6 +189,8 @@ export function DesignsTab({
 	} | null>(null);
 	const [confirmPending, setConfirmPending] = useState(false);
 	const [confirmError, setConfirmError] = useState<string | null>(null);
+	const [batchDeleteIds, setBatchDeleteIds] = useState<string[]>([]);
+	const batchShares = useBatchProjectShareCount(confirmTarget ? batchDeleteIds : [], workspaceContext);
 	const [view, setView] = useState<ViewMode>(() => {
 		if (typeof window === "undefined") return "grid";
 		try {
@@ -344,7 +350,9 @@ export function DesignsTab({
 	useEffect(() => {
 		try {
 			window.localStorage.setItem(DESIGNS_VIEW_STORAGE_KEY, view);
-		} catch {}
+		} catch {
+			// Storage may be disabled; keep the in-memory view selection usable.
+		}
 	}, [view]);
 
 	useEffect(() => {
@@ -497,13 +505,7 @@ export function DesignsTab({
 		setRenameInput("");
 	};
 	const handleDeleteProject = (project: Project) => {
-		setConfirmError(null);
-		setConfirmTarget({
-			title: t("designs.deleteTitle"),
-			message: t("designs.deleteConfirm", { name: project.name }),
-			confirmLabel: t("designs.menuDelete"),
-			onConfirm: () => onDelete(project.id),
-		});
+		deleteFlow.request(project);
 	};
 	const handleDuplicateProject = (project: Project) => {
 		if (!onDuplicate) return;
@@ -520,6 +522,7 @@ export function DesignsTab({
 		const ids = Array.from(selected);
 		if (ids.length === 0) return;
 		setConfirmError(null);
+		setBatchDeleteIds(ids);
 		setConfirmTarget({
 			title: t("designs.deleteTitle"),
 			message: t("designs.deleteSelectedConfirm", { n: ids.length }),
@@ -574,7 +577,9 @@ export function DesignsTab({
 	};
 
 	const commitConfirmTarget = async () => {
-		if (!confirmTarget || confirmPending) return;
+		if (!confirmTarget || confirmPending || (batchDeleteIds.length > 0 &&
+      (batchShares.pending || batchShares.failed || batchShares.count === null ||
+        batchShares.generation !== currentWorkspaceAccountGeneration()))) return;
 		const target = confirmTarget;
 		setConfirmError(null);
 		setConfirmPending(true);
@@ -585,6 +590,7 @@ export function DesignsTab({
 				return;
 			}
 			setConfirmTarget((current) => current === target ? null : current);
+			setBatchDeleteIds([]);
 		} catch (error) {
 			setConfirmError(error instanceof Error ? error.message : t("ds.actionFailed"));
 		} finally {
@@ -1231,6 +1237,18 @@ export function DesignsTab({
 					</DialogFooter>
 				</Dialog>
 			) : null}
+			{deleteFlow.target ? (
+				<ProjectDeleteConfirmDialog
+					projectName={deleteFlow.target.name}
+					activeShareCount={deleteFlow.activeShareCount}
+					shareReadStatus={deleteFlow.shareReadStatus}
+					pending={deleteFlow.pending}
+					failed={deleteFlow.failed}
+					errorMessage={deleteFlow.errorMessage}
+					onCancel={deleteFlow.cancel}
+					onConfirm={() => void deleteFlow.commit()}
+				/>
+			) : null}
 			{confirmTarget ? (
 				<Dialog
 					className="modal-confirm"
@@ -1238,6 +1256,7 @@ export function DesignsTab({
 					onClose={() => {
 						if (confirmPending) return;
 						setConfirmTarget(null);
+						setBatchDeleteIds([]);
 						setConfirmError(null);
 					}}
 					closeOnBackdrop={!confirmPending}
@@ -1245,6 +1264,11 @@ export function DesignsTab({
 				>
 					<DialogTitle id={confirmTitleId}>{confirmTarget.title}</DialogTitle>
 					<DialogDescription className="modal-confirm-message">{confirmTarget.message}</DialogDescription>
+					{batchDeleteIds.length > 0 && batchShares.count !== null && batchShares.count > 0 ? (
+						<DialogDescription>{t("designs.deleteActiveShares", { count: batchShares.count })}</DialogDescription>
+					) : null}
+					{batchDeleteIds.length > 0 && batchShares.pending ? <p role="status">{t("common.loading")}</p> : null}
+					{batchDeleteIds.length > 0 && batchShares.failed ? <p role="alert">{t("ds.actionFailed")}</p> : null}
 					{confirmError ? (
 						<p className="modal-confirm-error" role="alert">
 							{confirmError}
@@ -1256,6 +1280,7 @@ export function DesignsTab({
 							disabled={confirmPending}
 							onClick={() => {
 								setConfirmTarget(null);
+								setBatchDeleteIds([]);
 								setConfirmError(null);
 							}}
 						>
@@ -1265,7 +1290,7 @@ export function DesignsTab({
 							type="button"
 							className="primary danger"
 							autoFocus
-							disabled={confirmPending}
+							disabled={confirmPending || (batchDeleteIds.length > 0 && (batchShares.pending || batchShares.failed || batchShares.count === null || batchShares.generation !== currentWorkspaceAccountGeneration()))}
 							onClick={() => void commitConfirmTarget()}
 						>
 							{confirmTarget.confirmLabel}

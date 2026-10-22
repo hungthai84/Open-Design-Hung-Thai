@@ -1,4 +1,4 @@
-import { apiFetch, apiPath } from '@/runtime/web-path';
+import { apiFetch, apiPath } from '../runtime/web-path';
 // Shared GitHub star-count hook backing the topbar pill
 // (`GithubStarBadge`). The browser talks only to the local daemon,
 // which caches GitHub metadata and can return stale-on-error values

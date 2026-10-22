@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import type { AudioVoiceOption } from '@open-design/contracts';
 
 type JsonRecord = Record<string, unknown>;

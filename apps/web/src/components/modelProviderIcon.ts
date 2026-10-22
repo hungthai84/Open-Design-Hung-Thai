@@ -1,4 +1,4 @@
-import { publicPath } from '@/runtime/web-path';
+import { publicPath } from '../runtime/web-path';
 // Brand mark for a model id. Accepts both BYOK-style `provider/model` ids
 // (e.g. `anthropic/claude-sonnet-4-5`) and bare catalog ids (e.g.
 // `claude-fable-5`, `deepseek-v4-flash`): the vendor token is the slash

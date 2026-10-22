@@ -4,7 +4,7 @@ import {
   useState,
 } from 'react';
 import type { ConnectorDetail } from '@open-design/contracts';
-import { apiPath } from '@/runtime/web-path';
+import { apiPath } from '../runtime/web-path';
 
 const COMPOSIO_LOGO_SLUG_OVERRIDES: Record<string, string> = {
   google_drive: 'googledrive',

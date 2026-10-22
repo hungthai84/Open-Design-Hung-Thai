@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../../../runtime/web-path';
 // Sandboxed HTML preview surface — used for `examples/*` plugins
 // and any scenario plugin that ships a runnable `od.preview.entry`.
 //

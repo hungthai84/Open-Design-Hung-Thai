@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useI18n } from "../i18n";
 import { getOpenDesignHost } from "@open-design/host";

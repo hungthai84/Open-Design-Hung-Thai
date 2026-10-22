@@ -2314,9 +2314,6 @@ export function DesignBrowserPanel({
           commentsToAttachments([activeSavedComment]),
         );
         if (!commentSendCompleted(result, activeSavedComment.id)) return;
-        if (!onRemovePreviewComment) return;
-        const removed = await onRemovePreviewComment(activeSavedComment.id);
-        if (!removed) return;
         clearBrowserTool();
       } finally {
         setSendingComment(false);

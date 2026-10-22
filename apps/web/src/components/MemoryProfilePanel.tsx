@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Structured editor for the singleton user profile (id `user_profile`, type
 // `profile`). The profile is the PRE-loop foundation: the daemon injects it
 // into every task brief, so a few labelled fields here become the default

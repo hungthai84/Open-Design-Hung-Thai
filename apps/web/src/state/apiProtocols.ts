@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Shared metadata for the four API protocols the BYOK pickers offer.
 //
 // Originally these tables lived inline in `SettingsDialog.tsx`. The

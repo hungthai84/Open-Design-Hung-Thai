@@ -1,4 +1,4 @@
-import { webPathConfig } from '@/runtime/web-path';
+import { webPathConfig } from '../runtime/web-path';
 // Team collaboration client integration. Ties the daemon collab capabilities
 // together for a shared-project session: heartbeat presence, poll the published
 // head version (so a member knows when to pull), and report author-side changes

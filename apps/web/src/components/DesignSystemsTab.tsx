@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coalescedGet, evictCoalescedGet } from '../lib/coalesced-get';
 import { Button, VisuallyHidden } from '@open-design/components';
@@ -45,6 +45,8 @@ import {
   deleteDesignSystemDraft,
   DesignSystemDeleteError,
   fetchDesignSystem,
+  designSystemStaticUrl,
+  fetchDesignSystemStaticText,
   fetchProjectFileText,
   projectRawUrl,
   updateDesignSystemDraft,
@@ -1305,23 +1307,24 @@ function SystemRowPaletteLogo({ system }: { system: DesignSystemSummary }) {
 function useProjectLogoSrc(
   projectId: string | undefined,
   resourceReadIdentity: WorkspaceResourceReadIdentity | null,
+  publishedSystemId?: string,
 ): string | null | undefined {
   const resourceReadIdentityKey = workspaceResourceReadIdentityKey(resourceReadIdentity);
   const resourceReadIdentityRef = useRef(resourceReadIdentity);
   resourceReadIdentityRef.current = resourceReadIdentity;
-  const [src, setSrc] = useState<string | null | undefined>(projectId ? undefined : null);
+  const [src, setSrc] = useState<string | null | undefined>(projectId || publishedSystemId ? undefined : null);
   useEffect(() => {
-    if (!projectId) {
+    if (!projectId && !publishedSystemId) {
       setSrc(null);
       return;
     }
     let cancelled = false;
     const read = beginWorkspaceResourceScopedRead(resourceReadIdentityRef.current);
     setSrc(undefined);
-    void fetchProjectFileText(projectId, 'brand.json', {
-      cache: 'no-store',
-      workspaceContext: read.context,
-    }).then((raw) => {
+    const manifest = publishedSystemId
+      ? fetchDesignSystemStaticText(publishedSystemId, 'brand.json', read.context)
+      : fetchProjectFileText(projectId!, 'brand.json', { cache: 'no-store', workspaceContext: read.context });
+    void manifest.then((raw) => {
       if (cancelled || !read.isStillCurrent(resourceReadIdentityRef.current)) return;
       let primary: string | null = null;
       if (raw) {
@@ -1333,12 +1336,14 @@ function useProjectLogoSrc(
           // Not a valid brand.json (e.g. a non-brand "Create"d system) — no logo.
         }
       }
-      setSrc(primary ? projectRawUrl(projectId, primary, read.context) : null);
+      setSrc(primary ? publishedSystemId
+        ? designSystemStaticUrl(publishedSystemId, primary, read.context)
+        : projectRawUrl(projectId!, primary, read.context) : null);
     });
     return () => {
       cancelled = true;
     };
-  }, [projectId, resourceReadIdentityKey]);
+  }, [projectId, publishedSystemId, resourceReadIdentityKey]);
   return src;
 }
 
@@ -1358,6 +1363,7 @@ function SystemRowLogo({
   const projectLogo = useProjectLogoSrc(
     isUserSystem(system) ? system.projectId : undefined,
     resourceReadIdentity,
+    system.teamSynced ? system.id : undefined,
   );
 
   // Candidate srcs in priority order, skipping empties; `onError` advances to
@@ -1585,6 +1591,7 @@ function DesignSystemDetail({
     });
   }
   const { kit } = useDesignKit({
+    publishedAssets: Boolean(system.teamSynced),
     designSystemId: system.id,
     title: system.title,
     projectId,

@@ -1,4 +1,4 @@
-import { apiEventSource, apiFetch } from '@/runtime/web-path';
+import { apiEventSource, apiFetch } from '../runtime/web-path';
 // OD Library tab — the global asset registry grid.
 //
 // Shows every asset that has entered the system (clipper capture, manual

@@ -35,6 +35,8 @@ RUN corepack enable && \
     pnpm install --frozen-lockfile
 
 COPY apps ./apps
+# The web type check includes tests that import bundled plugin manifests.
+COPY plugins/_official ./plugins/_official
 RUN pnpm --filter @open-design/daemon build && \
     pnpm --filter @open-design/web build && \
     pnpm --filter @open-design/daemon deploy --legacy --prod /app/deploy/daemon && \
@@ -83,7 +85,6 @@ COPY assets ./assets
 # image, `loadManifest()` returns `{}` and every plugin silently falls back to
 # the live-iframe preview path — the exact cost the bakes exist to avoid.
 COPY data ./data
-COPY plugins/_official ./plugins/_official
 
 FROM ${RUNTIME_IMAGE}
 

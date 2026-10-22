@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from './web-path';
 // `useMemoryWrittenCard` — surface the memory component (design draft
 // `body-components.html`, 组件 8 「记忆组件」) after a turn actually writes
 // long-term memory.

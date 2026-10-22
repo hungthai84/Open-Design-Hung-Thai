@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Reusable "invite teammates" dialog for the team workspace.
 //
 // Opened from the team dropdown in the left rail. Ported VERBATIM (markup +

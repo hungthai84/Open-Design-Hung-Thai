@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { WorkspaceCollabContext } from '@open-design/contracts';
+import { buildWorkspacePermissions, buildWorkspaceSeatSummary, type WorkspaceCollabContext } from '@open-design/contracts';
 
 let connection: typeof import('../../src/providers/connection-test');
 let registry: typeof import('../../src/providers/registry');
@@ -37,6 +37,36 @@ describe('browser requests under a configured web base path', () => {
       '/open-design/api/workspace/billing/preflight?workspaceId=workspace&modelId=model',
       expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('uses prefixed sharing preflight and state reads without losing request identity', async () => {
+    const plan = { schemaVersion: 1 };
+    const state = { status: 'stopped', publication: null, freshness: 'unknown' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(plan))
+      .mockResolvedValueOnce(jsonResponse(state));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await registry.fetchProjectFileSharePlan('p', 'docs/page.html')).toEqual(plan);
+    expect(await registry.fetchProjectFilePublicShareState('p', 'docs/page.html')).toEqual(state);
+    expect(fetchMock.mock.calls[0]![0]).toBe('/open-design/api/projects/p/files/docs%2Fpage.html/share-plan');
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: 'POST' });
+    expect(fetchMock.mock.calls[1]![0]).toBe('/open-design/api/projects/p/files/docs%2Fpage.html/publish-public');
+    expect(new Headers(fetchMock.mock.calls[1]![1].headers).get('x-od-request-id')).toBeTruthy();
+  });
+
+  it('pulls remote comments below the public mount with the active workspace', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ comments: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const workspace: WorkspaceCollabContext = {
+      workspaceId: 'workspace', workspaceType: 'personal', workspaceMemberId: 'member', role: 'owner',
+      memberStatus: 'active', lifecycleState: 'active', billingState: 'active', planId: null,
+      providerMode: 'platform_credits', seatSummary: buildWorkspaceSeatSummary({ seatLimit: 1, usedSeats: 1 }),
+      permissions: buildWorkspacePermissions({ role: 'owner', lifecycleState: 'active' }),
+    };
+    expect(await registry.fetchPreviewComments('p', 'c', workspace, true)).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledWith('/open-design/api/projects/p/conversations/c/comments/pull',
+      expect.objectContaining({ method: 'POST', signal: expect.any(AbortSignal),
+        headers: expect.objectContaining({ 'x-od-workspace-id': 'workspace' }) }));
   });
 
   it('preserves absolute attachment paths from recorded agent output', () => {

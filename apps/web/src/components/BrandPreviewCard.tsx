@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Shared rich brand preview.
 //
 // Thin adapter: builds a normalized DesignKit from a BrandSummary and renders

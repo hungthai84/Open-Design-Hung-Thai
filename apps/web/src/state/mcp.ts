@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Web client for the daemon's external-MCP endpoints.
 //
 // `GET /api/mcp/servers` returns both the user's saved entries AND the

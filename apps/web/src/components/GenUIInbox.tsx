@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Plan §3.C3 / spec §10.3.4 — GenUI Inbox drawer.
 //
 // Lists every persisted surface for a project (project / conversation

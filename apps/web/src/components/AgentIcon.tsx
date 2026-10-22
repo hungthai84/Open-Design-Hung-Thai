@@ -1,4 +1,4 @@
-import { publicPath } from '@/runtime/web-path';
+import { publicPath } from '../runtime/web-path';
 import type { CSSProperties } from 'react';
 
 interface Props {

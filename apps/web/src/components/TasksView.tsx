@@ -1,4 +1,5 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
+import { usePageNavigationReady } from '../observability/navigation-timing';
 // Automations tab: one surface for scheduled routines, Orbit-style digests,
 // and live artifact refreshers. The daemon still stores these as routines;
 // the UI presents them as scheduled agent conversations.
@@ -450,6 +451,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [], 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  usePageNavigationReady({ page: 'tasks', visible: isActive && !loading, ready: isActive && !loading && !error, failure: isActive && !!error, scopeKey: tasksWorkspaceIdentity });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');

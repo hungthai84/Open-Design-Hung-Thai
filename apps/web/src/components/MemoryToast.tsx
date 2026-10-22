@@ -1,4 +1,4 @@
-import { apiEventSource } from '@/runtime/web-path';
+import { apiEventSource } from '../runtime/web-path';
 // Floats above everything else and surfaces a transient "Memory updated"
 // pill whenever the daemon emits a `kind: 'extract'` change event. We
 // only fire on extraction events so a manual edit in the settings panel

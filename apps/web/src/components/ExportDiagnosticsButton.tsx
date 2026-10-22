@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { Icon } from './Icon';

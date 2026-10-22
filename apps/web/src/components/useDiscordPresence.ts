@@ -1,4 +1,4 @@
-import { apiFetch, apiPath } from '@/runtime/web-path';
+import { apiFetch, apiPath } from '../runtime/web-path';
 // Shared Discord presence hook backing the entry Discord CTAs.
 //
 // The renderer asks the local daemon for public invite counts so we avoid
@@ -75,7 +75,7 @@ export function formatDiscordPresenceCount(count: number): string {
   return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`;
 }
 
-export function useDiscordPresence(): CachedPresence | null {
+export function useDiscordPresence(enabled = true): CachedPresence | null {
   const [presence, setPresence] = useState<CachedPresence | null>(() => {
     if (memoryCache) return memoryCache;
     const persisted = readPersistedCache();
@@ -84,6 +84,7 @@ export function useDiscordPresence(): CachedPresence | null {
   });
 
   useEffect(() => {
+    if (!enabled) return;
     const now = Date.now();
     const cached = memoryCache ?? readPersistedCache();
     if (cached && now - cached.ts < CACHE_TTL_MS) {
@@ -119,7 +120,7 @@ export function useDiscordPresence(): CachedPresence | null {
     return () => {
       active = false;
     };
-  }, []);
+  }, [enabled]);
 
-  return presence;
+  return enabled ? presence : null;
 }

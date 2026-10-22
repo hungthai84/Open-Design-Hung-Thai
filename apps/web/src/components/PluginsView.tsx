@@ -1,4 +1,6 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
+import { readCachedVisiblePlugins } from '../state/projects';
+import { usePageNavigationReady } from '../observability/navigation-timing';
 import {
   useCallback,
   useEffect,
@@ -1139,6 +1141,7 @@ export function ExtensionsMarketplace({
   const [marketplaces, setMarketplaces] = useState<PluginMarketplace[]>([]);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [navigationCatalogVerified, setNavigationCatalogVerified] = useState(false);
   const [loadedMarketplaceIdentity, setLoadedMarketplaceIdentity] = useState<string | null>(null);
   const marketplaceCatalogRequestGenerationRef = useRef(0);
   const sharedResourcesRequestGenerationRef = useRef(0);
@@ -1376,6 +1379,7 @@ export function ExtensionsMarketplace({
       workspaceIdentityCacheKey(read.context),
       read.context ? 'scoped' : 'headerless',
     ]);
+    const previousPluginCache = readCachedVisiblePlugins({ workspaceContext: read.context });
     setLoading(true);
     const [rows, allRows, catalogs, skillRows] = await Promise.all([
       listPlugins({ workspaceContext: read.context }),
@@ -1396,6 +1400,9 @@ export function ExtensionsMarketplace({
       || currentWorkspaceAccountGeneration() !== accountGeneration
       || !read.isStillCurrent(emContextRef.current)
     ) return;
+    const pluginCache = readCachedVisiblePlugins({ workspaceContext: read.context });
+    setNavigationCatalogVerified(pluginCache !== null && pluginCache !== previousPluginCache
+      && pluginCache.every(plugin => allRows.includes(plugin)));
     setPlugins(rows);
     setAllInstalledPlugins(allRows);
     setMarketplaces(catalogs);
@@ -2045,6 +2052,10 @@ export function ExtensionsMarketplace({
     loading
     || loadedMarketplaceIdentity !== marketplaceIdentity
     || (scope !== 'official' && loadedSharedIdentity !== marketplaceIdentity);
+
+  usePageNavigationReady({ page: 'plugins', visible: isActive && !catalogLoading,
+    ready: isActive && !workspaceContextLoading && !catalogLoading && navigationCatalogVerified,
+    failure: isActive && (workspaceContextFailure === 'unavailable' || (!catalogLoading && !navigationCatalogVerified)), scopeKey: marketplaceIdentity });
 
   if (cardDetail?.kind === 'skill') {
     const selectedSkill = cardDetail.skill;

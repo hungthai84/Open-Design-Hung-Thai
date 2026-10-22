@@ -32,6 +32,9 @@ export const ELECTRON_BUILDER_FILE_PATTERNS = [
   "**/*",
   "!**/node_modules/.bin",
   "!**/node_modules/electron{,/**/*}",
+  // Dependency tarballs can carry dotenv credentials; never ship them.
+  "!**/.env",
+  "!**/.env.*",
   "!**/*.map",
   "!**/*.tsbuildinfo",
   "!**/.next/cache",

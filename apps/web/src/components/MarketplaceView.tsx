@@ -1,4 +1,6 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
+import { readCachedVisiblePlugins } from '../state/projects';
+import { usePageNavigationReady } from '../observability/navigation-timing';
 // Plan G4 / spec §11.6 — Marketplace catalog grid.
 //
 // Lists every installed plugin as a card grid (the most reliable
@@ -29,6 +31,8 @@ export function MarketplaceView() {
   const [plugins, setPlugins] = useState<InstalledPluginRecord[]>([]);
   const [marketplaces, setMarketplaces] = useState<Marketplace[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  usePageNavigationReady({ page: 'marketplace', visible: !loading, ready: !loading && !loadFailed && readCachedVisiblePlugins() !== null, failure: loadFailed || (!loading && readCachedVisiblePlugins() === null) });
   const [filter, setFilter] = useState<'all' | 'trusted' | 'restricted'>('all');
 
   useEffect(() => {
@@ -36,14 +40,15 @@ export function MarketplaceView() {
     void Promise.all([
       listPlugins(),
       apiFetch('/api/marketplaces')
-        .then((r) => (r.ok ? r.json() : { marketplaces: [] }))
+        .then((r) => { if (!r.ok) setLoadFailed(true); return r.ok ? r.json() : { marketplaces: [] }; })
         .then((d) => (d?.marketplaces ?? []) as Marketplace[]),
     ]).then(([rows, mps]) => {
       if (cancelled) return;
+      if (readCachedVisiblePlugins() !== rows) setLoadFailed(true);
       setPlugins(rows);
       setMarketplaces(mps);
       setLoading(false);
-    });
+    }).catch(() => { if (!cancelled) { setLoadFailed(true); setLoading(false); } });
     return () => {
       cancelled = true;
     };

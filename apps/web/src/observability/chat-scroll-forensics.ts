@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 /**
  * A whole-scene capture of the chat scroller, taken on demand and shipped
  * inside the diagnostics zip.

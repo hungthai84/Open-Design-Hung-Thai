@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // DesignKitView — the shared brand.html-style kit layout.
 //
 // Renders a normalized DesignKit (see runtime/design-kit.ts) as the full module

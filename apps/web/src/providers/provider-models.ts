@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import type {
   ProviderModelsRequest,
   ProviderModelsResponse,

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Plan G4 / spec §11.6 — installed extension detail.
 //
 // This route intentionally presents a curated, full-page summary for people

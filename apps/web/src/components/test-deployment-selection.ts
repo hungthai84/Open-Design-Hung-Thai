@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TestRuntimeDeploymentCatalogPage } from "@open-design/contracts/api/touchpointTestRuntime";
 import { emitWebTouchpointDiagnostic } from "./touchpoint-component";

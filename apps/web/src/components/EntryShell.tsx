@@ -1,5 +1,5 @@
-import { publicPath } from '@/runtime/web-path';
-import { apiFetch } from '@/runtime/web-path';
+import { publicPath } from '../runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // EntryShell — the centered-hero entry layout.
 //
 // This component owns the entire JSX render and local UI state for

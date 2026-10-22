@@ -1,4 +1,4 @@
-import { ensureWebBasePath } from '@/runtime/web-path';
+import { ensureWebBasePath } from '../runtime/web-path';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 
 /**

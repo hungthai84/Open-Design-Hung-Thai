@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from './runtime/web-path';
 export type MessageCenterFilter = 'all' | 'unread' | 'read';
 
 export interface MessageCenterMessage {

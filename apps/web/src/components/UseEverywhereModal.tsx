@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Use OpenDesign Everywhere — modal entry that documents OpenDesign's
 // non-UI surfaces (CLI, MCP, HTTP, Skills) and ships a one-click "copy
 // guide for an agent" payload. Reachable from the entry top-bar and

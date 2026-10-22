@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Wraps POST /api/projects/:id/finalize/<provider> for the Finalize
 // design package button (#451). The daemon route runs synchronously for
 // 60–120 s, so the hook owns:

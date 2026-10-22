@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../../../runtime/web-path';
 import { useEffect, useState } from 'react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { workspaceProjectHeaders } from '../../../collab/workspace-identity';

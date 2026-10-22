@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // Live AIHubMix model catalogues for the media pickers.
 //
 // The static IMAGE_MODELS / VIDEO_MODELS / AUDIO_MODELS_BY_KIND registries only

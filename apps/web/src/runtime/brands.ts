@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from './web-path';
 // Brand lookup shared by every design-system picker.
 //
 // A finalized brand registers a `user:<id>` design system (BrandMeta

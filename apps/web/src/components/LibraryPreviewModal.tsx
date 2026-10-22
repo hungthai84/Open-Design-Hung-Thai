@@ -1,4 +1,4 @@
-import { apiFetch } from '@/runtime/web-path';
+import { apiFetch } from '../runtime/web-path';
 // OD Library — full-size, kind-aware asset preview.
 //
 // The grid only shows a thumbnail; this modal renders the asset for real:
