@@ -142,6 +142,7 @@ import {
   fetchTeamProjectsCatalog,
 } from './collab/team-projects-catalog';
 import { useWorkspaceInvalidation } from './collab/workspace-events';
+import { useProjectCatalogEvents } from './hooks/useProjectCatalogEvents';
 import { useWorkspaceSnapshotActivation } from './collab/workspace-snapshot-activation';
 import { workspaceProjectHeaders } from './collab/workspace-identity';
 import {
@@ -2613,6 +2614,12 @@ function AppInner() {
     });
   }, [refreshProjectsStrict]);
   refreshProjectCatalogRef.current = refreshProjectsAfterTeamCatalogChange;
+
+  // Projects created by other clients (`od` CLI, MCP bridge) never pass through
+  // this shell's own create path, so the daemon announces them instead.
+  useProjectCatalogEvents(() => {
+    void refreshProjects();
+  });
 
   useEffect(() => {
     // Bootstrap already reads this exact scope on mount. Only re-list after

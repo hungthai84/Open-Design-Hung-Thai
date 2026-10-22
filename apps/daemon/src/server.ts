@@ -919,6 +919,7 @@ import { registerSocialShareRoutes } from './routes/social-share.js';
 import { registerOpenDesignPublicMetadataRoutes } from './routes/open-design-public-metadata.js';
 import { registerWhatsNewRoutes } from './routes/whats-new.js';
 import { registerMemoryRoutes } from './routes/memory.js';
+import { createProjectCatalogEvents, registerProjectCatalogEventsRoute } from './routes/project-catalog-events.js';
 import {
   createCollabPresenceCloudClient,
   registerCollabPresenceRoutes,
@@ -8916,7 +8917,12 @@ export async function startServer({
     listProjects,
     listUnboundProjects,
   };
-  const projectEventDeps = { subscribeFileEvents, activeProjectEventSinks };
+  const projectCatalogEvents = createProjectCatalogEvents();
+  const projectEventDeps = {
+    subscribeFileEvents,
+    activeProjectEventSinks,
+    emitProjectCatalogChanged: () => projectCatalogEvents.emitChanged(),
+  };
   const importDeps = { importClaudeDesignZip, projectDir, detectEntryFile };
   const projectExportDeps = {
     createProjectArchiveStream,
@@ -9162,6 +9168,10 @@ export async function startServer({
         throw error;
       }
     },
+  });
+  registerProjectCatalogEventsRoute(app, {
+    catalogEvents: projectCatalogEvents,
+    createSseResponse,
   });
   registerProjectRoutes(app, {
     db,
