@@ -14,6 +14,7 @@ import {
 
 import { loadArtifactDocument } from "./deck-capture.js";
 import { waitForPrintableContent } from "./pdf-export.js";
+import { showBackgroundRenderWindow } from './background-render-window.js';
 
 const DEFAULT_FRAME_RATE = 30;
 const MAX_FRAME_COUNT = 1_000_000;
@@ -149,8 +150,7 @@ export async function renderDeterministicFrames(
     });
 
     window.setContentSize(Math.round(input.width), Math.round(input.height));
-    window.setOpacity(0);
-    window.showInactive();
+    showBackgroundRenderWindow(window);
 
     const metadata = (await deadline.wait(
       window.webContents.executeJavaScript(
