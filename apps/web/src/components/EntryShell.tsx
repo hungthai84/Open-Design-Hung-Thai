@@ -2399,6 +2399,7 @@ function OnboardingView({
   const agentAutoTestKeyRef = useRef<string | null>(null);
   const agentTestRunRef = useRef<OnboardingInlineTestRun | null>(null);
   const providerTestRunRef = useRef<OnboardingInlineTestRun | null>(null);
+  const runtimeTestStatusRef = useRef<HTMLParagraphElement | null>(null);
   const providerModelAutoSelectRef = useRef({
     model: config.model,
     providerModelsInputKey: '',
@@ -2529,6 +2530,18 @@ function OnboardingView({
         : connectGateReason === 'no_runtime'
           ? t('settings.onboardingGateTooltipNoRuntime')
           : null;
+  const hasRuntimeTestError =
+    runtime === 'local'
+      ? visibleAgentTestState.status === 'done' && !visibleAgentTestState.result.ok
+      : runtime === 'byok'
+        ? visibleProviderTestState.status === 'done' && !visibleProviderTestState.result.ok
+        : false;
+  const activeTestStatusId =
+    runtime === 'local'
+      ? 'onboarding-agent-test-status'
+      : runtime === 'byok'
+        ? 'onboarding-provider-test-status'
+        : undefined;
 
   const hasRestorableModelSourceConfig =
     config.mode === 'api'
@@ -3063,14 +3076,56 @@ function OnboardingView({
     }
   }
 
+  function focusRuntimeTestFeedback() {
+    const applyFocus = () => {
+      const alertEl =
+        runtimeTestStatusRef.current
+        ?? document.querySelector<HTMLElement>(
+          '.onboarding-view__setup-panel [role="alert"], .onboarding-view__action-status[role="alert"], .onboarding-view__test-status.is-error, .onboarding-view__test-status.is-warn',
+        );
+      if (alertEl) {
+        if (!alertEl.hasAttribute('tabindex')) {
+          alertEl.setAttribute('tabindex', '-1');
+        }
+        alertEl.focus();
+        alertEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+        return true;
+      }
+      const focusableField = document.querySelector<HTMLElement>(
+        '.onboarding-view__setup-panel input:not([disabled]), .onboarding-view__setup-panel select:not([disabled]), .onboarding-view__setup-panel button:not([disabled])',
+      );
+      if (focusableField) {
+        focusableField.focus();
+        focusableField.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+        return true;
+      }
+      return false;
+    };
+
+    if (!applyFocus()) {
+      queueMicrotask(() => {
+        if (!applyFocus()) {
+          setTimeout(applyFocus, 0);
+        }
+      });
+    }
+  }
+
   async function handlePrimaryAction() {
-    if (connectStepBlocked || continuePending) return;
+    if (connectStepBlocked) {
+      focusRuntimeTestFeedback();
+      return;
+    }
+    if (continuePending) return;
     if (runtime === 'local' && selectedAgent) {
       const startedInputKey = agentTestInputKey;
       const testResult =
         settledRuntimeValidation(visibleAgentTestState)
         ?? (await awaitRuntimeValidation(testAgentInline));
-      if (!testResult?.ok) return;
+      if (!testResult?.ok) {
+        focusRuntimeTestFeedback();
+        return;
+      }
       if (!continueAttemptStillCurrent('local', startedInputKey)) return;
       await onConfigPersist({
         ...config,
@@ -3086,7 +3141,10 @@ function OnboardingView({
       const testResult =
         settledRuntimeValidation(visibleProviderTestState)
         ?? (await awaitRuntimeValidation(testProviderInline));
-      if (!testResult?.ok) return;
+      if (!testResult?.ok) {
+        focusRuntimeTestFeedback();
+        return;
+      }
       if (!continueAttemptStillCurrent('byok', startedInputKey)) return;
       await onConfigPersist({ ...config, mode: 'api' });
       emitOnboardingClick('continue', 'continue', { runtime_type: 'byok' });
@@ -3927,6 +3985,7 @@ function OnboardingView({
                   testState={visibleAgentTestState}
                   canTest={canTestAgent}
                   onTest={() => void testAgentInline()}
+                  statusRef={runtimeTestStatusRef}
                 />
               ) : null}
               {runtime === 'byok' ? (
@@ -3968,6 +4027,7 @@ function OnboardingView({
                   modelsState={visibleProviderModelsState}
                   canFetchModels={canFetchProviderModels}
                   onFetchModels={() => void fetchProviderModelsInline()}
+                  statusRef={runtimeTestStatusRef}
                 />
               ) : null}
             </div>
@@ -3985,6 +4045,7 @@ function OnboardingView({
               disabled={amrLoginPending || amrLoginCancelPending || continuePending}
               aria-disabled={connectStepBlocked || undefined}
               aria-busy={continuePending || undefined}
+              aria-describedby={hasRuntimeTestError ? activeTestStatusId : undefined}
               data-tooltip={connectGateTooltip ?? undefined}
               data-tooltip-placement="top"
             >
@@ -4022,6 +4083,7 @@ function OnboardingCliSetupPanel({
   testState,
   canTest,
   onTest,
+  statusRef,
 }: {
   agents: AgentInfo[];
   daemonLive: boolean;
@@ -4036,6 +4098,7 @@ function OnboardingCliSetupPanel({
   testState: OnboardingRuntimeTestState;
   canTest: boolean;
   onTest: () => void;
+  statusRef?: React.Ref<HTMLParagraphElement>;
 }) {
   const t = useT();
   const scanning = scanStatus === 'scanning';
@@ -4122,11 +4185,15 @@ function OnboardingCliSetupPanel({
         />
       ) : null}
       {testState.status === 'running' ? (
-        <p className="onboarding-view__test-status is-running" role="status">
+        <p className="onboarding-view__test-status is-running" role="status" aria-live="polite">
           {t('settings.testRunning')}
         </p>
       ) : testState.status === 'done' ? (
         <p
+          ref={statusRef}
+          id="onboarding-agent-test-status"
+          tabIndex={testState.result.ok ? undefined : -1}
+          aria-live={testState.result.ok ? 'polite' : 'assertive'}
           className={`onboarding-view__test-status is-${onboardingTestVariant(
             testState.result,
           )}`}
@@ -4164,6 +4231,7 @@ function OnboardingByokSetupPanel({
   modelsState,
   canFetchModels,
   onFetchModels,
+  statusRef,
 }: {
   apiProtocol: ApiProtocol;
   apiKey: string;
@@ -4191,6 +4259,7 @@ function OnboardingByokSetupPanel({
     | { status: 'done'; inputKey: string; result: ProviderModelsResponse };
   canFetchModels: boolean;
   onFetchModels: () => void;
+  statusRef?: React.Ref<HTMLParagraphElement>;
 }) {
   const t = useT();
   const running = testState.status === 'running';
@@ -4310,11 +4379,14 @@ function OnboardingByokSetupPanel({
         )}
       </div>
       {modelsState.status === 'running' ? (
-        <p className="onboarding-view__test-status is-running" role="status">
+        <p className="onboarding-view__test-status is-running" role="status" aria-live="polite">
           {t('settings.fetchModelsRunning')}
         </p>
       ) : modelsState.status === 'done' ? (
         <p
+          id="onboarding-provider-models-status"
+          tabIndex={modelsState.result.ok ? undefined : -1}
+          aria-live={modelsState.result.ok ? 'polite' : 'assertive'}
           className={`onboarding-view__test-status is-${onboardingProviderModelsVariant(
             modelsState.result,
           )}`}
@@ -4324,11 +4396,15 @@ function OnboardingByokSetupPanel({
         </p>
       ) : null}
       {testState.status === 'running' ? (
-        <p className="onboarding-view__test-status is-running" role="status">
+        <p className="onboarding-view__test-status is-running" role="status" aria-live="polite">
           {t('settings.testRunning')}
         </p>
       ) : testState.status === 'done' ? (
         <p
+          ref={statusRef}
+          id="onboarding-provider-test-status"
+          tabIndex={testState.result.ok ? undefined : -1}
+          aria-live={testState.result.ok ? 'polite' : 'assertive'}
           className={`onboarding-view__test-status is-${onboardingTestVariant(
             testState.result,
           )}`}

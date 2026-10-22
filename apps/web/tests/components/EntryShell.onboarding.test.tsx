@@ -2250,7 +2250,12 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(continueButton.getAttribute('aria-disabled')).toBeNull();
 
     fireEvent.click(continueButton);
-    expect(await screen.findByText(/rate-limited the test/i)).toBeTruthy();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('rate-limited the test');
+    expect(document.activeElement).toBe(alert);
+    expect(alert.getAttribute('aria-live')).toBe('assertive');
+    expect(alert.getAttribute('tabindex')).toBe('-1');
+    expect(continueButton.getAttribute('aria-describedby')).toBe('onboarding-provider-test-status');
     expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
 
     fireEvent.click(continueButton);
@@ -2258,6 +2263,115 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
       expect(testCalls).toBe(2);
       expect(props.onCompleteOnboarding).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('focuses and announces connection failure when clicking Continue on a failed BYOK setup (#9016)', async () => {
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      if (url.endsWith('/api/provider/models') && init?.method === 'POST') {
+        return jsonResponse({
+          ok: true,
+          kind: 'success',
+          latencyMs: 10,
+          models: [{ id: 'gpt-test', label: 'GPT Test' }],
+        });
+      }
+      if (url.endsWith('/api/test/connection') && init?.method === 'POST') {
+        return jsonResponse({
+          ok: false,
+          kind: 'unknown',
+          latencyMs: 15,
+          model: 'gpt-test',
+          detail: 'Insufficient balance. Your Cline Credits balance is $-0.01',
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const props = renderOnboarding({
+      config: baseConfig({
+        mode: 'api',
+        apiProtocol: 'openai',
+        apiKey: 'sk-test',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-test',
+        apiProviderBaseUrl: 'https://api.openai.com/v1',
+      }),
+    });
+
+    await openByokRuntimeSetup();
+    const continueButton = screen.getByRole('button', { name: /^Continue$/i });
+
+    // Click Continue with the failing connection
+    fireEvent.click(continueButton);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Insufficient balance');
+    expect(document.activeElement).toBe(alert);
+    expect(alert.getAttribute('aria-live')).toBe('assertive');
+    expect(alert.getAttribute('tabindex')).toBe('-1');
+    expect(alert.id).toBe('onboarding-provider-test-status');
+    expect(continueButton.getAttribute('aria-describedby')).toBe('onboarding-provider-test-status');
+    expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
+
+    // Clicking Continue again while failed re-focuses the alert and preserves announcement
+    fireEvent.click(continueButton);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(alert);
+    });
+  });
+
+  it('focuses and announces connection failure when clicking Continue on a failed Local CLI agent (#9016)', async () => {
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      if (url.endsWith('/api/test/connection') && init?.method === 'POST') {
+        return jsonResponse({
+          ok: false,
+          kind: 'agent_not_installed',
+          latencyMs: 0,
+          agentName: 'Claude Code',
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const props = renderOnboarding({
+      config: baseConfig({
+        agentId: 'claude-code',
+      }),
+      agents: [amrAgent(), cliAgent()],
+      onRefreshAgents: vi.fn(() => [amrAgent(), cliAgent()]),
+    });
+
+    await openLocalRuntimeSetup();
+    const continueButton = screen.getByRole('button', { name: /^Continue$/i });
+
+    fireEvent.click(continueButton);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Claude Code is not installed');
+    expect(document.activeElement).toBe(alert);
+    expect(alert.getAttribute('aria-live')).toBe('assertive');
+    expect(alert.getAttribute('tabindex')).toBe('-1');
+    expect(alert.id).toBe('onboarding-agent-test-status');
+    expect(continueButton.getAttribute('aria-describedby')).toBe('onboarding-agent-test-status');
+    expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
   });
 
   it('drops a BYOK validation that lands after its inputs changed', async () => {
