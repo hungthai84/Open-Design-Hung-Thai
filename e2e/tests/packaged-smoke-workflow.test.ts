@@ -2121,6 +2121,7 @@ process.stdin.on("end", () => {
 
     const e2eVitestGate = sectionBetween(tests, "  e2e_vitest:", "  daemon_unit_tests:");
     expect(e2eVitestGate).toContain("ref: ${{ inputs.commit }}");
+    expect(e2eVitestGate).toContain("runs-on: ubuntu-24.04");
     expect(e2eVitestGate).toContain("playwright install --with-deps chromium");
     expect(e2eVitestGate).toContain("Allow Chromium user namespaces on GitHub Ubuntu");
     expect(e2eVitestGate).toContain("kernel.apparmor_restrict_unprivileged_userns=0");

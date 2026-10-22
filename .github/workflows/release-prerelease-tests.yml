@@ -58,7 +58,7 @@ jobs:
       suite: p0
   e2e_vitest:
     name: E2E Vitest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
