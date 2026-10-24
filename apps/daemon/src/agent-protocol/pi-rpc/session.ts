@@ -224,18 +224,15 @@ export function attachPiRpcSession({
     }
   };
 
-  const isChildDeadOrClosing = (): boolean =>
+  const isChildDead = (): boolean =>
     terminationProvenance === 'natural' ||
     child.killed ||
     child.exitCode != null ||
-    child.signalCode != null ||
-    Boolean(stdout.readableEnded) ||
-    Boolean(stdout.closed) ||
-    Boolean(stdout.destroyed);
+    child.signalCode != null;
 
+  // Process-level exit evidence: do not cancel teardown on stdout EOF/close,
+  // since a process may close its stdout stream while remaining alive.
   child.once('exit', markNaturalExit);
-  stdout.once('close', markNaturalExit);
-  stdout.once('end', markNaturalExit);
 
   let nextRpcId = 1;
   let stdinOpen = true;
@@ -436,18 +433,27 @@ export function attachPiRpcSession({
       } catch (err: unknown) {
         fail(`stdin close: ${errorMessage(err)}`);
       }
-      if (isChildDeadOrClosing()) {
+      if (isChildDead()) {
         markNaturalExit();
       } else {
         // Grace period before SIGTERM. Configurable via PI_GRACEFUL_SHUTDOWN_MS
         // for resource-constrained machines where the event loop drains slowly.
         const shutdownMs = Number(process.env.PI_GRACEFUL_SHUTDOWN_MS) || 5000;
-        shutdownTimer = setTimeout(() => {
-          shutdownTimer = null;
-          if (isChildDeadOrClosing()) {
-            markNaturalExit();
+        const attemptShutdown = (deferred = false): void => {
+          if (isChildDead()) return;
+
+          // If stdout ended, the child might have called process.exit() and Node's
+          // waitpid process reaper is in-flight. Defer briefly before dispatching
+          // SIGTERM so that a natural exit isn't preempted by the fallback kill.
+          const stdoutEnded = Boolean(stdout.readableEnded || stdout.closed || stdout.destroyed);
+          if (stdoutEnded && !deferred) {
+            shutdownTimer = setTimeout(() => {
+              shutdownTimer = null;
+              attemptShutdown(true);
+            }, 30);
             return;
           }
+
           try {
             const delivered = child.kill('SIGTERM');
             if (delivered) {
@@ -459,6 +465,11 @@ export function attachPiRpcSession({
           } catch {
             markNaturalExit();
           }
+        };
+
+        shutdownTimer = setTimeout(() => {
+          shutdownTimer = null;
+          attemptShutdown(false);
         }, shutdownMs);
       }
     }

@@ -1385,16 +1385,18 @@ test('attachPiRpcSession termination provenance: competing shutdown when stdout 
     feedStdoutLines(child, [{ type: 'agent_end' }]);
     // Simulate process terminating in OS: stdout EOF reached while Node waitpid has not yet populated child.exitCode
     child.stdout.end();
-    // Wait for the shutdown timer to fire while child.exitCode is still null
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // Yield briefly so the initial shutdown timer fires and defers to recheck the EOF race
+    await new Promise((resolve) => setTimeout(resolve, 15));
 
-    // The shutdown timer must NOT dispatch SIGTERM to an already-closing process
+    // Process-level exit is reaped with 143 during the deferred EOF check window
+    child.emit('exit', 143, null);
+    // Wait past the deferred check window to ensure SIGTERM was cancelled by process-level exit
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The shutdown timer must NOT dispatch SIGTERM to an already-exited process
     assert.equal(child.killed, false);
     assert.equal(session.completionShutdownRequested(), false);
     assert.equal(session.getTerminationProvenance?.(), 'natural');
-
-    // Then child process exit is reaped with 143
-    child.emit('exit', 143, null);
 
     const verdict = classifyChatRunCloseStatus({
       cancelRequested: false,
@@ -1407,6 +1409,42 @@ test('attachPiRpcSession termination provenance: competing shutdown when stdout 
       artifactProducedThisRun: false,
     });
     assert.equal(verdict, 'failed');
+  } finally {
+    if (originalGrace === undefined) delete process.env.PI_GRACEFUL_SHUTDOWN_MS;
+    else process.env.PI_GRACEFUL_SHUTDOWN_MS = originalGrace;
+  }
+});
+
+test('attachPiRpcSession termination provenance: fallback SIGTERM terminates process when stdout closes while process remains alive (#9050)', async () => {
+  const originalGrace = process.env.PI_GRACEFUL_SHUTDOWN_MS;
+  process.env.PI_GRACEFUL_SHUTDOWN_MS = '10';
+  try {
+    const { child, session } = createSession();
+    feedStdoutLines(child, [{ type: 'agent_end' }]);
+    // Child closes stdout stream but does NOT exit (remains alive in its event loop)
+    child.stdout.end();
+    // Wait for the shutdown timer (10ms) + deferred check (30ms) to fire
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // Fallback SIGTERM must be dispatched to terminate the lingering child
+    assert.equal(child.killed, true);
+    assert.equal(session.completionShutdownRequested(), true);
+    assert.equal(session.getTerminationProvenance?.(), 'shutdown');
+
+    // Child terminates from the host SIGTERM
+    child.emit('exit', null, 'SIGTERM');
+
+    const verdict = classifyChatRunCloseStatus({
+      cancelRequested: false,
+      code: null,
+      signal: 'SIGTERM',
+      acpCleanCompletion: session.completedSuccessfully(),
+      acpCompletionShutdownRequested: session.completionShutdownRequested(),
+      artifactQuietShutdownRequested: false,
+      turnCompletedCleanly: false,
+      artifactProducedThisRun: false,
+    });
+    assert.equal(verdict, 'succeeded');
   } finally {
     if (originalGrace === undefined) delete process.env.PI_GRACEFUL_SHUTDOWN_MS;
     else process.env.PI_GRACEFUL_SHUTDOWN_MS = originalGrace;

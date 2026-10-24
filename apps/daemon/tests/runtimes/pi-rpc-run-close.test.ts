@@ -29,6 +29,7 @@ describe('Pi RPC public Run close', () => {
   it.skipIf(process.platform === 'win32').each([
     { mode: 'success', expected: 'succeeded' },
     { mode: 'sigterm-exit', expected: 'succeeded' },
+    { mode: 'stdout-close-alive', expected: 'succeeded' },
     { mode: 'nonzero', expected: 'failed' },
     { mode: 'error', expected: 'failed' },
     { mode: 'cancel', expected: 'canceled' },
@@ -60,6 +61,9 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (mode === 'cancel') return;
   if (mode === 'error') W({ type: 'message_update', assistantMessageEvent: { type: 'error', reason: 'Native Pi fixture failure' } });
   W({ type: 'agent_end' });
+  if (mode === 'stdout-close-alive') {
+    try { fs.closeSync(1); } catch {}
+  }
   if (mode === 'nonzero') process.exit(143);
 });
 `, 'utf8');
@@ -107,6 +111,9 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     } else if (mode === 'sigterm-exit') {
       expect(run.exitCode).toBe(143);
       expect(run.signal ?? null).toBeNull();
+      expect(run.error ?? null).toBeNull();
+    } else if (mode === 'stdout-close-alive') {
+      expect(run.signal).toBe('SIGTERM');
       expect(run.error ?? null).toBeNull();
     } else if (mode === 'nonzero') {
       expect(run.exitCode).toBe(143);
