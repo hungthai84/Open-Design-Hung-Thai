@@ -837,7 +837,7 @@ describe('native OpenCode child evidence', () => {
     })).resolves.toEqual([]);
   });
 
-  it('falls back to the 1.x export shape when the CLI does not know session export', async () => {
+  it('falls back to the isolated 1.x export shape when the CLI does not know session export', async () => {
     const data = fixture();
     execAgentFileMock.mockRejectedValueOnce(Object.assign(new Error('exit 1'), {
       stdout: '',
@@ -861,12 +861,70 @@ describe('native OpenCode child evidence', () => {
       ['session', 'export', 'ses_child_synthetic', '--sanitize'],
       expect.anything(),
     );
+    // `--pure` must be on the FIRST legacy attempt: without it the export
+    // loads the user's plugins, and a 1.x CLI that accepts the bare legacy
+    // command would never reach an isolated shape.
     expect(execAgentFileMock).toHaveBeenNthCalledWith(
       2,
+      '/opt/open-design/opencode',
+      ['export', 'ses_child_synthetic', '--sanitize', '--pure'],
+      expect.anything(),
+    );
+  });
+
+  it('drops --pure only when the 1.x CLI rejects that flag itself', async () => {
+    const data = fixture();
+    execAgentFileMock.mockRejectedValueOnce(Object.assign(new Error('exit 1'), {
+      stdout: '',
+      stderr: 'Unrecognized command: session in command opencode session',
+    }));
+    execAgentFileMock.mockRejectedValueOnce(Object.assign(new Error('exit 1'), {
+      stdout: '',
+      stderr: 'Unrecognized flag: --pure in command opencode export',
+    }));
+    execAgentFileMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(data.sanitizedChildExport),
+      stderr: '',
+    });
+    const load = createOpenCodeSanitizedExportLoader({
+      launchPath: '/opt/open-design/opencode',
+      env: { XDG_DATA_HOME: '/run/od/share' },
+    });
+    await expect(load('ses_child_synthetic')).resolves.toMatchObject({
+      info: { id: 'ses_child_synthetic', parentID: 'ses_root_synthetic' },
+    });
+    expect(execAgentFileMock).toHaveBeenCalledTimes(3);
+    expect(execAgentFileMock).toHaveBeenNthCalledWith(
+      2,
+      '/opt/open-design/opencode',
+      ['export', 'ses_child_synthetic', '--sanitize', '--pure'],
+      expect.anything(),
+    );
+    expect(execAgentFileMock).toHaveBeenNthCalledWith(
+      3,
       '/opt/open-design/opencode',
       ['export', 'ses_child_synthetic', '--sanitize'],
       expect.anything(),
     );
+  });
+
+  it('surfaces a real 1.x export failure instead of retrying a valid invocation', async () => {
+    execAgentFileMock.mockRejectedValueOnce(Object.assign(new Error('exit 1'), {
+      stdout: '',
+      stderr: 'Unrecognized command: session in command opencode session',
+    }));
+    // `--pure` is accepted but the session genuinely does not exist: this is a
+    // real outcome, not a shape mismatch, so it must not be retried bare.
+    execAgentFileMock.mockRejectedValueOnce(Object.assign(new Error('exit 1'), {
+      stdout: 'Session not found',
+      stderr: '',
+    }));
+    const load = createOpenCodeSanitizedExportLoader({
+      launchPath: '/opt/open-design/opencode',
+      env: { XDG_DATA_HOME: '/run/od/share' },
+    });
+    await expect(load('ses_child_synthetic')).rejects.toThrow(/exit 1/u);
+    expect(execAgentFileMock).toHaveBeenCalledTimes(2);
   });
 
   it('labels the fixture contract-only so it cannot become production evidence', () => {

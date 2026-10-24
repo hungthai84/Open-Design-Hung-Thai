@@ -1,5 +1,5 @@
 import { agentCapabilities } from './capabilities.js';
-import type { RuntimeAgentDef } from './types.js';
+import type { RuntimeAgentDef, RuntimeCapabilityMap } from './types.js';
 
 export const OPENCODE_SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions';
 export const OPENCODE_AUTO_APPROVE_FLAG = '--auto';
@@ -81,6 +81,25 @@ export function shouldUseOpenCodeVariantFlag(agentId: string): boolean {
   const caps = agentCapabilities.get(agentId) ?? {};
   if (caps.variantFlag === undefined && caps.autoApprove === true) return false;
   return caps.variantFlag !== false;
+}
+
+/**
+ * Whether a resolved `run --help` capability map describes OpenCode 2.x.
+ *
+ * The line is identified by advertised flags, never by version string or by
+ * the error text of a rejected probe: 2.x advertises `--auto` and dropped
+ * `--variant`, 1.x is the other way round, and the rejection wording differs
+ * between 2.0.24 (help on stdout, exit 1, no message) and 2.0.32
+ * (`Unrecognized flag: ...`). Anything unresolved stays on the 1.x
+ * assumption, which is the conservative direction: the 1.x shapes fail
+ * loudly, while a wrong 2.x assumption would silently drop a flag.
+ */
+export function isOpenCode2xCapabilities(
+  caps: RuntimeCapabilityMap | null | undefined,
+): boolean {
+  if (!caps) return false;
+  if (caps.autoApprove !== true) return false;
+  return caps.variantFlag !== true;
 }
 
 /**
