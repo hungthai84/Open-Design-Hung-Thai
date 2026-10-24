@@ -37,6 +37,7 @@ export type PiRpcSession = {
   hasFatalError(): boolean;
   completedSuccessfully(): boolean;
   completionShutdownRequested(): boolean;
+  getTerminationProvenance?(): 'natural' | 'shutdown' | 'none';
   abort(): void;
   getLastSessionPath(): string | null;
 };
@@ -209,6 +210,32 @@ export function attachPiRpcSession({
   let promptCompleted = false;
   let agentErrorObserved = false;
   let completionShutdownRequested = false;
+  let terminationProvenance: 'natural' | 'shutdown' | 'none' = 'none';
+  let shutdownTimer: NodeJS.Timeout | null = null;
+
+  const markNaturalExit = (): void => {
+    if (completionShutdownRequested) return;
+    if (terminationProvenance === 'none') {
+      terminationProvenance = 'natural';
+    }
+    if (shutdownTimer) {
+      clearTimeout(shutdownTimer);
+      shutdownTimer = null;
+    }
+  };
+
+  const isChildDeadOrClosing = (): boolean =>
+    terminationProvenance === 'natural' ||
+    child.killed ||
+    child.exitCode != null ||
+    child.signalCode != null ||
+    Boolean(stdout.readableEnded) ||
+    Boolean(stdout.closed) ||
+    Boolean(stdout.destroyed);
+
+  child.once('exit', markNaturalExit);
+  stdout.once('close', markNaturalExit);
+  stdout.once('end', markNaturalExit);
 
   let nextRpcId = 1;
   let stdinOpen = true;
@@ -409,14 +436,31 @@ export function attachPiRpcSession({
       } catch (err: unknown) {
         fail(`stdin close: ${errorMessage(err)}`);
       }
-      // Grace period before SIGTERM. Configurable via PI_GRACEFUL_SHUTDOWN_MS
-      // for resource-constrained machines where the event loop drains slowly.
-      const shutdownMs = Number(process.env.PI_GRACEFUL_SHUTDOWN_MS) || 5000;
-      setTimeout(() => {
-        if (!child.killed && child.exitCode == null && child.signalCode == null) {
-          completionShutdownRequested = child.kill('SIGTERM');
-        }
-      }, shutdownMs);
+      if (isChildDeadOrClosing()) {
+        markNaturalExit();
+      } else {
+        // Grace period before SIGTERM. Configurable via PI_GRACEFUL_SHUTDOWN_MS
+        // for resource-constrained machines where the event loop drains slowly.
+        const shutdownMs = Number(process.env.PI_GRACEFUL_SHUTDOWN_MS) || 5000;
+        shutdownTimer = setTimeout(() => {
+          shutdownTimer = null;
+          if (isChildDeadOrClosing()) {
+            markNaturalExit();
+            return;
+          }
+          try {
+            const delivered = child.kill('SIGTERM');
+            if (delivered) {
+              completionShutdownRequested = true;
+              terminationProvenance = 'shutdown';
+            } else {
+              markNaturalExit();
+            }
+          } catch {
+            markNaturalExit();
+          }
+        }, shutdownMs);
+      }
     }
   });
 
@@ -442,7 +486,10 @@ export function attachPiRpcSession({
     completionShutdownRequested() {
       // Some Pi builds trap this signal and report code 143 instead. Keep the
       // actual host signal separate from a naturally failing process exit.
-      return completionShutdownRequested;
+      return completionShutdownRequested && terminationProvenance === 'shutdown';
+    },
+    getTerminationProvenance() {
+      return terminationProvenance;
     },
     getLastSessionPath() {
       return capturedSessionPath;
@@ -454,6 +501,10 @@ export function attachPiRpcSession({
       // not by this method.
       if (finished || child.killed) return;
       finished = true;
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+        shutdownTimer = null;
+      }
       sendCommand(stdin, 'abort');
     },
   };

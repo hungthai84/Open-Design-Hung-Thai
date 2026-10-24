@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 
 describe('Pi RPC public Run close', () => {
-  it.each([
+  it.skipIf(process.platform === 'win32').each([
     { mode: 'success', expected: 'succeeded' },
     { mode: 'sigterm-exit', expected: 'succeeded' },
     { mode: 'nonzero', expected: 'failed' },
