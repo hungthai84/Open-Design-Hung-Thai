@@ -44,7 +44,7 @@ const fs = require('node:fs');
 if (process.argv.includes('--version')) { console.log('1.1.0'); process.exit(0); }
 if (process.argv.includes('--list-models')) { console.log('provider model context max-out thinking images\\nopenai fixture-model 128K 16K yes yes'); process.exit(0); }
 if (process.argv.includes('--help')) { console.log('Usage: pi --mode rpc'); process.exit(0); }
-const W = value => fs.writeSync(1, JSON.stringify(value) + '\\n');
+const W = value => { try { fs.writeSync(1, JSON.stringify(value) + '\\n'); } catch {} };
 const mode = ${JSON.stringify(mode)};
 // Pi 1.1.0 traps SIGTERM and exits 143, so there is no signal on 'close'.
 if (mode === 'sigterm-exit' || mode === 'stdout-close-sigterm-exit') process.on('SIGTERM', () => process.exit(143));

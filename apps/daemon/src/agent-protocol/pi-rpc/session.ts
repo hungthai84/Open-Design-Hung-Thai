@@ -6,7 +6,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ChildProcess } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import type { Writable } from 'node:stream';
 import { createJsonLineStream } from '../core/index.js';
 import { mapPiRpcEvent } from './events.js';
@@ -224,11 +224,37 @@ export function attachPiRpcSession({
     }
   };
 
+  const isChildProcessZombie = (pid: number | undefined): boolean => {
+    if (!pid || typeof pid !== 'number') return false;
+    if (process.platform === 'linux') {
+      try {
+        const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+        return /State:\s+Z/i.test(status);
+      } catch {
+        return true;
+      }
+    }
+    if (process.platform === 'darwin') {
+      try {
+        const out = execFileSync('ps', ['-o', 'state=', '-p', String(pid)], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 200,
+        });
+        return out.trim().startsWith('Z');
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  };
+
   const isChildDead = (): boolean =>
     terminationProvenance === 'natural' ||
     child.killed ||
     child.exitCode != null ||
-    child.signalCode != null;
+    child.signalCode != null ||
+    isChildProcessZombie(child.pid);
 
   const isHandledShutdownExit = (
     code: number | null,
@@ -480,6 +506,11 @@ export function attachPiRpcSession({
               shutdownTimer = null;
               attemptShutdown(true);
             }, 30);
+            return;
+          }
+
+          if (isChildDead()) {
+            markNaturalExit();
             return;
           }
 
