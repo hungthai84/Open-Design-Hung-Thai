@@ -212,7 +212,6 @@ export function attachPiRpcSession({
   let completionShutdownRequested = false;
   let terminationProvenance: 'natural' | 'shutdown' | 'none' = 'none';
   let shutdownTimer: NodeJS.Timeout | null = null;
-  let stdoutEndedBeforeShutdown = false;
 
   const markNaturalExit = (): void => {
     if (completionShutdownRequested) return;
@@ -231,19 +230,30 @@ export function attachPiRpcSession({
     child.exitCode != null ||
     child.signalCode != null;
 
+  const isHandledShutdownExit = (
+    code: number | null,
+    signal: NodeJS.Signals | string | null,
+  ): boolean => {
+    if (signal === 'SIGTERM') return true;
+    if (code === 143) return true;
+    if (process.platform === 'win32' && code === 1) return true;
+    return false;
+  };
+
   // Process-level exit evidence: do not cancel teardown on stdout EOF/close,
   // since a process may close its stdout stream while remaining alive.
   child.once('exit', (code: number | null, signal: NodeJS.Signals | string | null) => {
-    // If the process exited on its own with a non-zero code after stdout ended
-    // before our shutdown signal was dispatched (the EOF race), the exit code
-    // came from the process's natural exit (e.g. process.exit(143)), not from a
-    // SIGTERM handler executed in response to host shutdown.
-    if (stdoutEndedBeforeShutdown && code !== null && signal === null) {
-      terminationProvenance = 'natural';
-      completionShutdownRequested = false;
+    if (completionShutdownRequested) {
+      // If the host requested shutdown (sent SIGTERM), retain shutdown
+      // provenance when process-exit evidence shows the child terminated from
+      // or handled the fallback signal. If the child reaped with an unrelated
+      // error code, revert to natural provenance so the failure is not masked.
+      if (!isHandledShutdownExit(code, signal)) {
+        terminationProvenance = 'natural';
+        completionShutdownRequested = false;
+      }
       return;
     }
-    if (completionShutdownRequested) return;
     if (terminationProvenance === 'none') {
       terminationProvenance = 'natural';
     }
@@ -462,14 +472,9 @@ export function attachPiRpcSession({
           if (isChildDead()) return;
 
           // If stdout ended, the child might have called process.exit() and Node's
-          // waitpid process reaper is in-flight. Record that stdout ended before
-          // shutdown so a natural exit reaped later retains natural provenance,
-          // and defer briefly before dispatching SIGTERM so that a natural exit
-          // isn't preempted by the fallback kill.
+          // waitpid process reaper is in-flight. Defer briefly before dispatching
+          // SIGTERM so that a natural exit isn't preempted by the fallback kill.
           const stdoutEnded = Boolean(stdout.readableEnded || stdout.closed || stdout.destroyed);
-          if (stdoutEnded) {
-            stdoutEndedBeforeShutdown = true;
-          }
           if (stdoutEnded && !deferred) {
             shutdownTimer = setTimeout(() => {
               shutdownTimer = null;

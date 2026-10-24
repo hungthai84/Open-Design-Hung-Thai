@@ -30,6 +30,7 @@ describe('Pi RPC public Run close', () => {
     { mode: 'success', expected: 'succeeded' },
     { mode: 'sigterm-exit', expected: 'succeeded' },
     { mode: 'stdout-close-alive', expected: 'succeeded' },
+    { mode: 'stdout-close-sigterm-exit', expected: 'succeeded' },
     { mode: 'nonzero', expected: 'failed' },
     { mode: 'error', expected: 'failed' },
     { mode: 'cancel', expected: 'canceled' },
@@ -46,7 +47,7 @@ if (process.argv.includes('--help')) { console.log('Usage: pi --mode rpc'); proc
 const W = value => fs.writeSync(1, JSON.stringify(value) + '\\n');
 const mode = ${JSON.stringify(mode)};
 // Pi 1.1.0 traps SIGTERM and exits 143, so there is no signal on 'close'.
-if (mode === 'sigterm-exit') process.on('SIGTERM', () => process.exit(143));
+if (mode === 'sigterm-exit' || mode === 'stdout-close-sigterm-exit') process.on('SIGTERM', () => process.exit(143));
 // Native RPC runtimes can stay alive after stdin EOF. Completion, rather
 // than the fallback signal, must determine the successful turn's verdict.
 setInterval(() => {}, 1000);
@@ -61,7 +62,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (mode === 'cancel') return;
   if (mode === 'error') W({ type: 'message_update', assistantMessageEvent: { type: 'error', reason: 'Native Pi fixture failure' } });
   W({ type: 'agent_end' });
-  if (mode === 'stdout-close-alive') {
+  if (mode === 'stdout-close-alive' || mode === 'stdout-close-sigterm-exit') {
     try { fs.closeSync(1); } catch {}
   }
   if (mode === 'nonzero') process.exit(143);
@@ -108,7 +109,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (mode === 'success') {
       expect(run.signal).toBe('SIGTERM');
       expect(run.error ?? null).toBeNull();
-    } else if (mode === 'sigterm-exit') {
+    } else if (mode === 'sigterm-exit' || mode === 'stdout-close-sigterm-exit') {
       expect(run.exitCode).toBe(143);
       expect(run.signal ?? null).toBeNull();
       expect(run.error ?? null).toBeNull();

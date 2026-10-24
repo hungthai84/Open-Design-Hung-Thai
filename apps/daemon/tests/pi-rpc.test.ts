@@ -1485,31 +1485,65 @@ test('attachPiRpcSession termination provenance: intentional SIGTERM handler exi
   }
 });
 
-test('attachPiRpcSession termination provenance: natural exit 143 emitted after deferred timeout retains natural provenance (#9050)', async () => {
+test('attachPiRpcSession termination provenance: intentional SIGTERM handler exit 143 after stdout EOF preserves succeeded (#9050)', async () => {
   const originalGrace = process.env.PI_GRACEFUL_SHUTDOWN_MS;
   process.env.PI_GRACEFUL_SHUTDOWN_MS = '10';
   try {
     const { child, session } = createSession();
     feedStdoutLines(child, [{ type: 'agent_end' }]);
-    // Child closed stdout on process.exit(143)
+    // Child closed stdout while remaining alive in event loop
     child.stdout.end();
     // Wait past the initial shutdown timer (10ms) and the deferred check (30ms)
-    // to simulate the POSIX zombie race where waitpid is delayed past the timeout
     await new Promise((resolve) => setTimeout(resolve, 60));
 
-    // child.kill('SIGTERM') was dispatched because child.exitCode was still null
+    // child.kill('SIGTERM') was dispatched to shut down lingering process
     assert.equal(child.killed, true);
 
-    // Node waitpid finally reaps the process with natural exit 143
+    // Child handles fallback SIGTERM with exit 143
     child.emit('exit', 143, null);
 
-    // Termination provenance must be natural, NOT shutdown
+    // Termination provenance must be shutdown, retaining succeeded
+    assert.equal(session.completionShutdownRequested(), true);
+    assert.equal(session.getTerminationProvenance?.(), 'shutdown');
+
+    const verdict = classifyChatRunCloseStatus({
+      cancelRequested: false,
+      code: 143,
+      signal: null,
+      acpCleanCompletion: session.completedSuccessfully(),
+      acpCompletionShutdownRequested: session.completionShutdownRequested(),
+      artifactQuietShutdownRequested: false,
+      turnCompletedCleanly: false,
+      artifactProducedThisRun: false,
+    });
+    assert.equal(verdict, 'succeeded');
+  } finally {
+    if (originalGrace === undefined) delete process.env.PI_GRACEFUL_SHUTDOWN_MS;
+    else process.env.PI_GRACEFUL_SHUTDOWN_MS = originalGrace;
+  }
+});
+
+test('attachPiRpcSession termination provenance: unhandled non-zero exit after fallback SIGTERM reverts to natural provenance (#9050)', async () => {
+  if (process.platform === 'win32') return;
+  const originalGrace = process.env.PI_GRACEFUL_SHUTDOWN_MS;
+  process.env.PI_GRACEFUL_SHUTDOWN_MS = '10';
+  try {
+    const { child, session } = createSession();
+    feedStdoutLines(child, [{ type: 'agent_end' }]);
+    child.stdout.end();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(child.killed, true);
+
+    // Process reaped with non-signal error code 2 (not handled SIGTERM 143)
+    child.emit('exit', 2, null);
+
+    // Termination provenance must revert to natural, marking failed
     assert.equal(session.completionShutdownRequested(), false);
     assert.equal(session.getTerminationProvenance?.(), 'natural');
 
     const verdict = classifyChatRunCloseStatus({
       cancelRequested: false,
-      code: 143,
+      code: 2,
       signal: null,
       acpCleanCompletion: session.completedSuccessfully(),
       acpCompletionShutdownRequested: session.completionShutdownRequested(),
