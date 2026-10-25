@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MANAGED_DOWNLOAD_ERROR_CODES } from '../src/errors.js';
+import * as fsIo from '../src/fs-io.js';
 import { createManifest } from '../src/manifest.js';
 import { targetFromOptions } from '../src/target.js';
 import { downloadWithRetries } from '../src/transfer.js';
@@ -12,6 +13,7 @@ import { downloadWithRetries } from '../src/transfer.js';
 const roots: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -122,6 +124,68 @@ describe('discarded download responses', () => {
       message: expect.stringContaining('HTTP 503'),
     });
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { resume: false, cancelRejects: false },
+    { resume: false, cancelRejects: true },
+    { resume: true, cancelRejects: false },
+    { resume: true, cancelRejects: true },
+  ])('cancels a body after a manifest write fails (resume=$resume, cancelRejects=$cancelRejects)', async ({ resume, cancelRejects }) => {
+    const target = targetFixture();
+    if (resume) writeFileSync(target.partialPath, 'pay');
+    vi.spyOn(fsIo, 'writeJson').mockRejectedValue(new Error('manifest write failed'));
+    const cancel = vi.fn(async () => {
+      if (cancelRejects) throw new Error('cleanup failed');
+    });
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+      status: resume ? 206 : 200,
+      headers: resume ? { 'content-range': 'bytes 3-6/7' } : {},
+    });
+    const fetchImpl = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response);
+
+    await expect(downloadWithRetries(target, resume ? createManifest(target, 'partial') : null, {
+      emit: () => {}, fetchImpl, maxAttempts: 1,
+    })).rejects.toMatchObject({
+      code: MANAGED_DOWNLOAD_ERROR_CODES.NETWORK_EXHAUSTED,
+      message: 'download failed after 1 attempts: manifest write failed',
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    if (resume) expect(readFileSync(target.partialPath, 'utf8')).toBe('pay');
+  });
+
+  it('waits for cleanup after a manifest write fails before retrying', async () => {
+    const target = targetFixture();
+    vi.spyOn(fsIo, 'writeJson').mockRejectedValue(new Error('manifest write failed'));
+    const started = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+    const cancel = vi.fn(() => {
+      started.resolve();
+      return finished.promise;
+    });
+    const retryCancel = vi.fn();
+    const fetchImpl = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({ cancel })))
+      .mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({ cancel: retryCancel })));
+    const failure = downloadWithRetries(target, null, {
+      emit: () => {}, fetchImpl, maxAttempts: 2,
+    }).catch((error: unknown) => error);
+
+    try {
+      expect(await Promise.race([started.promise.then(() => true), failure.then(() => false)])).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      finished.resolve();
+      await failure;
+    }
+    expect(await failure).toMatchObject({
+      code: MANAGED_DOWNLOAD_ERROR_CODES.NETWORK_EXHAUSTED,
+      message: 'download failed after 2 attempts: manifest write failed',
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(retryCancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('consumes an accepted resume body without cancelling it', async () => {

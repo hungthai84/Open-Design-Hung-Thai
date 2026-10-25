@@ -128,7 +128,7 @@ async function writeResponseBodyToPartial(
 }
 
 /**
- * @internal Release an unused body before restarting or reporting an HTTP error.
+ * @internal Release an unused body before restarting or reporting a transfer error.
  * A cancellation failure must not replace the original transfer outcome.
  */
 async function discardResponseBody(response: Response): Promise<void> {
@@ -165,14 +165,19 @@ async function tryResumeDownload(
     return "restart";
   }
   const totalBytes = range.totalBytes ?? manifest.totalBytes ?? partialBytes + (contentLength(response) ?? 0);
-  await emitExistingProgress(target.partialPath, totalBytes, emit);
-  await writeJson(target.manifestPath, {
-    ...manifest,
-    state: "partial",
-    totalBytes,
-    updatedAt: new Date().toISOString(),
-    validators: manifest.validators ?? validatorsFromResponse(response),
-  } satisfies DownloadManifest);
+  try {
+    await emitExistingProgress(target.partialPath, totalBytes, emit);
+    await writeJson(target.manifestPath, {
+      ...manifest,
+      state: "partial",
+      totalBytes,
+      updatedAt: new Date().toISOString(),
+      validators: manifest.validators ?? validatorsFromResponse(response),
+    } satisfies DownloadManifest);
+  } catch (error) {
+    await discardResponseBody(response);
+    throw error;
+  }
   await writeResponseBodyToPartial(response, target, { emit, startBytes: partialBytes, totalBytes });
   return { resumed: true, totalBytes };
 }
@@ -195,7 +200,12 @@ async function downloadFromZero(
   }
   const totalBytes = contentLength(response);
   const validators = validatorsFromResponse(response);
-  await writeJson(target.manifestPath, createManifest(target, "partial", { totalBytes, validators }));
+  try {
+    await writeJson(target.manifestPath, createManifest(target, "partial", { totalBytes, validators }));
+  } catch (error) {
+    await discardResponseBody(response);
+    throw error;
+  }
   await writeResponseBodyToPartial(response, target, { emit, startBytes: 0, totalBytes });
   return { resumed: false, totalBytes };
 }
