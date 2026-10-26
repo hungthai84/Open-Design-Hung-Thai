@@ -1,6 +1,10 @@
 import type { Dict } from "../types";
 
 export const zhTW: Dict = {
+  'fileViewer.publishFileContentUnavailable': 'Some uploaded files are missing or failed integrity checks. Please retry.',
+  'fileViewer.publishFileConflict': 'The publication or upload state has changed. Refresh the share panel and try again.',
+  'fileViewer.publishFileWorkspaceLocked': 'This workspace is locked. Restore workspace access before publishing.',
+
   "collab.contentUpdate.available": "雲端有新版本",
   "collab.contentUpdate.updating": "正在更新…",
   "collab.contentUpdate.askAgain": "恢復更新提示",
@@ -2290,6 +2294,8 @@ export const zhTW: Dict = {
   "chat.comments.attached": "已附加到對話",
   "chat.comments.emptyAttached": "沒有已附加的評論。",
   "chat.comments.saved": "已儲存的評論",
+  'fileViewer.shareFinishEditing': "請先儲存或取消未儲存的修改，並等待儲存完成後再分享。",
+  'chat.comments.loadFailed': "評論載入失敗，已顯示的評論仍保留。",
   "chat.comments.emptySaved": "沒有已儲存的評論。",
   "chat.comments.add": "新增",
   "chat.comments.addAll": "全部新增",
@@ -3520,11 +3526,12 @@ export const zhTW: Dict = {
 
   "fileViewer.publishFileRequiresTeam": "發布公開連結需要團隊工作區。請切換到團隊工作區，或使用「部署」發布此檔案。",
   "fileViewer.publishFileRequiresWorkspace": "產生分享連結需要登入工作區。請登入 OpenDesign Cloud，或改用「部署」分享此檔案。",
-    "fileViewer.publishFileTooLarge": "專案超過 20 MiB 分享上限。請減小 HTML 和引用資源的總大小後重試。",
+    "fileViewer.publishFileTooLarge": "內容超過服務端分享容量上限，請減少檔案大小後重試。",
     "fileViewer.publishFileEntryIndexConflict": "「{from}」引用了專案根目錄的 index.html，它與分享頁面的發布位置衝突。請將該 index.html 重新命名（如 {name}）並更新引用，或直接分享 index.html。",
     "fileViewer.copyFixForAgent": "複製給 Agent",
     "fileViewer.copyFixForAgentFailed": "複製失敗。請手動選取下方指令並複製。",
   "fileViewer.shareUpdateHint": "檔案有新變更，訪客看到的仍是上一版。",
+  "fileViewer.shareUpdatingLink": "正在更新連結…",
   "fileViewer.shareUpdateLink": "更新連結",
   "fileViewer.signInToUpdate": "登入後更新",
   "fileViewer.signInToShare": "登入後分享",

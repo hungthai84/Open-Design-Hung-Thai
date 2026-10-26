@@ -5330,11 +5330,11 @@ export async function startServer({
   const commentAlignment = createCommentAlignmentService({
     db,
     readCursor: (projectId, context) => collabCloud?.readMergedCommentCursor(projectId, context) ?? null,
-    compare: async (projectId, context, request) => {
+    compare: async (projectId, context, request, isCurrent) => {
       const session = readVelaControlApiContext(process.env, configuredAmrEnv());
       if (!session?.controlKey || !session.apiUrl) return { state: 'unknown', reason: 'unavailable' };
       const result = await runVelaCommentAlignment({
-        projectId, workspaceId: context.workspaceId, request, session, dataRoot: RUNTIME_DATA_DIR,
+        projectId, workspaceId: context.workspaceId, request, session, dataRoot: RUNTIME_DATA_DIR, isCurrent,
       });
       const current = readVelaControlApiContext(process.env, configuredAmrEnv());
       if (current?.controlKey !== session.controlKey || current?.apiUrl !== session.apiUrl) {
@@ -5361,7 +5361,7 @@ export async function startServer({
         && item.lifecycleState !== 'deleted' && item.lifecycleState !== 'deleting');
     }, { readAlign: scope => commentAlignment.read(scope),
       readProjectShareState: createVelaProjectShareState({
-        dataRoot: RUNTIME_DATA_DIR, configuredEnv: configuredAmrEnv, registerLocallyOwnedProject: false,
+        dataRoot: RUNTIME_DATA_DIR, configuredEnv: configuredAmrEnv,
       }),
       readCredential: () => {
         const current = readVelaControlApiContext(process.env, configuredAmrEnv());
@@ -5605,12 +5605,6 @@ export async function startServer({
         const currentSession = readVelaControlApiContext(process.env, configuredEnv);
         if (!currentSession?.controlKey || !currentSession.apiUrl) throw new Error('PUBLIC_SHARE_SESSION_UNAVAILABLE');
         const session = Object.freeze({ ...currentSession });
-        const directory = await fetchVelaWorkspaceDirectory({ readSession: () => session });
-        if (!directory.ok || !directory.items.some(item => item.workspaceId === identity.resourceTeamId
-          && item.workspaceMemberId === identity.ownerMemberId && item.memberStatus === 'active'
-          && item.lifecycleState !== 'deleted' && item.lifecycleState !== 'deleting')) {
-          throw new Error('PUBLIC_SHARE_IDENTITY_UNAVAILABLE');
-        }
         return { run: args => runPinnedVelaCommand({ args, session,
           workspaceId: identity.resourceTeamId, dataRoot: RUNTIME_DATA_DIR, configuredEnv }) };
       },
@@ -5626,7 +5620,7 @@ export async function startServer({
         })().catch(() => { console.warn('[od] share binding retry unavailable'); });
       },
     },
-    readProjectShareState: createVelaProjectShareState({ dataRoot: RUNTIME_DATA_DIR, configuredEnv: configuredAmrEnv, resolveLocalProjectOwner }),
+    readProjectShareState: createVelaProjectShareState({ dataRoot: RUNTIME_DATA_DIR, configuredEnv: configuredAmrEnv }),
     shareContentFingerprints: createShareContentFingerprints(db, publicFilePublicationStore),
     publicFileMutations,
     ownedContentSync,
