@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cachedHomeAmrFundingBlock, invalidateAmrFundingFeedback, checkAmrFundingFeedback, checkAmrFundingEvidence, readFreshAmrFundingEvidence, recentHomeAmrFundingInsufficiency } from '../../src/runtime/amr-funding-feedback';
+import type { WorkspaceBillingPreflight } from '@open-design/contracts';
+import { cachedHomeAmrFundingBlock, invalidateAmrFundingFeedback, checkAmrFundingFeedback, checkAmrFundingEvidence, noteHomeAmrFundingBlockPresented, readFreshAmrFundingEvidence, recentHomeAmrFundingInsufficiency, retireHomeAmrFundingBlock, takeHomeAmrFundingFastBlock } from '../../src/runtime/amr-funding-feedback';
 import { advanceWorkspaceAccountGeneration, resetWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
 let sequence = 0;
@@ -110,6 +111,40 @@ describe('independent AMR funding feedback', () => {
 
 
 describe('Home cached funding gate', () => {
+  it('uses an exact negative fast block once per insufficiency episode, then waits for fresh recovery', async () => {
+    const { scope, preflight, fetchMock } = fixture('insufficient');
+    await checkAmrFundingFeedback(scope, 'model');
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')?.preflight).toEqual(preflight);
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')).toBeNull();
+    // A repeated negative publication and a billing invalidation do not grant
+    // another shortcut after the user has already seen this refusal.
+    await checkAmrFundingFeedback(scope, 'model');
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')).toBeNull();
+    invalidateAmrFundingFeedback();
+    await checkAmrFundingFeedback(scope, 'model');
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')).toBeNull();
+    const recovered: WorkspaceBillingPreflight = {
+      ...preflight, schemaVersion: 1, fundingCheck: 'available', balanceUsd: '10',
+      funding: 'wallet', modelCovered: false,
+      codingPlan: { workspaceId: scope.workspaceId, generatedAt: preflight.generatedAt,
+        eligible: false, tier: null, windows: [] },
+    };
+    expect(retireHomeAmrFundingBlock(scope, 'model', {
+      ...recovered, workspaceMemberId: 'other',
+    })).toBe(false);
+    expect(retireHomeAmrFundingBlock(scope, 'model', {
+      ...recovered, generatedAt: new Date(Date.now() - 60_000).toISOString(),
+    })).toBe(false);
+    expect(retireHomeAmrFundingBlock(scope, 'model', recovered)).toBe(true);
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')).toBeNull();
+    // The next confirmed exhaustion is a new episode, even within five
+    // seconds. Retiring Home state must not grant Project a positive cache.
+    await checkAmrFundingFeedback(scope, 'model');
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')).not.toBeNull();
+    noteHomeAmrFundingBlockPresented(scope, 'model');
+    expect(takeHomeAmrFundingFastBlock(scope, 'model')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
   it('uses only a recent exact-member insufficient preflight for early paint', async () => {
     vi.useFakeTimers();
     const { scope } = fixture('insufficient');

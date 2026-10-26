@@ -8,6 +8,7 @@ const pending = new Map<string, { generation: number; promise: Promise<FundingEv
 let positive: { key: string; expiresAt: number; preflight: WorkspaceBillingPreflight } | null = null;
 const homeBlocks = new Map<string, AmrWalletSnapshot>();
 const recentHomeInsufficiency = new Map<string, { preflight: WorkspaceBillingPreflight; observedAt: number }>();
+const presentedHomeInsufficiency = new Set<string>();
 let blockAccountGeneration = currentWorkspaceAccountGeneration();
 let cacheGeneration = 0;
 
@@ -21,6 +22,7 @@ function fundingKey(scope: AmrBalanceGateScope, modelId: string | null): string 
   if (blockAccountGeneration !== accountGeneration) {
     homeBlocks.clear();
     recentHomeInsufficiency.clear();
+    presentedHomeInsufficiency.clear();
     blockAccountGeneration = accountGeneration;
   }
   return JSON.stringify([accountGeneration, scope.workspaceType, scope.workspaceId, scope.workspaceMemberId, modelId]);
@@ -55,6 +57,48 @@ export function recentHomeAmrFundingInsufficiency(
     ? recent.preflight : null;
 }
 
+/** A remembered negative may accelerate only the first dialog of this
+ * insufficient-funding episode. Subsequent explicit sends wait for their own
+ * fresh proof, even if the old negative is still within its five-second TTL. */
+export function takeHomeAmrFundingFastBlock(
+  scope: AmrBalanceGateScope | undefined,
+  modelId: string | null,
+): { snapshot: AmrWalletSnapshot; preflight: WorkspaceBillingPreflight } | null {
+  if (!scope) return null;
+  const key = fundingKey(scope, modelId);
+  if (presentedHomeInsufficiency.has(key)) return null;
+  const preflight = recentHomeAmrFundingInsufficiency(scope, modelId);
+  const snapshot = preflight ? cachedHomeAmrFundingBlock(scope, modelId) : null;
+  if (!preflight || !snapshot) return null;
+  presentedHomeInsufficiency.add(key);
+  return { snapshot, preflight };
+}
+
+export function noteHomeAmrFundingBlockPresented(
+  scope: AmrBalanceGateScope | undefined,
+  modelId: string | null,
+): void {
+  if (scope) presentedHomeInsufficiency.add(fundingKey(scope, modelId));
+}
+
+/** Retire a negative episode after this exact member/model has fresh funds.
+ * Do not create a reusable positive for the subsequent Project send. */
+export function retireHomeAmrFundingBlock(
+  scope: AmrBalanceGateScope,
+  modelId: string | null,
+  preflight: WorkspaceBillingPreflight,
+): boolean {
+  const age = Date.now() - Date.parse(preflight.generatedAt);
+  if (preflight.schemaVersion !== 1 || preflight.workspaceId !== scope.workspaceId
+    || preflight.workspaceMemberId !== scope.workspaceMemberId || preflight.modelId !== modelId
+    || preflight.fundingCheck !== 'available' || !Number.isFinite(age) || age < -5_000 || age > 30_000) return false;
+  const key = fundingKey(scope, modelId);
+  homeBlocks.delete(key);
+  recentHomeInsufficiency.delete(key);
+  presentedHomeInsufficiency.delete(key);
+  return true;
+}
+
 /** A validated send-time recovery retires the old Home block. This is only a
  * display cache update; the send still follows its own fresh proof and Link. */
 export function confirmHomeAmrFundingAvailable(
@@ -62,13 +106,8 @@ export function confirmHomeAmrFundingAvailable(
   modelId: string | null,
   preflight: WorkspaceBillingPreflight,
 ): void {
-  const age = Date.now() - Date.parse(preflight.generatedAt);
-  if (preflight.schemaVersion !== 1 || preflight.workspaceId !== scope.workspaceId
-    || preflight.workspaceMemberId !== scope.workspaceMemberId || preflight.modelId !== modelId
-    || preflight.fundingCheck !== 'available' || !Number.isFinite(age) || age < -5_000 || age > 30_000) return;
+  if (!retireHomeAmrFundingBlock(scope, modelId, preflight)) return;
   const key = fundingKey(scope, modelId);
-  homeBlocks.delete(key);
-  recentHomeInsufficiency.delete(key);
   positive = { key, expiresAt: Date.now() + 5_000, preflight };
 }
 
@@ -144,6 +183,7 @@ export function checkAmrFundingEvidence(
       if (preflight.fundingCheck === 'available') {
         homeBlocks.delete(key);
         recentHomeInsufficiency.delete(key);
+        presentedHomeInsufficiency.delete(key);
         positive = { key, expiresAt: Date.now() + 5_000, preflight };
         return evidence;
       }

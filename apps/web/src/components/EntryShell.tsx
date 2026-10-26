@@ -131,7 +131,7 @@ import {
   retryUnavailableAmrBalanceGate,
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
-import { cachedHomeAmrFundingBlock, checkAmrFundingFeedback, confirmHomeAmrFundingAvailable, currentAmrFundingFeedbackGeneration, invalidateAmrFundingFeedback, readFreshAmrFundingEvidence, recentHomeAmrFundingInsufficiency } from '../runtime/amr-funding-feedback';
+import { cachedHomeAmrFundingBlock, checkAmrFundingFeedback, confirmHomeAmrFundingAvailable, currentAmrFundingFeedbackGeneration, invalidateAmrFundingFeedback, noteHomeAmrFundingBlockPresented, readFreshAmrFundingEvidence, recentHomeAmrFundingInsufficiency, retireHomeAmrFundingBlock, takeHomeAmrFundingFastBlock } from '../runtime/amr-funding-feedback';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { HomeInviteSurface, HomeInviteTrigger } from './HomeInviteSurface';
 import { entryStrategyRoutingFields } from './entry-strategy-routing';
@@ -1643,6 +1643,7 @@ export function EntryShell({
             resolve(value);
           };
           cancelHomeFundingDialogRef.current = () => finish('dismiss');
+          noteHomeAmrFundingBlockPresented(scope, amrModelId ?? null);
           onAmrBalanceGateBlockChange({
             reason: 'insufficient', dialog: amrBalanceBlockedDialog(branch),
             upgradeIntent: amrBalanceDialogUpgradeIntent(branch), snapshot: { ...snapshot, profile: amrProfile ?? snapshot.profile },
@@ -1656,8 +1657,8 @@ export function EntryShell({
           if (sendEvidence) {
             void sendEvidence.then((evidence) => {
               if (!fundingIsCurrent()) return finish('dismiss');
-              // Recovery updates the next click's cache. It cannot release
-              // a draft already parked behind this visible dialog.
+              // The pending same-click recovery updates the next attempt's
+              // cache; it never submits a dialog that was already dismissed.
               if (evidence.kind === 'available' && evidence.preflight && scope) {
                 confirmHomeAmrFundingAvailable(scope, amrModelId ?? null, evidence.preflight);
               } else {
@@ -1665,7 +1666,6 @@ export function EntryShell({
               }
             });
           } else {
-            // The fresh send-time read already proved insufficient.
             refreshForNextSend();
           }
         });
@@ -1693,7 +1693,17 @@ export function EntryShell({
         })().catch(() => ({ kind: 'unknown' as const, preflight: null }))
         : null;
       const hintRequest = readAmrRequestConcurrency(scope);
-      const hint = await hintRequest;
+      // Either current, exact-scope refusal can settle this click. A confirmed
+      // funding refusal need not spend the rest of its 500ms budget waiting for
+      // a non-decisive Link hint; a full hint still wins when it arrives first.
+      const firstDecision = fundingEvidence
+        ? await Promise.race([
+          hintRequest.then((hint) => ({ source: 'hint' as const, hint })),
+          fundingEvidence.then((evidence) => ({ source: 'funding' as const, evidence })),
+        ])
+        : { source: 'hint' as const, hint: await hintRequest };
+      const hint = firstDecision.source === 'hint' ? firstDecision.hint
+        : firstDecision.evidence.kind === 'insufficient' ? null : await hintRequest;
       homeConcurrencyPendingRef.current = false;
       // A workspace, model, identity, route change or unmount while reading must
       // never dispatch the earlier payload under the new principal.
@@ -1714,20 +1724,22 @@ export function EntryShell({
         });
         return 'blocked' as const;
       }
-      const recentInsufficiency = recentHomeAmrFundingInsufficiency(scope, amrModelId ?? null);
-      const confirmedBlock = recentInsufficiency
-        ? cachedHomeAmrFundingBlock(scope, amrModelId ?? null) : null;
-      if (confirmedBlock && recentInsufficiency && scope && fundingEvidence) {
-        // The Link hint has already ruled out full before a balance reason
-        // becomes visible. A later funding recovery cannot send this draft.
-        if (!await showFundingBlock(confirmedBlock, recentInsufficiency, fundingEvidence)) return 'blocked' as const;
+      const fastBlock = firstDecision.source === 'hint'
+        ? takeHomeAmrFundingFastBlock(scope, amrModelId ?? null) : null;
+      if (fastBlock && fundingEvidence) {
+        // Link has ruled out full for this click. A remembered, exact-member
+        // shortfall may paint once while fresh funds are still being checked.
+        // The next explicit click cannot replay this old negative.
+        if (!await showFundingBlock(fastBlock.snapshot, fastBlock.preflight, fundingEvidence)) return 'blocked' as const;
       }
       // Unknown is not proof of an available slot. Preserve the existing real
       // Link request path and named-rejection fallback rather than inventing a
       // client quota or blocking legitimate old CLI deployments.
       // client VIEW-015/RUN-003: a current scoped Home draft must not create
       // even an optimistic project while its funds remain unconfirmed. This is
-      // independent of the immediately expirable concurrency hint above.
+      // independent of the immediately expirable concurrency hint above. A
+      // recent insufficiency hint cannot block a new explicit click until this
+      // click's fresh read confirms it; funding may have recovered meanwhile.
       let cachedBlock: AmrWalletSnapshot | null = null;
       let fundingPreflight: WorkspaceBillingPreflight | null = null;
       if (scope) {
@@ -1741,6 +1753,8 @@ export function EntryShell({
             balanceUsd: evidence.preflight.balanceUsd, updatedAt: evidence.preflight.generatedAt,
             fetchedAt: new Date().toISOString(), stale: false, source: 'daemon_cache',
           };
+        } else {
+          retireHomeAmrFundingBlock(scope, amrModelId ?? null, evidence.preflight);
         }
       }
       if (cachedBlock) {

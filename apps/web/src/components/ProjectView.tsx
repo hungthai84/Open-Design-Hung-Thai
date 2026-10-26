@@ -9072,7 +9072,16 @@ export function ProjectView({
         amrConcurrencyReadsRef.current.add(runConversationId);
         let hint;
         try {
-          hint = await readAmrRequestConcurrency(amrBalanceGateScopeForWorkspaceContext(projectRunPreflightContext));
+          const hintRequest = readAmrRequestConcurrency(amrBalanceGateScopeForWorkspaceContext(projectRunPreflightContext));
+          const firstDecision = await Promise.race([
+            hintRequest.then((result) => ({ source: 'hint' as const, result })),
+            fundingFeedback.then((funding) => ({ source: 'funding' as const, funding })),
+          ]);
+          // The original funding refusal path below still owns draft rollback,
+          // queue pause and the dialog. Only its wait for a non-decisive hint
+          // is skipped; a full hint that arrives first keeps its fast path.
+          hint = firstDecision.source === 'hint' ? firstDecision.result
+            : firstDecision.funding.kind === 'insufficient' ? null : await hintRequest;
         } finally {
           amrConcurrencyReadsRef.current.delete(runConversationId);
         }

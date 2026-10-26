@@ -556,7 +556,10 @@ describe('余额判定的呈现:拦截出卡加弹窗,让位只出卡', () => {
     expect(mockedStreamViaDaemon.mock.calls[0]![0]).toMatchObject({ attachments: attachments.map((attachment) => attachment.path) });
   });
 
-  it('returns a funding refusal within 500ms when the independent billing reads each take 300ms', async () => {
+  it.each([
+    { title: 'independent 300ms billing reads', hintDelayMs: 300, hintStatus: 'available' as const, fundingDelayMs: 300, early: false },
+    { title: 'RUN-003 fresh insufficiency before a late full hint', hintDelayMs: 450, hintStatus: 'full' as const, fundingDelayMs: 200, early: true },
+  ])('returns a funding refusal within 500ms with $title', async ({ hintDelayMs, hintStatus, fundingDelayMs, early }) => {
     workspaceScopeMocks.projectScope = resolvedTeamScope(CALLER_CONTEXT);
     renderProjectView({ project: { ...project(), pendingPrompt: undefined } });
     await waitFor(() => expect(screen.getByTestId('normal-send')).not.toBeDisabled());
@@ -565,14 +568,14 @@ describe('余额判定的呈现:拦截出卡加弹窗,让位只出卡', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/billing/request-concurrency?')) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, hintDelayMs));
         return new Response(JSON.stringify({ requestConcurrencyHint: {
           workspaceId: TEAM_WORKSPACE, workspaceMemberId: TEAM_MEMBER,
-          status: 'available', running: 0, limit: 10, observedAt: new Date().toISOString(),
+          status: hintStatus, running: hintStatus === 'full' ? 10 : 0, limit: 10, observedAt: new Date().toISOString(),
         } }));
       }
       if (url.includes('/billing/preflight?')) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, fundingDelayMs));
         return new Response(JSON.stringify({ preflight: {
           schemaVersion: 1, workspaceId: TEAM_WORKSPACE, workspaceMemberId: TEAM_MEMBER,
           modelId: new URL(url, 'http://localhost').searchParams.get('modelId'),
@@ -591,7 +594,12 @@ describe('余额判定的呈现:拦截出卡加弹窗,让位只出卡', () => {
         .then((result: unknown) => { outcome = result; finishedAt = Date.now() - startedAt; });
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(299); });
-    expect(finishedAt).toBeUndefined();
+    if (early) {
+      expect(finishedAt).toBeDefined();
+      expect(screen.queryByRole('alertdialog')).not.toBeNull();
+    } else {
+      expect(finishedAt).toBeUndefined();
+    }
     expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(201); });
     const finishedWithinDeadline = finishedAt;
@@ -607,6 +615,7 @@ describe('余额判定的呈现:拦截出卡加弹窗,让位只出卡', () => {
     expect(vi.mocked(saveMessage)).not.toHaveBeenCalled();
     expect(chatPaneSpy.mock.calls.at(-1)![0].queuedItems ?? []).toHaveLength(0);
     expect(chatPaneSpy.mock.calls.at(-1)![0].messages.some((m: ChatMessage) => m.content === 'keep my timed draft')).toBe(false);
+    expect(screen.queryByRole('alertdialog')).not.toBeNull();
   });
 
   it.each(['owner', 'admin', 'member'] as const)('keeps an earlier temporarily parked input manual after %s gets a hard funding refusal and remounts with funds', async (role) => {
