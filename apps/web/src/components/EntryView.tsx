@@ -161,6 +161,8 @@ interface Props {
   onPersistComposioKey: (composio: AppConfig['composio']) => Promise<void> | void;
   onOpenSettings: (section?: 'execution' | 'media' | 'composio' | 'orbit' | 'integrations' | 'mcpClient' | 'language' | 'appearance' | 'notifications' | 'pet' | 'projectLocations' | 'library' | 'about' | 'memory' | 'designSystems') => void;
   onCompleteOnboarding: () => void;
+  onCancelCloudOnboarding?: () => void;
+  cloudGateDismissed?: boolean;
   onSignedOut?: () => void | Promise<void>;
   onAmrLoginStatusChange?: (status: VelaLoginStatus | null) => void;
   artifactUpgradeSlot?: ReactNode;
@@ -317,6 +319,8 @@ export function EntryView({
   onPersistComposioKey,
   onOpenSettings,
   onCompleteOnboarding,
+  onCancelCloudOnboarding,
+  cloudGateDismissed = false,
   onSignedOut,
   onAmrLoginStatusChange,
   artifactUpgradeSlot,
@@ -446,6 +450,8 @@ export function EntryView({
       onPersistComposioKey={onPersistComposioKey}
       onOpenSettings={onOpenSettings}
       onCompleteOnboarding={onCompleteOnboarding}
+      onCancelCloudOnboarding={onCancelCloudOnboarding}
+      cloudGateDismissed={cloudGateDismissed}
       onSignedOut={onSignedOut}
       onAmrLoginStatusChange={onAmrLoginStatusChange}
       artifactUpgradeSlot={artifactUpgradeSlot}
